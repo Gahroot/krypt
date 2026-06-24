@@ -44,6 +44,7 @@ export class Player extends Schema {
   @type({ map: InventoryItem }) inventory = new MapSchema<InventoryItem>();
 
   // ─── Server-only (NOT synced) ───────────────────────────────────────
+  accountId = ""; // persistent account this character writes mesos/items through to
   inputQueue: InputData[] = [];
   attackCooldown = 0; // ms remaining before next melee swing
   attackTimer = 0; // ms remaining of the current swing animation

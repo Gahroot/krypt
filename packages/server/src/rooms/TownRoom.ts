@@ -39,6 +39,7 @@ import { Mob } from "./schema/Mob";
 import { LootDrop } from "./schema/LootDrop";
 import { InventoryItem } from "./schema/InventoryItem";
 import { type InputData, MessageType } from "../types";
+import { accountStore } from "../persistence/store";
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
 const MAP_WIDTH = 1600;
@@ -216,6 +217,7 @@ export class TownRoom extends Room {
     killer.mesos += rollMesos(def);
     killer.exp += def.exp;
     this.applyLeveling(killer);
+    accountStore.setMesos(killer.accountId, killer.mesos);
 
     // Roll item drops → each rolls a Potential tier from the public, tested table.
     for (const itemId of rollItemDrops(def)) {
@@ -292,6 +294,16 @@ export class TownRoom extends Room {
     item.lines = drop.lines;
     item.baseRank = "NORMAL";
     player.inventory.set(item.uid, item);
+
+    // Write the item through to the durable account so it can be sold on the Free Market.
+    accountStore.addItem(player.accountId, {
+      uid: item.uid,
+      defId: item.defId,
+      baseRank: item.baseRank,
+      potentialTier: item.potentialTier,
+      lines: item.lines,
+      minted: false,
+    });
 
     if (drop.legendary) {
       // Record for Phase 2: only the authoritative server can append a mint authorization.
@@ -385,13 +397,17 @@ export class TownRoom extends Room {
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
-  onJoin(client: Client, options: { name?: string } = {}): void {
+  onJoin(client: Client, options: { name?: string; accountId?: string } = {}): void {
     const archetype = ClassArchetype.WARRIOR;
     const def = getClass(archetype);
     const level = 1;
     const stats = autoAssign(level, def.primaryStat);
 
+    const accountId = (options.accountId || client.sessionId).slice(0, 64);
+    const account = accountStore.getOrCreate(accountId);
+
     const player = new Player();
+    player.accountId = accountId;
     player.name = (options.name || "Adventurer").slice(0, 16);
     player.archetype = archetype;
     player.level = level;
@@ -403,11 +419,24 @@ export class TownRoom extends Room {
     player.dex = stats.DEX;
     player.intel = stats.INT;
     player.luk = stats.LUK;
+    player.mesos = account.mesos;
     player.x = 120 + Math.random() * 200;
     player.y = GROUND_Y;
 
+    // Restore previously owned items from the durable account.
+    for (const rec of Object.values(account.inventory)) {
+      const item = new InventoryItem();
+      item.uid = rec.uid;
+      item.defId = rec.defId;
+      item.baseRank = rec.baseRank;
+      item.potentialTier = rec.potentialTier;
+      item.lines = rec.lines;
+      item.minted = rec.minted;
+      player.inventory.set(item.uid, item);
+    }
+
     this.state.players.set(client.sessionId, player);
-    console.log("[town] join", client.sessionId, player.name);
+    console.log("[town] join", client.sessionId, player.name, "account", accountId);
   }
 
   onLeave(client: Client): void {
