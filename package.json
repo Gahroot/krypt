@@ -1,0 +1,17 @@
+{
+  "name": "cryptomaple",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A 2D side-scroller MMORPG with a player-owned free market. Game-first; crypto is a bonus layer.",
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter \"./packages/server\" --filter \"./packages/client\" dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "license": "UNLICENSED"
+}

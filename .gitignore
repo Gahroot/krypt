@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Test coverage
+coverage/
+
+# Server runtime data (off-chain market persistence, etc.)
+packages/server/.data/
+
+# Foundry (Phase 2 contracts)
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/lib/
+packages/contracts/broadcast/
