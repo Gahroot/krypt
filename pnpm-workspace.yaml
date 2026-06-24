@@ -1,4 +1,13 @@
 packages:
   - "packages/*"
+
+# Colyseus pulls @colyseus/uwebsockets-transport (an optional transport we don't use; the default
+# is the pure-JS `ws` transport). It depends on uWebSockets.js via a GitHub tag, which pnpm 11
+# blocks as an "exotic subdep" by default. Allow it so install completes. uWebSockets.js ships
+# prebuilt binaries, so no native build runs.
+blockExoticSubdeps: false
+
+# esbuild ships prebuilt binaries; its install script isn't needed (tsx/vitest already work without it).
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: false
+  msgpackr-extract: set this to true or false
