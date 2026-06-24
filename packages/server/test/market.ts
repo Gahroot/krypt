@@ -45,8 +45,11 @@ async function main() {
 
   const listed = marketStore.all().find((l) => l.sellerId === sellerId);
   assert.ok(listed, "item should be listed on the market");
-  assert.strictEqual(accountStore.getOrCreate(sellerId).inventory["item_test_1"], undefined,
-    "listed item should be escrowed out of seller inventory");
+  assert.strictEqual(
+    accountStore.getOrCreate(sellerId).inventory["item_test_1"],
+    undefined,
+    "listed item should be escrowed out of seller inventory",
+  );
   console.log(`[market] listed ${listed.listingId} @ ${listed.price}`);
 
   // Buyer connects and buys.

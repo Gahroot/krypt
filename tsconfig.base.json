@@ -9,6 +9,8 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true

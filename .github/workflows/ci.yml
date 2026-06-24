@@ -1,0 +1,83 @@
+name: CI
+
+# Verifies every push + PR to main: the TypeScript workspaces (lint, format, types, tests, build)
+# and the deferred Phase-2 Foundry contracts (build, test, fmt). Keep the script names in sync with
+# the root and package package.json files.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref so pushes don't pile up.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  node:
+    name: Node — lint · types · test · build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm must be installed before setup-node so its cache can resolve the pnpm store.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.0.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check (Prettier)
+        run: pnpm format:check
+
+      - name: Lint (ESLint)
+        run: pnpm lint
+
+      - name: Typecheck (all workspaces)
+        run: pnpm typecheck
+
+      - name: Test (all workspaces)
+        run: pnpm test
+
+      - name: Build (all workspaces)
+        run: pnpm build
+
+  contracts:
+    name: Contracts — Foundry build · test · fmt
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      # Deps live in lib/ (git-ignored). In this monorepo `forge install` resolves the project root to
+      # the outer .git and rejects the nested lib path, so vendor them with plain clones (see README).
+      - name: Vendor contract dependencies
+        run: |
+          git clone --depth 1 --recurse-submodules https://github.com/foundry-rs/forge-std lib/forge-std
+          git clone --depth 1 --branch v5.6.0 https://github.com/OpenZeppelin/openzeppelin-contracts lib/openzeppelin-contracts
+          git clone --depth 1 https://github.com/smartcontractkit/chainlink-brownie-contracts lib/chainlink-brownie-contracts
+
+      - name: Build
+        run: forge build
+
+      - name: Test
+        run: forge test -vvv
+
+      - name: Format check
+        run: forge fmt --check

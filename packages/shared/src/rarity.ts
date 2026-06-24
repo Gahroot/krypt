@@ -104,7 +104,13 @@ export interface BaseRankInfo {
 export const BASE_RANKS: readonly BaseRankInfo[] = [
   { rank: BaseRank.NORMAL, label: "Normal", color: "#E5E7EB", order: 0, statMultiplier: 1.0 },
   { rank: BaseRank.ENHANCED, label: "Enhanced", color: "#60A5FA", order: 1, statMultiplier: 1.25 },
-  { rank: BaseRank.STARFORGED, label: "Star-forged", color: "#C084FC", order: 2, statMultiplier: 1.6 },
+  {
+    rank: BaseRank.STARFORGED,
+    label: "Star-forged",
+    color: "#C084FC",
+    order: 2,
+    statMultiplier: 1.6,
+  },
   { rank: BaseRank.MYTHIC, label: "Mythic", color: "#F87171", order: 3, statMultiplier: 2.1 },
 ] as const;
 

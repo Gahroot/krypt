@@ -134,12 +134,9 @@ function stubClass(
   mpGrowth: number,
   titles: [string, string, string, string],
 ): ClassDef {
-  const gates: Array<{ tier: 1 | 2 | 3 | 4; levelReq: number }> = [
-    { tier: 1, levelReq: 10 },
-    { tier: 2, levelReq: 30 },
-    { tier: 3, levelReq: 60 },
-    { tier: 4, levelReq: 100 },
-  ];
+  const noSkills: readonly SkillDef[] = [];
+  // Literal tuple indices so each title is typed `string` (a variable index would widen to
+  // `string | undefined` under noUncheckedIndexedAccess). Gates mirror the 1st–4th job level bands.
   return {
     archetype,
     name,
@@ -147,12 +144,12 @@ function stubClass(
     hometown,
     hpGrowth,
     mpGrowth,
-    jobTiers: gates.map((g, i): JobTier => ({
-      tier: g.tier,
-      title: titles[i],
-      levelReq: g.levelReq,
-      skills: [] as readonly SkillDef[],
-    })),
+    jobTiers: [
+      { tier: 1, title: titles[0], levelReq: 10, skills: noSkills },
+      { tier: 2, title: titles[1], levelReq: 30, skills: noSkills },
+      { tier: 3, title: titles[2], levelReq: 60, skills: noSkills },
+      { tier: 4, title: titles[3], levelReq: 100, skills: noSkills },
+    ],
   };
 }
 

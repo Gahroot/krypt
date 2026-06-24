@@ -1,0 +1,15 @@
+node_modules
+dist
+build
+out
+coverage
+pnpm-lock.yaml
+packages/contracts/lib
+packages/contracts/out
+packages/contracts/cache
+
+# Markdown docs are hand-authored with aligned tables + intentional wrapping — let prose stay as-is.
+*.md
+
+# Agent scratch/plans dir — not project source.
+.ezcoder

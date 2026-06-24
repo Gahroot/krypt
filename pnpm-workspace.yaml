@@ -7,7 +7,14 @@ packages:
 # prebuilt binaries, so no native build runs.
 blockExoticSubdeps: false
 
-# esbuild ships prebuilt binaries; its install script isn't needed (tsx/vitest already work without it).
+# Build-script allow-list (pnpm 11 `allowBuilds`: a map of package -> boolean). Below deps ship
+# prebuilt platform binaries and don't need a local native build:
+#   - esbuild: its install script isn't needed (tsx/vitest already work without it).
+#   - msgpackr-extract (via @colyseus/msgpackr): ships prebuilt binaries and msgpackr falls back to
+#     pure JS without them, so its build is unnecessary. Leaving it `false` keeps installs script-free.
+#   - lefthook: its postinstall fetches the platform binary; MUST be `true` so the `lefthook`
+#     executable is available for the root `prepare` script (`lefthook install`).
 allowBuilds:
   esbuild: false
-  msgpackr-extract: set this to true or false
+  lefthook: true
+  msgpackr-extract: false

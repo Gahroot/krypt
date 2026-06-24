@@ -4,8 +4,10 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "lib": ["ES2022"],
-    "outDir": "dist",
-    "rootDir": "src"
+    // @maple/shared is consumed directly as TypeScript source (package "main" points at ./src), so
+    // nothing reads an emitted dist/. We only type-check here — covering both src and the test suite
+    // without a rootDir conflict between the two trees.
+    "noEmit": true
   },
   "include": ["src", "tests"]
 }

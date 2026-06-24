@@ -1,0 +1,9 @@
+# Foundry build + dependency artifacts (also ignored at the repo root; kept here so the
+# package stays self-contained if ever extracted from the monorepo).
+out/
+cache/
+lib/
+broadcast/
+
+# Foundry/Anvil dotfiles
+.env

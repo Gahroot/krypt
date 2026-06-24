@@ -15,5 +15,5 @@ export function mulberry32(seed: number): () => number {
 /** An RNG that yields a fixed sequence, then repeats the last value. Handy for forcing outcomes. */
 export function sequence(values: number[]): () => number {
   let i = 0;
-  return () => values[Math.min(i++, values.length - 1)];
+  return () => values[Math.min(i++, values.length - 1)]!;
 }

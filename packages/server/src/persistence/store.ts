@@ -118,6 +118,8 @@ class AccountStore {
   removeItem(accountId: string, uid: string): ItemRecord | undefined {
     const acc = this.getOrCreate(accountId);
     const item = acc.inventory[uid];
+    // inventory is a plain Record persisted as JSON; deleting the key is the intended removal.
+    // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
     if (item) delete acc.inventory[uid];
     this.flush();
     return item;

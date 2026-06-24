@@ -13,7 +13,12 @@ import { getItemDef, getPotentialTierInfo, PotentialTier } from "@maple/shared";
 
 import { MarketState } from "./schema/MarketState";
 import { Listing } from "./schema/Listing";
-import { accountStore, marketStore, type ItemRecord, type ListingRecord } from "../persistence/store";
+import {
+  accountStore,
+  marketStore,
+  type ItemRecord,
+  type ListingRecord,
+} from "../persistence/store";
 
 interface ListMsg {
   itemUid: string;

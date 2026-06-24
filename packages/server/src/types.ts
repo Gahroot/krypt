@@ -1,22 +1,5 @@
 /**
- * Wire types shared between the room and the client (the client imports these via `import type`,
- * the verified tutorial pattern). Keep this dependency-free so it's safe to import from the browser.
+ * Server-local re-export of the wire protocol. The canonical definition lives in @maple/shared/net
+ * so the browser client and this server share one source of truth without bundling server code.
  */
-
-/** Per-tick input the client sends; the server is authoritative over the resulting movement. */
-export interface InputData {
-  left: boolean;
-  right: boolean;
-  up: boolean;
-  down: boolean;
-  /** Melee attack pressed this tick. */
-  attack: boolean;
-  /** Client tick counter, echoed back for reconciliation. */
-  tick: number;
-}
-
-/** Message channels (numeric for compactness), mirrored on the client. */
-export const MessageType = {
-  INPUT: 0,
-  PICKUP: 1,
-} as const;
+export { MessageType, type InputData, type MessageTypeValue } from "@maple/shared";

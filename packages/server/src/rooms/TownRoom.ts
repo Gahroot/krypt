@@ -193,7 +193,14 @@ export class TownRoom extends Room {
   private playerDamage(player: Player): number {
     const primary = this.playerPrimary(player);
     const power = attackPower(
-      { STR: player.str, DEX: player.dex, INT: player.intel, LUK: player.luk, HP: player.hp, MP: player.mp },
+      {
+        STR: player.str,
+        DEX: player.dex,
+        INT: player.intel,
+        LUK: player.luk,
+        HP: player.hp,
+        MP: player.mp,
+      },
       primary,
     );
     // ±20% spread so numbers feel alive.
@@ -261,7 +268,12 @@ export class TownRoom extends Room {
   }
 
   // ─── Loot ─────────────────────────────────────────────────────────────────
-  private spawnLoot(defId: string, tier: ReturnType<typeof rollPotential>, x: number, y: number): void {
+  private spawnLoot(
+    defId: string,
+    tier: ReturnType<typeof rollPotential>,
+    x: number,
+    y: number,
+  ): void {
     const uid = `loot_${++this.idCounter}`;
     const drop = new LootDrop();
     drop.uid = uid;

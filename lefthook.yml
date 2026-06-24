@@ -1,0 +1,16 @@
+# Lefthook git hooks configuration.
+# Schema: https://lefthook.dev/configuration/
+#
+# pre-commit runs the repo's existing root checks (no full build):
+#   - pnpm typecheck    (tsc --noEmit across all workspaces)
+#   - pnpm lint         (eslint .)
+#   - pnpm format:check (prettier --check .)
+# Skip on demand with: LEFTHOOK=0 git commit ...
+pre-commit:
+  commands:
+    typecheck:
+      run: pnpm typecheck
+    lint:
+      run: pnpm lint
+    format:
+      run: pnpm format:check

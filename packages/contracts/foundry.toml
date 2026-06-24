@@ -1,0 +1,30 @@
+# Foundry config — CryptoMaple Phase-2 on-chain layer (DEFERRED).
+# Target chain: Base (Ethereum L2, OP-Stack). Dencun/Cancun is live on Base, so evm_version = "cancun".
+#
+# This package is stubs + unit tests ONLY. There are NO deploy scripts wired to live networks here:
+# no testnet/mainnet broadcast, no RPC endpoints, no private keys. Deployment is a later, deliberate step.
+#
+# Deps live in lib/ (git-ignored at the repo root). Install them before building — see README.md.
+# The intended deps are:
+#   forge-std (foundry-rs/forge-std)
+#   OpenZeppelin v5.6.0 (OpenZeppelin/openzeppelin-contracts@v5.6.0)
+#   Chainlink VRF 2.5 (smartcontractkit/chainlink-brownie-contracts)
+# NOTE: `forge install` resolves the project root to the *outer* git repo in this monorepo and rejects
+# the nested lib path. README.md documents the working install (a `--no-git`-style vendored clone).
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+libs = ["lib"]
+solc = "0.8.24"
+optimizer = true
+optimizer_runs = 200
+evm_version = "cancun"
+# Remappings resolve the OpenZeppelin v5 + Chainlink (VRF 2.5) import paths used by src/ and test/.
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "@chainlink/contracts/=lib/chainlink-brownie-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+# See https://github.com/foundry-rs/foundry/tree/master/crates/config for more config options.

@@ -6,11 +6,7 @@
  * trades, and (if Legendary) mints on-chain in Phase 2.
  */
 
-import {
-  BaseRank,
-  PotentialTier,
-  getPotentialTierInfo,
-} from "./rarity.js";
+import { BaseRank, PotentialTier, getPotentialTierInfo } from "./rarity.js";
 import type { PrimaryStat } from "./stats.js";
 
 export enum EquipSlot {
