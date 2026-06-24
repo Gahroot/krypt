@@ -147,11 +147,11 @@ function stubClass(
     hometown,
     hpGrowth,
     mpGrowth,
-    jobTiers: gates.map((g, i) => ({
+    jobTiers: gates.map((g, i): JobTier => ({
       tier: g.tier,
       title: titles[i],
       levelReq: g.levelReq,
-      skills: [],
+      skills: [] as readonly SkillDef[],
     })),
   };
 }
