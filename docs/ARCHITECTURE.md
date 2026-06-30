@@ -9,10 +9,11 @@ will follow.
 - **Contracts package (Phase 2, stubs + tests):** [`packages/contracts/README.md`](../packages/contracts/README.md)
 
 > **Status.** Phase 1 is live and runs **entirely off-chain** (`@maple/server` + `@maple/client`): a broad
-> alpha far past the original one-mob slice — 5 fully-specced classes, ~26 authored maps (3 wired as live
-> rooms today), 53 mobs (9 bosses), two-layer rarity loot, a search-rich Free Market, plus quests,
-> parties, guilds, party quests, channels, trade, storage, achievements and a monster codex. Some authored
-> systems aren't wired into the live loop yet (see [§8](#8-authored-but-not-yet-wired)). The chain layer
+> alpha far past the original one-mob slice — 5 fully-specced classes, 33 authored maps (all registered as
+> live rooms with channels), 74 mobs (12 bosses), two-layer rarity loot, a search-rich Free Market, plus
+> quests, parties, guilds, party quests, channels, trade, storage, friends, achievements and a monster
+> codex, with buffs/passives, status effects and the elemental triangle wired into live combat. One
+> authored system isn't wired into the live loop yet (see [§8](#8-authored-but-not-yet-wired)). The chain layer
 > (`packages/contracts`) is **scaffolded but deferred** — stubs with passing unit tests, no deploy
 > scripts, no keys, no broadcasts — until the game is proven fun.
 
@@ -270,7 +271,7 @@ from `WORLD.md`, HP/MP growth, and job-advancement tiers gated by level (1st @10
   Lv 60), plus consumables and materials.
 - **`MobDef`** carries HP, exp, a mesos range, element, and a drop table. A kill rolls in two independent,
   tested stages: `rollMesos()` for currency, then `rollItemDrops()` per drop-table entry, then
-  `rollPotential()` for each dropped item's tier. The roster is **53 mobs incl. 9 bosses**; boss
+  `rollPotential()` for each dropped item's tier. The roster is **74 mobs incl. 12 bosses**; boss
   encounters (phases, telegraphs, summon-adds, loot-owner tracking) run server-side in `bossManager.ts`,
   and spawns in `spawnManager.ts`.
 
@@ -416,23 +417,20 @@ Be honest about the trust model — it's a load-bearing part of the pitch.
 
 ## 8. Authored but not yet wired
 
-A few systems exist as data/code but aren't applied in the live loop yet. They're called out here (and on
-the task list) so the doc never overstates what runs today:
+One system exists as data/code but isn't applied in the live loop yet. It's called out here (and on the
+task list) so the doc never overstates what runs today:
 
-- **Buff/passive skills don't change stats yet.** Casting a buff broadcasts a cosmetic `STATUS_EFFECTS`
-  message; `shared/effects.ts` (DoT / HoT / stun / buff aggregation) is fully written but not imported by
-  the server, so buffs and passives don't yet modify damage or defense.
-- **Elements & status effects are data-only.** Mobs carry `element` + `elementMods` and `SkillDef` has an
-  `element` field, but `computeDamage` takes no element, so the damage triangle and debuffs aren't applied.
-  Mob `wDef / mDef / avoid` are also passed as `0` on player attacks today.
 - **Scrolling is built but unwired.** `shared/consumables.ts` ships `SCROLLS` + `applyScroll` and
   `ItemInstance.enhancements`, but no room calls it. (Cube reroll and base-rank upgrade *are* wired.)
-- **Friends list is UI-only.** The client panel + `FRIEND_*` messages exist; there's no server handler or
-  persistence yet.
-- **Only 3 of ~26 maps are registered as rooms.** `dawn_isle`, `heartland_harbor`, `meadowfield` (+
-  channels); the rest are authored in `world.ts` but not yet joinable.
 
-These are deliberate next steps, not regressions — the foundation is in place; the wiring is the work.
+For reference, systems that **were** previously listed here and are **now wired** into the live loop:
+buff/passive skills modify stats (`passiveEffectBonus` + `aggregateSecondary` merged into combat stats),
+status effects tick via `tickEffects` (DoT / HoT / stun / slow), `computeDamage` applies the elemental
+triangle with real mob `wDef / mDef / avoid`, the friends list is server-handled (`friendManager` +
+`FRIEND_*` handlers in `MapRoom.ts`), and **all 33 maps** in `world.ts` are registered as rooms via
+`app.config.ts` (derived from the shared `MAPS` registry, not a hand-maintained list).
+
+This is a deliberate next step, not a regression — the foundation is in place; the wiring is the work.
 
 ---
 

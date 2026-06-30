@@ -87,15 +87,15 @@ everything" lives.
 ## Build status (June 2026) — slice shipped, world expanding
 The original MVP slice (one town, one class, one mob) is **done and surpassed**. Where the map stands now:
 
-- **Authored & live (joinable rooms):** Dawn Isle, Tidewatch Harbor, Meadowfield. These 3 maps are
-  registered as Colyseus rooms (with channels) and playable today.
-- **Authored, content-ready, not yet wired as rooms:** the rest of the Heartland (Sylvanreach, Craghold,
-  Dusk Ward, Crossway, Mirefen + dungeons) and the first Far Reaches biomes (Skyhaven, Frosthold + their
-  sub-maps), plus the Dusk Subway party-quest maps — **~26 maps total exist in `world.ts`**. Registering
-  every map as a room is a tracked task.
-- **All five classes** (Warrior, Mage, Archer, Thief, Pirate) are specced with branching job trees; **53
-  mobs (9 bosses)**, two-layer rarity loot, the Free Market, quests, parties, guilds and party quests are
-  all in.
+- **Authored & live (joinable rooms):** **all 33 maps in `world.ts` are registered as Colyseus rooms**
+  (with channels) and playable today — Dawn Isle, the full Heartland (Meadowfield, Sylvanreach, Craghold,
+  Dusk Ward, Crossway, Tidewatch Harbor, Mirefen + dungeons), the first Far Reaches biomes (Skyhaven,
+  Frosthold + their sub-maps), and the Dusk Subway party-quest maps. The room list is derived from the
+  shared `MAPS` registry in `packages/server/src/app.config.ts`, so every authored zone is joinable
+  without a hand-maintained list.
+- **All five classes** (Warrior, Mage, Archer, Thief, Pirate) are specced with branching job trees; **74
+  mobs (12 bosses)**, two-layer rarity loot, the Free Market, quests, parties, guilds and party quests are
+  all in. Buffs/passives, status effects, and the elemental damage triangle are wired into live combat.
 - **Not built yet (the backlog):** the back half of the arc — the Tideways (underwater), Cogtown, Sector
   Zero, Sunmarch/Alkest, Long Vale, Drakemoor (endgame) and the Timeless Spire, plus the faction isles.
 
