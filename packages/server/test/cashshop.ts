@@ -10,7 +10,7 @@
  */
 import assert from "node:assert";
 import { mkdirSync, rmSync } from "node:fs";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 import { getCashItem } from "@maple/shared";
@@ -46,7 +46,7 @@ function waitForNumericMessage(sdkRoom: any, msgType: number, timeoutMs = 3000):
 }
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   // Use the same singleton accountStore that MapRoom uses.
   const { accountStore } = await import("../src/persistence/store");

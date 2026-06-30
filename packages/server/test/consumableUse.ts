@@ -16,7 +16,7 @@
  */
 import assert from "node:assert";
 import { mkdirSync, rmSync } from "node:fs";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 import { applyHealEffect } from "@maple/shared";
@@ -55,7 +55,7 @@ function waitForMsg(sdkRoom: any, msgType: number, timeoutMs = 3000): Promise<an
 }
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
   const { accountStore } = await import("../src/persistence/store");
 
   const acctId = `cu_acct_${Date.now()}`;

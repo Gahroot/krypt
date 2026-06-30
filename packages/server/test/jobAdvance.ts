@@ -7,7 +7,7 @@
  * Run: npx tsx test/jobAdvance.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, maxHpForLevel, maxMpForLevel, getClass } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -38,7 +38,10 @@ function waitForNumericMessage(sdkRoom: any, msgType: number, timeoutMs = 3000):
  * Create a level-10 Beginner character in the store and join heartland_harbor.
  * Returns the server room, sdk room, player reference, and charId.
  */
-async function setupLevel10Beginner(colyseus: Awaited<ReturnType<typeof boot>>, label: string) {
+async function setupLevel10Beginner(
+  colyseus: Awaited<ReturnType<typeof bootAuthed>>,
+  label: string,
+) {
   const accountId = `job_advance_test_${label}_${Date.now()}`;
   const rec = accountStore.createCharacter(accountId, {
     name: `JobTest${label}`,
@@ -83,7 +86,7 @@ async function setupLevel10Beginner(colyseus: Awaited<ReturnType<typeof boot>>, 
 
 // ─── Test 1: Successful advancement → Archer ─────────────────────────────────
 
-async function testAdvanceToArcher(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testAdvanceToArcher(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[jobAdvance] ── advance Beginner → Archer ──");
 
   const { serverRoom, sdkRoom, player } = await setupLevel10Beginner(colyseus, "archer");
@@ -196,7 +199,7 @@ async function testAdvanceToArcher(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Re-advancement blocked ──────────────────────────────────────────
 
-async function testReAdvancementBlocked(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testReAdvancementBlocked(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[jobAdvance] ── re-advancement blocked ──");
 
   const { sdkRoom, player } = await setupLevel10Beginner(colyseus, "reblock");
@@ -270,7 +273,7 @@ async function testReAdvancementBlocked(colyseus: Awaited<ReturnType<typeof boot
 
 // ─── Test 3: Level too low ──────────────────────────────────────────────────
 
-async function testLevelTooLow(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLevelTooLow(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[jobAdvance] ── level too low blocked ──");
 
   // Create a level-5 Beginner.
@@ -350,7 +353,7 @@ async function testLevelTooLow(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testAdvanceToArcher(colyseus);
   await testReAdvancementBlocked(colyseus);

@@ -11,7 +11,8 @@
  *
  * This is the soft market. The on-chain Premium Market ($MAPLE) is Phase 2.
  */
-import { Room, Client } from "colyseus";
+import { Client } from "colyseus";
+import { AuthedRoom } from "./AuthedRoom";
 import {
   FreeMarket,
   getItemDef,
@@ -98,7 +99,7 @@ interface PriceHistoryMsg {
 
 // ─── Room ─────────────────────────────────────────────────────────────────────
 
-export class MarketRoom extends Room {
+export class MarketRoom extends AuthedRoom<MarketState> {
   state = new MarketState();
   maxClients = 100;
 
@@ -154,14 +155,27 @@ export class MarketRoom extends Room {
     }
     // Start the sweep timer for expired listings/auctions.
     this.sweepTimer = setInterval(() => this.sweepExpired(), MarketRoom.SWEEP_INTERVAL_MS);
-    console.log(
-      `[market] Free Market room created (${this.state.listings.size} listings, ${this.state.buyOrders.size} buy orders)`,
-    );
+    this.logCreate({
+      listings: this.state.listings.size,
+      buyOrders: this.state.buyOrders.size,
+    });
   }
 
-  onJoin(client: Client, options: { accountId?: string; charId?: string } = {}): void {
-    const accountId = (options.accountId || client.sessionId).slice(0, 64);
-    let charId = options.charId;
+  /** Resolve accountId from a session for error/lifecycle log context. */
+  protected override accountIdForSession(sessionId: string): string | undefined {
+    const charId = this.charBySession.get(sessionId);
+    return charId ? this.accountByChar.get(charId) : undefined;
+  }
+
+  onJoin(client: Client, options: { charId?: string } = {}): void {
+    // Trusted, server-verified identity from onAuth — never options.accountId.
+    const accountId = (client.auth?.accountId ?? client.sessionId).slice(0, 64);
+    let charId: string | undefined;
+    if (options.charId) {
+      const requested = accountStore.getCharacter(options.charId);
+      // Only honor a requested charId that belongs to the authenticated account.
+      if (requested && requested.accountId === accountId) charId = requested.charId;
+    }
     if (!charId) {
       const chars = accountStore.listCharacters(accountId);
       charId = chars[0]?.charId;
@@ -183,7 +197,7 @@ export class MarketRoom extends Room {
       mapId: "freemarket",
     });
     this.pushWallet(client);
-    console.log("[market] join", client.sessionId, "char", charId);
+    this.logJoin(client, accountId, { charId });
   }
 
   onDrop(client: Client): void {
@@ -193,7 +207,10 @@ export class MarketRoom extends Room {
   onReconnect(client: Client): void {
     // Re-push wallet so the client has an accurate view after reconnect.
     this.pushWallet(client);
-    console.log("[market] reconnect", client.sessionId);
+    this.roomLog.info("client reconnected", {
+      sessionId: client.sessionId,
+      accountId: this.accountIdForSession(client.sessionId),
+    });
   }
 
   onLeave(client: Client): void {
@@ -208,6 +225,7 @@ export class MarketRoom extends Room {
         level: 0,
       });
     }
+    this.logLeave(client, { charId });
     this.charBySession.delete(client.sessionId);
     this.sessionStartMs.delete(client.sessionId);
   }
@@ -217,7 +235,7 @@ export class MarketRoom extends Room {
     accountStore.persistNow();
     marketStore.persistNow();
     buyOrderStore.persistNow();
-    console.log("[market] Free Market room disposed");
+    this.logDispose();
   }
 
   // ─── Handlers ─────────────────────────────────────────────────────────────

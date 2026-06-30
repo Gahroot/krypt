@@ -6,7 +6,7 @@
  * Run: npx tsx test/guild.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -37,7 +37,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Create a guild ─────────────────────────────────────────────
 
-async function testCreateGuild(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCreateGuild(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[guild] ── create guild ──");
 
   const acct1 = `guild_create_${Date.now()}`;
@@ -100,7 +100,7 @@ async function testCreateGuild(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Invite → Accept → Roster persistence ───────────────────────
 
-async function testInviteAcceptRoster(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testInviteAcceptRoster(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[guild] ── invite → accept → roster ──");
 
   const acct1 = `guild_inv1_${Date.now()}`;
@@ -188,7 +188,7 @@ async function testInviteAcceptRoster(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test 3: Only master/officer can invite ─────────────────────────────
 
-async function testRankPermissions(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testRankPermissions(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[guild] ── rank permission check ──");
 
   const acct1 = `guild_perm1_${Date.now()}`;
@@ -288,7 +288,7 @@ async function testRankPermissions(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 4: Guild chat relay ────────────────────────────────────────────
 
-async function testGuildChat(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testGuildChat(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[guild] ── guild chat relay ──");
 
   const acct1 = `guild_chat1_${Date.now()}`;
@@ -359,7 +359,7 @@ async function testGuildChat(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 5: Leave and disband ───────────────────────────────────────────
 
-async function testLeaveDisband(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLeaveDisband(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[guild] ── leave & disband ──");
 
   const acct1 = `guild_leave_${Date.now()}`;
@@ -405,7 +405,7 @@ async function testLeaveDisband(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testCreateGuild(colyseus);
   await testInviteAcceptRoster(colyseus);

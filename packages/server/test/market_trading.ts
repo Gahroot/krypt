@@ -11,7 +11,7 @@
  * Run: npx tsx test/market_trading.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { accountStore, marketStore } from "../src/persistence/store";
 import { STORE_PERMIT_DEFID } from "../src/rooms/MarketRoom";
@@ -30,7 +30,7 @@ async function main() {
     marketStore.remove(rec.listingId);
   }
 
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   // ── Accounts & characters ──────────────────────────────────────────────────
   const sellerAcct = "acct_mt_seller";

@@ -7,7 +7,7 @@
  * Run: npx tsx test/learnSkill.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, spSpent, totalSpByLevel } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -35,7 +35,7 @@ function waitForLearnResult(sdkRoom: any, timeoutMs = 3000): Promise<any> {
 }
 
 async function setupLevel10Warrior(
-  colyseus: Awaited<ReturnType<typeof boot>>,
+  colyseus: Awaited<ReturnType<typeof bootAuthed>>,
   label: string,
   spOverride?: number,
 ) {
@@ -81,7 +81,7 @@ async function setupLevel10Warrior(
 
 // ─── Test 1: Valid learn ─────────────────────────────────────────────────────
 
-async function testValidLearn(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testValidLearn(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[learnSkill] ── valid learn: warrior.crushing_blow ──");
 
   const { sdkRoom, player } = await setupLevel10Warrior(colyseus, "valid");
@@ -113,7 +113,7 @@ async function testValidLearn(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Over-spend rejection ────────────────────────────────────────────
 
-async function testOverSpend(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testOverSpend(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[learnSkill] ── over-spend rejection ──");
 
   const { sdkRoom, player } = await setupLevel10Warrior(colyseus, "overspend");
@@ -152,7 +152,7 @@ async function testOverSpend(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Tier-gate rejection ─────────────────────────────────────────────
 
-async function testTierGate(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testTierGate(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[learnSkill] ── tier-gate rejection ──");
 
   const { sdkRoom, player } = await setupLevel10Warrior(colyseus, "tiergate");
@@ -177,7 +177,7 @@ async function testTierGate(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testValidLearn(colyseus);
   await testOverSpend(colyseus);

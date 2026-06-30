@@ -7,7 +7,7 @@
  * Run: npx tsx test/equip.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, EquipSlot } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -62,7 +62,7 @@ async function accumulateMeleeDamage(
 
 // ─── Test 1: Equipping a weapon increases damage ────────────────────────────
 
-async function testEquipWeaponIncreasesDamage(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testEquipWeaponIncreasesDamage(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equip] ── equip weapon increases damage ──");
 
   const acct = `equip_dmg_${Date.now()}`;
@@ -160,7 +160,7 @@ async function testEquipWeaponIncreasesDamage(colyseus: Awaited<ReturnType<typeo
 
 // ─── Test 2: Level gating prevents equipping high-level items ───────────────
 
-async function testLevelGateRejects(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLevelGateRejects(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equip] ── level gate rejects high-level item ──");
 
   const acct = `equip_gate_${Date.now()}`;
@@ -213,7 +213,7 @@ async function testLevelGateRejects(colyseus: Awaited<ReturnType<typeof boot>>) 
 
 // ─── Test 3: Equip/unequip cycle and slot swap ──────────────────────────────
 
-async function testEquipUnequipCycle(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testEquipUnequipCycle(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equip] ── equip/unequip cycle ──");
 
   const acct = `equip_cycle_${Date.now()}`;
@@ -284,7 +284,7 @@ async function testEquipUnequipCycle(colyseus: Awaited<ReturnType<typeof boot>>)
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testEquipWeaponIncreasesDamage(colyseus);
   await testLevelGateRejects(colyseus);

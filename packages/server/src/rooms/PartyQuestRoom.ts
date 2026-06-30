@@ -12,7 +12,8 @@
  *   5. When all stages clear → `status = "success"`, rewards granted.
  *   6. On timeout or all players leave → `status = "failed"`, players returned.
  */
-import { Room, Client } from "colyseus";
+import { Client } from "colyseus";
+import { AuthedRoom } from "./AuthedRoom";
 import {
   ClassArchetype,
   type PartyQuestDef,
@@ -53,7 +54,7 @@ const POST_RESULT_DELAY_MS = 8_000;
 
 // ─── Room ──────────────────────────────────────────────────────────────────
 
-export class PartyQuestRoom extends Room {
+export class PartyQuestRoom extends AuthedRoom<PQState> {
   state = new PQState();
 
   /** The PQ definition loaded from the shared catalog. */
@@ -100,7 +101,7 @@ export class PartyQuestRoom extends Room {
     const pqId = options.pqId ?? "pq.mushroomking";
     const def = getPartyQuest(pqId);
     if (!def) {
-      console.error(`[PartyQuestRoom] Unknown PQ "${pqId}" — closing room`);
+      this.roomLog.error("unknown party quest — closing room", { pqId });
       this.disconnect();
       return;
     }
@@ -142,15 +143,23 @@ export class PartyQuestRoom extends Room {
       }
     });
 
-    console.log(`[PartyQuestRoom] ${def.name} (${def.id}) instance created`);
+    this.logCreate({ pqId: def.id, pqName: def.name });
   }
 
-  onJoin(client: Client, options: { accountId?: string; charId?: string } = {}): void {
-    const accountId = (options.accountId ?? client.sessionId).slice(0, 64);
+  /** Resolve accountId from a session for error/lifecycle log context. */
+  protected override accountIdForSession(sessionId: string): string | undefined {
+    return this.sessionAccount.get(sessionId);
+  }
+
+  onJoin(client: Client, options: { charId?: string } = {}): void {
+    // Trusted, server-verified identity from onAuth — never options.accountId.
+    const accountId = (client.auth?.accountId ?? client.sessionId).slice(0, 64);
     let character: CharacterRecord | undefined;
 
     if (options.charId) {
-      character = accountStore.getCharacter(options.charId);
+      const requested = accountStore.getCharacter(options.charId);
+      // Ownership gate: only load a character that belongs to the authenticated account.
+      if (requested && requested.accountId === accountId) character = requested;
     }
     if (!character) {
       const chars = accountStore.listCharacters(accountId);
@@ -260,7 +269,7 @@ export class PartyQuestRoom extends Room {
     this.state.players.set(client.sessionId, player);
     this.sessionAccount.set(client.sessionId, accountId);
 
-    console.log(`[PartyQuestRoom] join ${client.sessionId} ${player.name} (${this.def.name})`);
+    this.logJoin(client, accountId, { charId: player.charId, pqId: this.def.id });
 
     // Auto-start countdown once the first player joins.
     if (!this.started && this.state.players.size >= 1) {
@@ -277,10 +286,9 @@ export class PartyQuestRoom extends Room {
     if (player) {
       this.persistPlayer(player);
     }
+    this.logLeave(client, { charId: player?.charId });
     this.state.players.delete(client.sessionId);
     this.sessionAccount.delete(client.sessionId);
-
-    console.log(`[PartyQuestRoom] leave ${client.sessionId}`);
 
     // If no players remain and the PQ is still running → fail.
     if (
@@ -292,7 +300,7 @@ export class PartyQuestRoom extends Room {
   }
 
   onDispose(): void {
-    console.log(`[PartyQuestRoom] ${this.def?.name ?? "unknown"} disposed`);
+    this.logDispose({ pqName: this.def?.name });
   }
 
   // ─── Simulation ──────────────────────────────────────────────────────────

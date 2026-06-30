@@ -26,9 +26,20 @@ import type {
   ExplorationState,
 } from "@maple/shared";
 import type Database from "better-sqlite3";
-import { openDb } from "./db";
+import { openDb, checkpoint } from "./db";
 import { guildManager } from "../guildManager";
 import { friendManager } from "../friendManager";
+import {
+  newAccountId,
+  hashPassword,
+  verifyPassword,
+  normalizeEmail,
+  normalizeWallet,
+  isValidEmail,
+  isValidWalletAddress,
+  MIN_PASSWORD_LENGTH,
+  DUMMY_PASSWORD_HASH,
+} from "../auth";
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -73,6 +84,40 @@ export interface Account {
   banReason: string;
   /** Character names this account has blocked. */
   blockedPlayers: string[];
+}
+
+/**
+ * An account's login credential (without the secret material). Returned by the
+ * auth lookups so callers can introspect what an account is linked to without ever
+ * touching the stored password hash.
+ */
+export interface AuthCredential {
+  accountId: string;
+  /** Normalized email, or null for a wallet-only account. */
+  email: string | null;
+  /** Lowercased 0x wallet address, or null for an email-only account. */
+  wallet: string | null;
+  /** Whether a password hash is set (true ⇒ email+password login is available). */
+  hasPassword: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Raw `account_auth` row shape (includes the secret hash — never returned directly). */
+interface AuthRow {
+  account_id: string;
+  email: string | null;
+  password_hash: string | null;
+  wallet: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Result of a credential mutation (create / claim). */
+export interface AuthResult {
+  ok: boolean;
+  accountId?: string;
+  reason?: string;
 }
 
 /** Per-server treasury — tracks mesos removed from circulation (sinks). */
@@ -602,6 +647,178 @@ export class AccountStore {
     return rows.map((r) => r.friend_account_id);
   }
 
+  // ─── Auth credentials (email/password + sign-in-with-wallet) ─────────────
+  //
+  // Identity (accountId) is server-generated; this layer attaches a *recoverable*
+  // credential to it so progress survives a localStorage wipe or a new browser.
+
+  private rowToAuth(r: AuthRow): AuthCredential {
+    return {
+      accountId: r.account_id,
+      email: r.email,
+      wallet: r.wallet,
+      hasPassword: !!r.password_hash,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  /** Get the credential linked to an account, or undefined for a pure guest. */
+  getAuth(accountId: string): AuthCredential | undefined {
+    const r = this.db.prepare("SELECT * FROM account_auth WHERE account_id = ?").get(accountId) as
+      | AuthRow
+      | undefined;
+    return r ? this.rowToAuth(r) : undefined;
+  }
+
+  /** Find the account credential for a (normalized) email. */
+  findByEmail(email: string): AuthCredential | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM account_auth WHERE email = ?")
+      .get(normalizeEmail(email)) as AuthRow | undefined;
+    return r ? this.rowToAuth(r) : undefined;
+  }
+
+  /** Find the account credential for a (normalized) wallet address. */
+  findByWallet(wallet: string): AuthCredential | undefined {
+    const r = this.db
+      .prepare("SELECT * FROM account_auth WHERE wallet = ?")
+      .get(normalizeWallet(wallet)) as AuthRow | undefined;
+    return r ? this.rowToAuth(r) : undefined;
+  }
+
+  /**
+   * Create a brand-new credentialed account (server-generated accountId) plus its
+   * account shell. Accepts an email+password pair and/or a wallet. The password is
+   * salted+hashed before it ever touches the DB.
+   */
+  async createAuthAccount(opts: {
+    email?: string;
+    password?: string;
+    wallet?: string;
+  }): Promise<AuthResult> {
+    const email = opts.email ? normalizeEmail(opts.email) : null;
+    const wallet = opts.wallet ? normalizeWallet(opts.wallet) : null;
+
+    if (!email && !wallet) return { ok: false, reason: "Provide an email or a wallet." };
+    if (opts.email && !isValidEmail(opts.email)) return { ok: false, reason: "Invalid email." };
+    if (opts.wallet && !isValidWalletAddress(opts.wallet)) {
+      return { ok: false, reason: "Invalid wallet address." };
+    }
+    if (email && this.findByEmail(email)) return { ok: false, reason: "Email already registered." };
+    if (wallet && this.findByWallet(wallet)) return { ok: false, reason: "Wallet already linked." };
+
+    let passwordHash: string | null = null;
+    if (email) {
+      if (!opts.password || opts.password.length < MIN_PASSWORD_LENGTH) {
+        return {
+          ok: false,
+          reason: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        };
+      }
+      passwordHash = await hashPassword(opts.password);
+    }
+
+    const accountId = newAccountId();
+    const now = Date.now();
+    this.getOrCreate(accountId); // create the account shell (FK target) first.
+    this.db
+      .prepare(
+        "INSERT INTO account_auth (account_id, email, password_hash, wallet, created_at, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run(accountId, email, passwordHash, wallet, now, now);
+
+    return { ok: true, accountId };
+  }
+
+  /**
+   * Attach a credential to an EXISTING account (guest "claim"/upgrade). The accountId
+   * is preserved, so the player keeps every character, mesos and item. Adds an email
+   * (with password) and/or a wallet; refuses to clobber a credential already in use by
+   * another account, or to overwrite a different email already set on this account.
+   */
+  async claimAccount(
+    accountId: string,
+    opts: { email?: string; password?: string; wallet?: string },
+  ): Promise<AuthResult> {
+    if (!this.accounts.has(accountId)) return { ok: false, reason: "Unknown account." };
+
+    const email = opts.email ? normalizeEmail(opts.email) : null;
+    const wallet = opts.wallet ? normalizeWallet(opts.wallet) : null;
+    if (!email && !wallet) return { ok: false, reason: "Provide an email or a wallet." };
+    if (opts.email && !isValidEmail(opts.email)) return { ok: false, reason: "Invalid email." };
+    if (opts.wallet && !isValidWalletAddress(opts.wallet)) {
+      return { ok: false, reason: "Invalid wallet address." };
+    }
+
+    const existing = this.getAuth(accountId);
+
+    if (email) {
+      const other = this.findByEmail(email);
+      if (other && other.accountId !== accountId) {
+        return { ok: false, reason: "Email already registered." };
+      }
+      if (existing?.email && existing.email !== email) {
+        return { ok: false, reason: "Account already has a different email." };
+      }
+      if (!opts.password || opts.password.length < MIN_PASSWORD_LENGTH) {
+        return {
+          ok: false,
+          reason: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+        };
+      }
+    }
+    if (wallet) {
+      const other = this.findByWallet(wallet);
+      if (other && other.accountId !== accountId) {
+        return { ok: false, reason: "Wallet already linked to another account." };
+      }
+      if (existing?.wallet && existing.wallet !== wallet) {
+        return { ok: false, reason: "Account already has a different wallet." };
+      }
+    }
+
+    const passwordHash = email && opts.password ? await hashPassword(opts.password) : null;
+    const now = Date.now();
+
+    if (existing) {
+      // COALESCE keeps the old value when the new one is NULL (partial update).
+      this.db
+        .prepare(
+          "UPDATE account_auth SET email = COALESCE(?, email), password_hash = COALESCE(?, password_hash), " +
+            "wallet = COALESCE(?, wallet), updated_at = ? WHERE account_id = ?",
+        )
+        .run(email, passwordHash, wallet, now, accountId);
+    } else {
+      this.db
+        .prepare(
+          "INSERT INTO account_auth (account_id, email, password_hash, wallet, created_at, updated_at) " +
+            "VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .run(accountId, email, passwordHash, wallet, now, now);
+    }
+
+    return { ok: true, accountId };
+  }
+
+  /**
+   * Verify an email+password pair. Returns the owning accountId on success, or null.
+   * Always runs a bcrypt comparison (against a dummy hash when the email is unknown)
+   * so response timing does not reveal whether an email is registered.
+   */
+  async verifyEmailPassword(email: string, password: string): Promise<string | null> {
+    const r = this.db
+      .prepare("SELECT account_id, password_hash FROM account_auth WHERE email = ?")
+      .get(normalizeEmail(email)) as
+      | { account_id: string; password_hash: string | null }
+      | undefined;
+    const hash = r?.password_hash ?? DUMMY_PASSWORD_HASH;
+    const matches = await verifyPassword(password ?? "", hash);
+    if (!r || !r.password_hash || !matches) return null;
+    return r.account_id;
+  }
+
   // ─── Character CRUD ─────────────────────────────────────────────────────────
 
   createCharacter(
@@ -679,6 +896,26 @@ export class AccountStore {
     return !!row;
   }
 
+  /**
+   * Produce a globally-unique name for an auto-provisioned default character.
+   *
+   * This is ONLY for system-created starter characters, where any free name is
+   * acceptable. Player-chosen names go through the create handlers, which
+   * validate them and reject collisions outright (`name_taken`) rather than
+   * silently renaming.
+   */
+  generateUniqueName(base: string): string {
+    const root = ((base || "Adventurer").trim() || "Adventurer").slice(0, 16);
+    if (!this.characterNameExists(root)) return root;
+    for (let n = 2; n < 1_000_000; n++) {
+      const suffix = ` ${n}`;
+      const candidate = root.slice(0, 16 - suffix.length) + suffix;
+      if (!this.characterNameExists(candidate)) return candidate;
+    }
+    // Practically unreachable; fall back to a charId-derived unique token.
+    return `Hero ${this.charSeq + 1}`.slice(0, 16);
+  }
+
   updateCharacter(charId: string, patch: Partial<CharacterRecord>): void {
     const rec = this.characters.get(charId);
     if (!rec) return;
@@ -694,15 +931,38 @@ export class AccountStore {
     return existed;
   }
 
-  /** Write a full character row to SQLite. */
+  /**
+   * Write a full character row to SQLite, transactionally.
+   *
+   * Wrapping the UPDATE in a transaction makes the write an all-or-nothing unit
+   * (and a single fsync boundary in WAL mode), so a crash mid-write can never
+   * leave a half-serialized row — the character either fully advances to the new
+   * snapshot or stays at the previous committed one.
+   */
   private writeCharacter(rec: CharacterRecord): void {
     const row = serializeCharRow(rec);
     const sets = Object.keys(row)
       .map((k) => `${k}=?`)
       .join(", ");
-    this.db
-      .prepare(`UPDATE characters SET ${sets} WHERE char_id=?`)
-      .run(...Object.values(row), rec.charId);
+    const stmt = this.db.prepare(`UPDATE characters SET ${sets} WHERE char_id=?`);
+    const values = [...Object.values(row), rec.charId];
+    this.db.transaction(() => {
+      stmt.run(...values);
+    })();
+  }
+
+  /**
+   * Flush the write-ahead log into the main DB file. Call on graceful shutdown
+   * so the on-disk `.db` is fully self-contained (no pending WAL frames).
+   */
+  checkpoint(): void {
+    checkpoint(this.db);
+  }
+
+  /** Current journal mode ("wal" when crash-safe WAL is active). For diagnostics/tests. */
+  walMode(): string {
+    const rows = this.db.pragma("journal_mode") as { journal_mode: string }[];
+    return rows[0]?.journal_mode ?? "";
   }
 
   // ─── Account-level premium currency ─────────────────────────────────────────

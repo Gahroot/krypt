@@ -10,7 +10,7 @@
  * Run: npx tsx test/npcs.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 import { accountStore } from "../src/persistence/store";
@@ -28,7 +28,7 @@ const watchdog = setTimeout(() => {
  * Helper: create a character, join dawn_isle, and position the player.
  */
 async function setupPlayer(
-  colyseus: Awaited<ReturnType<typeof boot>>,
+  colyseus: Awaited<ReturnType<typeof bootAuthed>>,
   x: number,
   y: number,
   accountLabel: string,
@@ -99,7 +99,7 @@ function waitForNamedMessage(sdkRoom: any, msgName: string, timeoutMs = 3000): P
 
 // ─── Test: full dialog round-trip with Guide Iris ────────────────────────────
 
-async function testDialogRoundTrip(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testDialogRoundTrip(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[npcs] ── dialog round-trip with Guide Iris ──");
 
   // Guide Iris is at (225, 80). Position player right next to her.
@@ -196,7 +196,7 @@ async function testDialogRoundTrip(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test: out-of-range TALK_NPC is rejected ─────────────────────────────────
 
-async function testOutOfRangeRejected(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testOutOfRangeRejected(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[npcs] ── out-of-range TALK_NPC rejected ──");
 
   // Position player far from any NPC (center of map, no NPC nearby).
@@ -234,7 +234,7 @@ async function testOutOfRangeRejected(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test: invalid NPC id is rejected ────────────────────────────────────────
 
-async function testInvalidNpcRejected(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testInvalidNpcRejected(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[npcs] ── invalid NPC id rejected ──");
 
   const { serverRoom, sdkRoom, sessionId } = await setupPlayer(colyseus, 225, 80, "invalid");
@@ -260,7 +260,7 @@ async function testInvalidNpcRejected(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test: NPCs exposed to client on join ────────────────────────────────────
 
-async function testNpcsExposedOnJoin(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testNpcsExposedOnJoin(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[npcs] ── NPCs exposed on join ──");
 
   // Build a fresh account + room, register the listener BEFORE connecting
@@ -313,7 +313,7 @@ async function testNpcsExposedOnJoin(colyseus: Awaited<ReturnType<typeof boot>>)
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testNpcsExposedOnJoin(colyseus);
   await testDialogRoundTrip(colyseus);

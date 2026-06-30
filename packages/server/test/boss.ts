@@ -5,7 +5,7 @@
  * Run: npx tsx test/boss.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, getMobDef } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { accountStore } from "../src/persistence/store";
@@ -29,7 +29,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Mano spawns on Meadowfield and has correct boss fields ────────
 
-async function testBossSpawn(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testBossSpawn(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[boss] ── boss spawn ──");
 
   const acct = `boss_spawn_${Date.now()}`;
@@ -78,7 +78,7 @@ async function testBossSpawn(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Boss takes damage across phases ───────────────────────────────
 
-async function testBossPhaseTransition(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testBossPhaseTransition(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[boss] ── boss phase transition ──");
 
   const acct = `boss_phase_${Date.now()}`;
@@ -152,7 +152,7 @@ async function testBossPhaseTransition(colyseus: Awaited<ReturnType<typeof boot>
 
 // ─── Test 3: Boss dies and drops loot ──────────────────────────────────────
 
-async function testBossDeathAndLoot(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testBossDeathAndLoot(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[boss] ── boss death + loot ──");
 
   const acct = `boss_loot_${Date.now()}`;
@@ -258,7 +258,7 @@ async function testBossDeathAndLoot(colyseus: Awaited<ReturnType<typeof boot>>) 
 
 // ─── Test 4: Damage owners are tracked ─────────────────────────────────────
 
-async function testBossDamageOwnership(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testBossDamageOwnership(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[boss] ── damage ownership ──");
 
   const acct = `boss_own_${Date.now()}`;
@@ -359,7 +359,7 @@ async function testBossSummonConfig() {
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testBossSpawn(colyseus);
   await testBossPhaseTransition(colyseus);

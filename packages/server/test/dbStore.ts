@@ -87,6 +87,46 @@ async function main() {
   store.equipCashItem(char.charId, "cash cape_1", "cape", 30);
   store.equipCashItem(char.charId, "cash hat_1", "hat");
 
+  // Exercise the full "everything persists" snapshot that MapRoom.persistPlayer writes
+  // on leave / autosave: job tier, retention systems, QoL layouts, titles, counters,
+  // and idle exploration. A crash + reboot must bring all of this back intact.
+  store.updateCharacter(char.charId, {
+    jobTier: 2,
+    branchId: "berserker",
+    quickslots: [{ type: "skill", id: "slash" }, null, { type: "consumable", id: "use.hp_potion" }],
+    codex: { "mob.slime": 120, "mob.snail": 30 },
+    fame: { fame: 75, fameHistory: { chr_99: 1_717_000_000_000 } },
+    achievements: { firstBlood: [1], slimeSlayer: [120] },
+    totalMesosEarned: 50_000,
+    totalQuestsCompleted: 12,
+    totalItemsCollected: 88,
+    autoPot: {
+      hpEnabled: true,
+      hpThreshold: 40,
+      mpEnabled: true,
+      mpThreshold: 30,
+      hpPotionId: "pot.large_hp",
+      mpPotionId: "pot.large_mp",
+    },
+    macros: [{ id: "m1", name: "Combo", steps: [{ type: "skill", id: "slash" }] }],
+    exploration: {
+      slots: [
+        {
+          slotIndex: 0,
+          mobId: "mob.slime",
+          startAt: 1_717_000_000_000,
+          duration: "short",
+          durationMs: 3_600_000,
+          completeAt: 1_717_003_600_000,
+          claimed: false,
+        },
+      ],
+    },
+    ownedTitles: ["Slime Slayer", "Pioneer"],
+    equippedTitle: "Pioneer",
+    familiars: { registered: ["mob.slime"], summoned: ["mob.slime"] },
+  });
+
   // Verify in-memory state before persistence.
   const loaded = store.getCharacter(char.charId)!;
   assert.ok(loaded, "character exists in memory");
@@ -182,6 +222,70 @@ async function main() {
   assert.strictEqual(reloadedAcct.cash, 10_000, "starter cash survived");
 
   console.log("[dbStore] ✔ full character round-trip verified");
+
+  // ── Phase 2b: crash-recovery snapshot — every persistPlayer field survives ──
+  // store2 was constructed fresh from the same on-disk DB, exactly as a rebooted
+  // server would hydrate. Assert the full progress snapshot (position, vitals,
+  // retention systems, QoL layouts, titles, quests, exploration) is all intact.
+  assert.strictEqual(reloaded.jobTier, 2, "jobTier round-trips");
+  assert.strictEqual(reloaded.branchId, "berserker", "branchId round-trips");
+
+  // Quickslots (hotbar layout, including the null gap).
+  assert.strictEqual(reloaded.quickslots?.length, 3, "quickslots length");
+  assert.deepStrictEqual(
+    reloaded.quickslots?.[0],
+    { type: "skill", id: "slash" },
+    "quickslot 0 round-trips",
+  );
+  assert.strictEqual(reloaded.quickslots?.[1], null, "quickslot gap preserved");
+  assert.deepStrictEqual(
+    reloaded.quickslots?.[2],
+    { type: "consumable", id: "use.hp_potion" },
+    "quickslot 2 round-trips",
+  );
+
+  // Retention systems: codex, fame, achievements, lifetime counters.
+  assert.strictEqual(reloaded.codex?.["mob.slime"], 120, "codex kill count round-trips");
+  assert.strictEqual(reloaded.fame?.fame, 75, "fame round-trips");
+  assert.strictEqual(reloaded.fame?.fameHistory?.["chr_99"], 1_717_000_000_000, "fame history");
+  assert.deepStrictEqual(reloaded.achievements?.["slimeSlayer"], [120], "achievement progress");
+  assert.strictEqual(reloaded.totalMesosEarned, 50_000, "totalMesosEarned round-trips");
+  assert.strictEqual(reloaded.totalQuestsCompleted, 12, "totalQuestsCompleted round-trips");
+  assert.strictEqual(reloaded.totalItemsCollected, 88, "totalItemsCollected round-trips");
+
+  // QoL: auto-pot, macros.
+  assert.strictEqual(reloaded.autoPot?.hpEnabled, true, "autoPot hpEnabled round-trips");
+  assert.strictEqual(reloaded.autoPot?.mpThreshold, 30, "autoPot mpThreshold round-trips");
+  assert.strictEqual(reloaded.macros?.[0]?.id, "m1", "macro id round-trips");
+  assert.strictEqual(reloaded.macros?.[0]?.steps?.length, 1, "macro steps round-trip");
+
+  // Idle exploration dispatch.
+  assert.strictEqual(reloaded.exploration?.slots?.length, 1, "exploration slot survived");
+  assert.strictEqual(reloaded.exploration?.slots?.[0]?.mobId, "mob.slime", "exploration mobId");
+  assert.strictEqual(reloaded.exploration?.slots?.[0]?.claimed, false, "exploration claimed flag");
+
+  // Titles.
+  assert.deepStrictEqual(
+    reloaded.ownedTitles,
+    ["Slime Slayer", "Pioneer"],
+    "ownedTitles round-trip",
+  );
+  assert.strictEqual(reloaded.equippedTitle, "Pioneer", "equippedTitle round-trips");
+
+  // Familiars (registered + summoned re-summon on reload).
+  assert.deepStrictEqual(reloaded.familiars?.registered, ["mob.slime"], "familiars registered");
+  assert.deepStrictEqual(reloaded.familiars?.summoned, ["mob.slime"], "familiars summoned");
+
+  console.log("[dbStore] ✔ crash-recovery snapshot (all progress fields) verified");
+
+  // ── Phase 2c: WAL + checkpoint durability ───────────────────────────────
+  // WAL mode is what keeps committed writes recoverable after a hard kill, and the
+  // checkpoint helper flushes the WAL into the main .db on graceful shutdown.
+  const journalMode = store2.walMode();
+  assert.strictEqual(journalMode.toLowerCase(), "wal", "journal mode is WAL");
+  store2.checkpoint(); // must not throw
+
+  console.log("[dbStore] ✔ WAL mode + checkpoint verified");
 
   // ── Phase 3: MarketStore round-trip ─────────────────────────────────────
   const listing = marketStore.add({

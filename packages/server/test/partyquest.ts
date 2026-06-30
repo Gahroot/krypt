@@ -5,7 +5,7 @@
  * Run: npx tsx test/partyquest.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, PARTY_QUESTS } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -30,7 +30,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Solo run through all stages to completion ────────────────────
 
-async function testSoloRun(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testSoloRun(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[pq] ── solo run through all stages ──");
 
   const pqDef = PARTY_QUESTS["pq.mushroomking"]!;
@@ -183,7 +183,7 @@ async function testSoloRun(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Partial run then timeout (fail) ──────────────────────────────
 
-async function testTimeout(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testTimeout(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[pq] ── timeout failure ──");
 
   // Use mushroomking (minLevel 1) for this test — we just need partial progress + disconnect.
@@ -243,7 +243,7 @@ async function testTimeout(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Multi-player contribution ────────────────────────────────────
 
-async function testMultiPlayer(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMultiPlayer(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[pq] ── multi-player contribution ──");
 
   const acct1 = `pq_mp1_${Date.now()}`;
@@ -328,7 +328,7 @@ async function testMultiPlayer(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testSoloRun(colyseus);
   await testTimeout(colyseus);

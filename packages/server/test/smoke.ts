@@ -5,7 +5,7 @@
  * Run: npx tsx test/smoke.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { MAPS } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -22,7 +22,7 @@ const watchdog = setTimeout(() => {
   process.exit(1);
 }, 180_000);
 
-async function testMeadowfield(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMeadowfield(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[smoke] ── meadowfield ──");
   const room = await colyseus.sdk.joinOrCreate("meadowfield", { name: "Smoke" });
   // Swallow the per-tick boss HP broadcast (Meadowfield's Mano field boss). With
@@ -83,7 +83,7 @@ async function testMeadowfield(colyseus: Awaited<ReturnType<typeof boot>>) {
   await room.leave();
 }
 
-async function testDawnIsle(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testDawnIsle(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[smoke] ── dawn_isle ──");
   const room = await colyseus.sdk.joinOrCreate("dawn_isle", { name: "SmokeDI" });
   await sleep(200);
@@ -124,7 +124,7 @@ async function testDawnIsle(colyseus: Awaited<ReturnType<typeof boot>>) {
 }
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testMeadowfield(colyseus);
   await testDawnIsle(colyseus);

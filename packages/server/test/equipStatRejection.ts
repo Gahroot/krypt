@@ -10,7 +10,7 @@
  * Run: npx tsx test/equipStatRejection.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, EquipSlot } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -37,7 +37,7 @@ const DEFAULT_APPEARANCE = {
 // mage-only weapon. canEquip checks level → classReq → stats, so by setting
 // level >= levelReq we force it to reach the class check.
 
-async function testClassRequirementRejects(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testClassRequirementRejects(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equipStatRejection] ── class requirement rejects mage wand on warrior ──");
 
   const acct = `stat_cls_${Date.now()}`;
@@ -100,7 +100,7 @@ async function testClassRequirementRejects(colyseus: Awaited<ReturnType<typeof b
 // Set level high enough to pass levelReq, but STR stays at default 4.
 // Iron Crest Helm requires levelReq 20 + reqStr 40 — level passes, STR fails.
 
-async function testStatRequirementRejects(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testStatRequirementRejects(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equipStatRejection] ── stat requirement rejects low-STR equip ──");
 
   const acct = `stat_str_${Date.now()}`;
@@ -186,7 +186,7 @@ async function testStatRequirementRejects(colyseus: Awaited<ReturnType<typeof bo
 
 // ─── Test 3: Full set activation applies defense and set bonuses ───────────
 
-async function testDefenseAndSetBonuses(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testDefenseAndSetBonuses(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[equipStatRejection] ── defense + set bonuses ──");
 
   const acct = `stat_set_${Date.now()}`;
@@ -338,7 +338,7 @@ async function testDefenseAndSetBonuses(colyseus: Awaited<ReturnType<typeof boot
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testClassRequirementRejects(colyseus);
   await testStatRequirementRejects(colyseus);

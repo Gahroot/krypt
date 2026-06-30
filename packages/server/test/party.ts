@@ -5,7 +5,7 @@
  * Run: npx tsx test/party.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, getMobDef } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -30,7 +30,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Form a party via invite + accept ──────────────────────────────
 
-async function testFormParty(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testFormParty(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[party] ── form party ──");
 
   const acct1 = `party_1a_${Date.now()}`;
@@ -118,7 +118,7 @@ async function testFormParty(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Shared EXP distribution on a mob kill ─────────────────────────
 
-async function testSharedExp(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testSharedExp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[party] ── shared EXP on kill ──");
 
   const acct1 = `party_exp1_${Date.now()}`;
@@ -235,7 +235,7 @@ async function testSharedExp(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Leader reassignment on disconnect ─────────────────────────────
 
-async function testLeaderReassign(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLeaderReassign(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[party] ── leader reassignment on disconnect ──");
 
   const acct1 = `party_lead1_${Date.now()}`;
@@ -309,7 +309,7 @@ async function testLeaderReassign(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testFormParty(colyseus);
   await testSharedExp(colyseus);

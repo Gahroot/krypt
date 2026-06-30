@@ -7,7 +7,7 @@
  * Run: npx tsx test/cubeReroll.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, CUBE_REROLL_COST } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -31,7 +31,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Successful cube reroll ─────────────────────────────────────────
 
-async function testCubeRerollSuccess(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCubeRerollSuccess(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[cubeReroll] ── successful reroll ──");
 
   const acct = `cube_test_${Date.now()}`;
@@ -132,7 +132,7 @@ async function testCubeRerollSuccess(colyseus: Awaited<ReturnType<typeof boot>>)
 
 // ─── Test 2: Not enough mesos ───────────────────────────────────────────────
 
-async function testCubeRerollInsufficientMesos(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCubeRerollInsufficientMesos(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[cubeReroll] ── insufficient mesos ──");
 
   const acct = `cube_poor_${Date.now()}`;
@@ -190,7 +190,7 @@ async function testCubeRerollInsufficientMesos(colyseus: Awaited<ReturnType<type
 
 // ─── Test 3: Item not in inventory ──────────────────────────────────────────
 
-async function testCubeRerollMissingItem(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCubeRerollMissingItem(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[cubeReroll] ── missing item ──");
 
   const acct = `cube_miss_${Date.now()}`;
@@ -229,7 +229,7 @@ async function testCubeRerollMissingItem(colyseus: Awaited<ReturnType<typeof boo
 
 // ─── Test 4: Multiple rerolls consume mesos correctly ────────────────────────
 
-async function testCubeRerollMultiple(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCubeRerollMultiple(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[cubeReroll] ── multiple rerolls ──");
 
   const acct = `cube_multi_${Date.now()}`;
@@ -292,7 +292,7 @@ async function testCubeRerollMultiple(colyseus: Awaited<ReturnType<typeof boot>>
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testCubeRerollSuccess(colyseus);
   await testCubeRerollInsufficientMesos(colyseus);

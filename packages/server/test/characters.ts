@@ -9,10 +9,15 @@
  */
 import assert from "node:assert";
 import { mkdirSync, rmSync } from "node:fs";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { randomizeAppearance } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { AccountStore } from "../src/persistence/store";
+import {
+  validateCharacterNameFormat,
+  NAME_TAKEN_CODE,
+  NAME_TAKEN_MESSAGE,
+} from "../src/characters";
 
 const TEST_DIR = ".data_test_characters";
 
@@ -26,6 +31,64 @@ const watchdog = setTimeout(() => {
 }, 15_000);
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function testNameValidation() {
+  // ── Format rules: length 2–16, charset, profanity (shared), reserved words ──
+  assert.strictEqual(validateCharacterNameFormat("Mapler"), null, "clean name accepted");
+  assert.ok(validateCharacterNameFormat("A"), "1-char name rejected (min 2)");
+  assert.ok(validateCharacterNameFormat("x".repeat(17)), "17-char name rejected (max 16)");
+  assert.ok(validateCharacterNameFormat("Bad!Name"), "illegal charset rejected");
+  assert.ok(validateCharacterNameFormat("Shithead"), "profane name rejected");
+  assert.ok(validateCharacterNameFormat("Admin"), "reserved name rejected");
+  assert.ok(validateCharacterNameFormat("g m"), "reserved name rejected ignoring spacing");
+  // The taken-name error must be a distinct code plus a user-visible message.
+  assert.notStrictEqual(NAME_TAKEN_MESSAGE, NAME_TAKEN_CODE, "name_taken has a human message");
+  assert.ok(/\s/.test(NAME_TAKEN_MESSAGE), "name_taken message is user-friendly");
+  console.log("[characters] name format: ✔ length/charset/profanity/reserved enforced");
+
+  // ── Global uniqueness + system default generation (isolated DB) ────────────
+  const dir = `${TEST_DIR}_names`;
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const store = new AccountStore(dir);
+
+  store.createCharacter("acct_unique", {
+    name: "Duplicate",
+    archetype: "BEGINNER",
+    appearance: randomizeAppearance(() => 0.3),
+  });
+  assert.ok(store.characterNameExists("Duplicate"), "created name is taken");
+  assert.ok(store.characterNameExists("duplicate"), "uniqueness is case-insensitive");
+
+  // A duplicate passes format but is globally taken → the authoritative create
+  // handler returns name_taken rather than silently renaming.
+  assert.strictEqual(validateCharacterNameFormat("Duplicate"), null, "duplicate passes format");
+
+  // System auto-provisioning never collides and never reuses the taken name.
+  const generated = store.generateUniqueName("Duplicate");
+  assert.notStrictEqual(
+    generated.toLowerCase(),
+    "duplicate",
+    "generated default avoids the taken name",
+  );
+  assert.ok(!store.characterNameExists(generated), "generated default is free");
+
+  // A valid, unique, well-formed name succeeds and persists verbatim (no suffix).
+  assert.strictEqual(validateCharacterNameFormat("FreshHero"), null, "fresh name format ok");
+  assert.ok(!store.characterNameExists("FreshHero"), "fresh name is free");
+  const rec = store.createCharacter("acct_unique", {
+    name: "FreshHero",
+    archetype: "BEGINNER",
+    appearance: randomizeAppearance(() => 0.6),
+  });
+  assert.strictEqual(rec.name, "FreshHero", "valid unique name persisted verbatim");
+
+  store.persistNow();
+  rmSync(dir, { recursive: true, force: true });
+  console.log(
+    "[characters] uniqueness: ✔ duplicates rejected, defaults unique, valid names succeed",
+  );
+}
 
 function testStore() {
   // ── Phase 1: create + mutate ────────────────────────────────────────────────
@@ -125,7 +188,7 @@ function testStore() {
 
 async function testJoinRoom() {
   console.log("[characters] ── room join ──");
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   // Create a character via the singleton store (same one the rooms use).
   const { accountStore } = await import("../src/persistence/store");
@@ -216,6 +279,7 @@ async function testJoinRoom() {
   console.log("[characters] room join: ✔  appearance synced + position persisted on leave");
 }
 
+testNameValidation();
 testStore();
 testJoinRoom()
   .then(() => {

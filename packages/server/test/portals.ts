@@ -10,7 +10,7 @@
  * Run: npx tsx test/portals.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { getMap } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -37,7 +37,7 @@ const watchdog = setTimeout(() => {
  * then join the dawn_isle room and position the player at the ferry portal.
  */
 async function setupPlayer(
-  colyseus: Awaited<ReturnType<typeof boot>>,
+  colyseus: Awaited<ReturnType<typeof bootAuthed>>,
   level: number,
   accountLabel: string,
 ) {
@@ -99,7 +99,7 @@ function waitForNumericMessage(sdkRoom: any, msgType: number, timeoutMs = 3000):
   });
 }
 
-async function testLevel10Travels(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLevel10Travels(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[portals] ── level-10 ferry travel ──");
   const { serverRoom, sdkRoom, sessionId } = await setupPlayer(colyseus, 10, "lv10");
 
@@ -126,7 +126,7 @@ async function testLevel10Travels(colyseus: Awaited<ReturnType<typeof boot>>) {
   await sdkRoom.leave();
 }
 
-async function testLevel5Blocked(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLevel5Blocked(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[portals] ── level-5 ferry blocked ──");
   const { serverRoom, sdkRoom, sessionId } = await setupPlayer(colyseus, 5, "lv5");
 
@@ -153,7 +153,7 @@ async function testLevel5Blocked(colyseus: Awaited<ReturnType<typeof boot>>) {
 }
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testLevel10Travels(colyseus);
   await testLevel5Blocked(colyseus);

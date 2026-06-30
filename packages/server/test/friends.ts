@@ -7,7 +7,7 @@
  * Run: npx tsx test/friends.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 
@@ -32,7 +32,7 @@ function collectMessages<T>(room: any, type: number): T[] {
 
 // ─── Test: friend add + online status ─────────────────────────────────────────
 
-async function testFriendAdd(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testFriendAdd(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[friends] ── friend add + online status ──");
 
   const ts = String(Date.now()).slice(-6);
@@ -133,7 +133,7 @@ async function testFriendAdd(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test: online status on join/leave ────────────────────────────────────────
 
-async function testOnlineStatus(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testOnlineStatus(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[friends] ── online status join/leave ──");
 
   const ts2 = String(Date.now()).slice(-6);
@@ -186,7 +186,7 @@ async function testOnlineStatus(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test: whisper delivery + offline failure ─────────────────────────────────
 
-async function testWhisper(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testWhisper(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[friends] ── whisper delivery + offline failure ──");
 
   const ts3 = String(Date.now()).slice(-6);
@@ -255,7 +255,7 @@ async function testWhisper(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testFriendAdd(colyseus);
   await testOnlineStatus(colyseus);

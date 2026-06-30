@@ -14,7 +14,8 @@
  * "provably fair" claim. A Legendary pickup records a `legendaryMintPending` entry for the future
  * chain step; no chain call is made yet (Phase 2).
  */
-import { Room, Client } from "colyseus";
+import { Client } from "colyseus";
+import { AuthedRoom } from "./AuthedRoom";
 import { ArraySchema } from "@colyseus/schema";
 import {
   ClassArchetype,
@@ -173,6 +174,8 @@ import {
   type LearnSkillPayload,
   type LearnSkillResultPayload,
   type TravelPayload,
+  type SessionGenerationPayload,
+  type ForceLogoutPayload,
   type FerryBlockedPayload,
   type TalkNpcPayload,
   type DialogLinePayload,
@@ -326,6 +329,12 @@ import {
   sanitizeId,
   logAnomaly,
 } from "../validate";
+import {
+  validateCharacterNameFormat,
+  MAX_CHARACTERS_PER_ACCOUNT,
+  NAME_TAKEN_CODE,
+  NAME_TAKEN_MESSAGE,
+} from "../characters";
 
 // ─── Tunables ────────────────────────────────────────────────────────────────
 
@@ -368,6 +377,38 @@ const COMBO_WINDOW_MS = 1500;
 
 const PICKUP_RANGE = 60;
 const LOOT_DESPAWN_MS = 30_000;
+
+/**
+ * Autosave cadence. Every live player's full state is flushed to SQLite on this
+ * interval so an unexpected server kill loses at most this window of progress.
+ * Overridable via MAPLE_AUTOSAVE_INTERVAL_MS (ops tuning + fast tests).
+ */
+const AUTOSAVE_INTERVAL_MS = (() => {
+  const raw = Number(process.env.MAPLE_AUTOSAVE_INTERVAL_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
+})();
+
+/**
+ * Close code for kicking an older session on a duplicate login. We use Colyseus's
+ * CONSENTED (4000) code on purpose: it routes the disconnect straight to `onLeave`
+ * (immediate, full cleanup) instead of `onDrop` (which would open a reconnection
+ * window and leave a ghost session registered). The client tells a kick apart from a
+ * normal leave via the FORCE_LOGOUT message sent just before, not via the close code.
+ */
+const DUPLICATE_LOGIN_CLOSE_CODE = 4000;
+
+/**
+ * Grace window (seconds) we hold a dropped player's entity in room state so a flaky
+ * connection can `reconnect()` and resume in place instead of re-joining cold. When the
+ * window elapses without a reconnect, Colyseus falls through to `onLeave` for the full
+ * cleanup + persistence path — so nothing is lost either way. Keep this in rough sync
+ * with the client's reconnection retry budget in MapScene (`configureReconnection`).
+ * Overridable via MAPLE_RECONNECT_GRACE_SECONDS (ops tuning + fast tests).
+ */
+const RECONNECT_GRACE_SECONDS = (() => {
+  const raw = Number(process.env.MAPLE_RECONNECT_GRACE_SECONDS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 20;
+})();
 
 /** Horizontal proximity (px) for a player to activate a portal. */
 const PORTAL_RANGE_X = 40;
@@ -467,7 +508,7 @@ function mergeBonus(
   return out as Partial<import("@maple/shared").SecondaryStats>;
 }
 
-export class MapRoom extends Room {
+export class MapRoom extends AuthedRoom<TownState> {
   state = new TownState();
   fixedTimeStep = 1000 / 60;
   maxClients = 50;
@@ -526,6 +567,11 @@ export class MapRoom extends Room {
 
   /** sessionId → persistent accountId (set in onJoin, used by create/delete handlers). */
   private sessionAccount = new Map<string, string>();
+
+  /** Expose the session→account mapping to the base room for error/lifecycle log context. */
+  protected override accountIdForSession(sessionId: string): string | undefined {
+    return this.sessionAccount.get(sessionId);
+  }
 
   /** sessionId → timestamp (ms) when the player joined (for session duration). */
   private sessionStartMs = new Map<string, number>();
@@ -1346,13 +1392,14 @@ export class MapRoom extends Room {
     this.channel = options.channel ?? 0;
     const map = getMap(mapId);
     if (!map) {
-      console.error(`[MapRoom] Unknown map "${mapId}" — closing room`);
+      this.roomLog.error("unknown map — closing room", { mapId });
       return;
     }
     this.map = map;
     this.state.mapId = mapId;
     this.state.mapWidth = map.width;
     this.state.mapHeight = map.height;
+    this.logCreate({ mapId, channel: this.channel });
 
     this.bossManager = new BossManager();
 
@@ -1414,13 +1461,18 @@ export class MapRoom extends Room {
         this.fixedTick(this.fixedTimeStep);
       }
     });
-
-    console.log(`[MapRoom] ${map.name} (${mapId}) ch${this.channel} created`);
   }
 
   /** Party sync counter: push party HP/MP/level snapshots every ~1 second. */
   private partySyncTick = 0;
   private static readonly PARTY_SYNC_INTERVAL = 60; // ticks (≈1 s at 60 fps)
+
+  /** Autosave counter: flush every player's full state on a fixed cadence (crash safety net). */
+  private autosaveTick = 0;
+  private readonly autosaveIntervalTicks = Math.max(
+    1,
+    Math.round(AUTOSAVE_INTERVAL_MS / (1000 / 60)),
+  );
 
   // ─── Main loop ──────────────────────────────────────────────────────────────
   fixedTick(timeStep: number): void {
@@ -1463,6 +1515,13 @@ export class MapRoom extends Room {
     if (++this.partySyncTick >= MapRoom.PARTY_SYNC_INTERVAL) {
       this.partySyncTick = 0;
       this.syncPartyStats();
+    }
+
+    // Periodic autosave — flush every player's full state so a crash loses at most
+    // AUTOSAVE_INTERVAL_MS of progress (in addition to event-driven persists).
+    if (++this.autosaveTick >= this.autosaveIntervalTicks) {
+      this.autosaveTick = 0;
+      this.persistAllPlayers();
     }
   }
 
@@ -3397,9 +3456,11 @@ export class MapRoom extends Room {
   // ─── Lifecycle ──────────────────────────────────────────────────────────────
   onJoin(
     client: Client,
-    options: { name?: string; accountId?: string; charId?: string; spawnId?: string } = {},
+    options: { name?: string; charId?: string; spawnId?: string; generation?: string } = {},
   ): void {
-    const accountId = (options.accountId || client.sessionId).slice(0, 64);
+    // Identity is the server-verified accountId from onAuth (client.auth) — NEVER
+    // options.accountId, which is attacker-controlled.
+    const accountId = (client.auth?.accountId ?? client.sessionId).slice(0, 64);
 
     // ─── Ban check: banned accounts cannot join. ────────────────────────────
     const acc = accountStore.getAccount(accountId);
@@ -3423,7 +3484,13 @@ export class MapRoom extends Room {
     let isNewCharacter = false;
 
     if (options.charId) {
-      character = accountStore.getCharacter(options.charId);
+      const requested = accountStore.getCharacter(options.charId);
+      // Ownership gate: only load the requested character if it belongs to the
+      // authenticated account. Otherwise ignore it (a client may not load someone
+      // else's character by passing their charId).
+      if (requested && requested.accountId === accountId) {
+        character = requested;
+      }
     }
     if (!character) {
       // Fall back to the first character of the account, or create a default one.
@@ -3432,15 +3499,12 @@ export class MapRoom extends Room {
       if (chars.length === 0) isNewAccount = true;
     }
     if (!character) {
-      // Auto-create a default BEGINNER character so the game is immediately playable.
-      // Character names are globally unique, so pick the first free variant to avoid a
-      // UNIQUE-constraint crash that would otherwise reject the join ("Could not connect").
-      const baseName = (options.name || "Adventurer").trim() || "Adventurer";
-      let defaultName = baseName;
-      for (let n = 2; accountStore.characterNameExists(defaultName) && n < 100000; n++) {
-        const suffix = ` ${n}`;
-        defaultName = baseName.slice(0, 16 - suffix.length) + suffix;
-      }
+      // Auto-provision a default BEGINNER character so a brand-new account is
+      // immediately playable. Player-chosen names go through CREATE_CHARACTER,
+      // which validates them and rejects collisions with `name_taken`; here we
+      // only need a free system name, so ask the store for a guaranteed-unique
+      // one rather than silently mangling client-supplied input.
+      const defaultName = accountStore.generateUniqueName(options.name || "Adventurer");
       character = accountStore.createCharacter(accountId, {
         name: defaultName,
         archetype: ClassArchetype.BEGINNER,
@@ -3715,6 +3779,39 @@ export class MapRoom extends Room {
     }));
     client.send("map_npcs", { npcs });
 
+    // ─── Single-live-session guard ─────────────────────────────────────────
+    // Claim the ONE allowed live session for this character. Policy: kick the OLDER
+    // session. A client relocating between maps/channels echoes the generation token it
+    // was issued (options.generation), so the brief onJoin↔onLeave overlap of a transfer
+    // is recognised as the same session moving — never a duplicate login. A genuine
+    // second login (no token, or a stale one) instead kicks the older session.
+    const claim = channelRegistry.claimSession({
+      charId: character.charId,
+      sessionId: client.sessionId,
+      generation: typeof options.generation === "string" ? options.generation : undefined,
+      kick: (reason: string) => {
+        try {
+          client.send(MessageType.FORCE_LOGOUT, { reason } satisfies ForceLogoutPayload);
+        } catch {
+          /* old transport already gone */
+        }
+        try {
+          client.leave(DUPLICATE_LOGIN_CLOSE_CODE);
+        } catch {
+          /* already disconnected */
+        }
+      },
+    });
+    // Hand the (new or carried-over) generation back so the client echoes it on transfer.
+    client.send(MessageType.SESSION_GENERATION, {
+      generation: claim.generation,
+    } satisfies SessionGenerationPayload);
+    if (claim.kickedOlderSession) {
+      console.log(
+        `[MapRoom] duplicate login for char ${character.charId} (${character.name}) — kicked older session`,
+      );
+    }
+
     // Register with the global channel registry for cross-channel whisper + channel counts.
     channelRegistry.register({
       sessionId: client.sessionId,
@@ -3750,10 +3847,6 @@ export class MapRoom extends Room {
       });
     }
 
-    console.log(
-      `[MapRoom] join ${client.sessionId} ${player.name} char ${character.charId} ch${this.channel}`,
-    );
-
     // ─── Moderation init: chat history ring buffer + blocked list sync ──────
     this.chatHistory.set(client.sessionId, []);
     client.send(MessageType.BLOCKED_LIST_RESULT, {
@@ -3779,12 +3872,34 @@ export class MapRoom extends Room {
       true,
       this.state.mapId,
     );
+
+    this.logJoin(client, accountId, {
+      charId: character.charId,
+      mapId: this.state.mapId,
+      charLevel: player.level,
+      newAccount: isNewAccount,
+      newCharacter: isNewCharacter,
+    });
   }
 
   // ─── Graceful reconnection (Colyseus 0.17) ────────────────────────────────
+  // Fired on an UNEXPECTED disconnect (flaky network), NOT on a consented leave —
+  // those route straight to `onLeave`. We hold the player's entity in room state for a
+  // short grace window so `client.reconnect()` resumes them in place. The Player stays
+  // in `this.state.players` (so the same sessionId is reused — no duplicate ghost) and
+  // registries are left registered; `onReconnect` re-binds the new socket's `send`.
+  // If the window elapses, Colyseus calls `onLeave` for full cleanup + persistence.
   onDrop(client: Client): void {
-    // Allow the client 30 seconds to reconnect. Player state stays in memory.
-    this.allowReconnection(client, 30);
+    const player = this.state.players.get(client.sessionId);
+    if (player) player.connected = false;
+    this.roomLog.info("client dropped — holding for reconnect", {
+      sessionId: client.sessionId,
+      accountId: this.accountIdForSession(client.sessionId),
+      graceSeconds: RECONNECT_GRACE_SECONDS,
+    });
+    // Returns a promise that resolves on reconnect / rejects on timeout; Colyseus drives
+    // the onReconnect/onLeave fall-through, so we don't need to await it here.
+    void this.allowReconnection(client, RECONNECT_GRACE_SECONDS);
   }
 
   onReconnect(client: Client): void {
@@ -3792,6 +3907,8 @@ export class MapRoom extends Room {
     if (!accountId) return;
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    // Mark the held entity live again so remote clients clear the "disconnected" state.
+    player.connected = true;
 
     // Re-register guild, channel, and friend tracking.
     guildManager.registerOnline(
@@ -3857,7 +3974,11 @@ export class MapRoom extends Room {
       blockedNames: accountStore.getAccount(accountId)?.blockedPlayers ?? [],
     } satisfies BlockedListResultPayload);
 
-    console.log(`[MapRoom] reconnect ${client.sessionId} ${player.name}`);
+    this.roomLog.info("client reconnected", {
+      sessionId: client.sessionId,
+      accountId,
+      charId: player.charId,
+    });
   }
 
   onLeave(client: Client): void {
@@ -3895,6 +4016,12 @@ export class MapRoom extends Room {
     guildManager.unregisterOnline(client.sessionId);
     // Unregister from the global channel registry.
     channelRegistry.unregister(client.sessionId);
+    // Release the single-live-session ownership — but only if THIS session still owns
+    // it. During a transfer the new session already claimed ownership, so this old
+    // session's late onLeave must not clobber the new one (sessionId mismatch → no-op).
+    if (player) {
+      channelRegistry.releaseSession(player.charId, client.sessionId);
+    }
 
     // ─── Friends: broadcast offline status then unregister ─────────────────
     if (player && accountId) {
@@ -3912,7 +4039,7 @@ export class MapRoom extends Room {
     this.skillCastLimiter.delete(client.sessionId);
     this.pickupLimiter.delete(client.sessionId);
     this.macroCastLimiter.delete(client.sessionId);
-    console.log("[MapRoom] leave", client.sessionId);
+    this.logLeave(client, { charId: player?.charId });
   }
 
   // ─── Guild (persistent cross-map social) ───────────────────────────────────
@@ -4639,7 +4766,15 @@ export class MapRoom extends Room {
   }
 
   onDispose(): void {
-    console.log(`[MapRoom] ${this.map?.name ?? "unknown"} ch${this.channel} disposed`);
+    // Final flush so a graceful shutdown (room close / server restart) loses nothing,
+    // then checkpoint the WAL into the main DB file.
+    this.persistAllPlayers();
+    try {
+      accountStore.checkpoint();
+    } catch (err) {
+      this.roomLog.error("checkpoint on dispose failed", { err });
+    }
+    this.logDispose({ mapName: this.map?.name, channel: this.channel });
   }
 
   // ─── Job Advancement ─────────────────────────────────────────────────
@@ -5156,18 +5291,68 @@ export class MapRoom extends Room {
 
   // ─── Character persistence ────────────────────────────────────────────────
   /** Write the live Player state back to the durable CharacterRecord. */
+  /**
+   * Write a player's full authoritative state through to the durable store.
+   *
+   * This is the single source of truth for "what survives a disconnect / crash":
+   * it snapshots the *entire* live `Player` schema (transform, vitals, progression,
+   * stats, mesos, inventory, equipment, titles, quests, skills, and every
+   * retention/QoL sub-system) into one transactional row write. Called on every
+   * major event (level-up, trade, shop, travel, job advance), on `onLeave`, on the
+   * periodic autosave, and on `onDispose` — so no single path is load-bearing.
+   */
   private persistPlayer(player: Player): void {
     if (!player.charId) return;
+
     // Build equipped map from the synced schema.
     const equipped: Record<string, string> = {};
     player.equipped.forEach((uid, slot) => {
       equipped[slot] = uid;
     });
+
+    // Snapshot the full inventory from the synced schema (the live source of truth),
+    // preserving potential lines, flame bonus stats, star-force, and stack counts.
+    const inventory: Record<string, import("../persistence/store").ItemRecord> = {};
+    player.inventory.forEach((item, uid) => {
+      let potentialLines: PotentialLine[];
+      try {
+        potentialLines = JSON.parse(item.potentialLines || "[]") as PotentialLine[];
+      } catch {
+        potentialLines = [];
+      }
+      let bonusStats: BonusStatLine[] | undefined;
+      try {
+        const parsed = JSON.parse(item.bonusStats || "[]") as BonusStatLine[];
+        if (Array.isArray(parsed) && parsed.length > 0) bonusStats = parsed;
+      } catch {
+        bonusStats = undefined;
+      }
+      inventory[uid] = {
+        uid: item.uid,
+        defId: item.defId,
+        baseRank: item.baseRank,
+        potentialTier: item.potentialTier,
+        lines: item.lines,
+        minted: item.minted,
+        potentialLines,
+        ...(bonusStats ? { bonusStats } : {}),
+        stars: item.stars,
+        count: item.count,
+      };
+    });
+
+    const sessionId = this.findSessionByPlayer(player);
+    const familiars = sessionId ? this.familiarCollections.get(sessionId) : undefined;
+
     accountStore.updateCharacter(player.charId, {
+      // Progression
       level: player.level,
       exp: player.exp,
       ap: player.ap,
       sp: player.sp,
+      jobTier: player.jobTier,
+      branchId: player.branchId,
+      // Stats + vitals (HP/MP carry current values; maxHp/maxMp persisted for fidelity)
       stats: {
         STR: player.str,
         DEX: player.dex,
@@ -5176,42 +5361,66 @@ export class MapRoom extends Room {
         HP: player.hp,
         MP: player.mp,
       },
+      maxHp: player.maxHp,
+      maxMp: player.maxMp,
       mesos: player.mesos,
+      // Transform (map + position so a reload resumes exactly where you left off)
       x: player.x,
       y: player.y,
       mapId: this.state.mapId || "meadowfield",
+      // Items + equipment
+      inventory,
+      equipped,
+      // Quests + skills
       quests: player.questState,
       learnedSkills: player.learnedSkills,
       skillBook: player.skillBook,
-      jobTier: player.jobTier,
-      branchId: player.branchId,
-      equipped,
-      ownedTitles: player.ownedTitles,
+      // Cosmetics / titles
+      ownedTitles: player.ownedTitles ? [...player.ownedTitles] : [],
       equippedTitle: player.equippedTitle,
-      familiars: this.familiarCollections.get(this.findSessionByPlayer(player) ?? "") ?? undefined,
+      // Retention systems
+      codex: player.codex,
+      fame: player.fame,
+      achievements: player.achievements,
+      totalMesosEarned: player.totalMesosEarned,
+      totalQuestsCompleted: player.totalQuestsCompleted,
+      totalItemsCollected: player.totalItemsCollected,
+      // QoL: quickslots, settings, auto-pot, macros, idle exploration
+      quickslots: player.quickslots,
+      settings: player.settings,
+      autoPot: player.autoPot,
+      macros: player.macros,
+      exploration: player.exploration,
+      familiars: familiars ?? undefined,
+    });
+  }
+
+  /**
+   * Flush every connected player's full state to the durable store. Used by the
+   * periodic autosave and the graceful-shutdown path. Per-player failures are
+   * isolated so one bad record can't abort the whole sweep.
+   */
+  private persistAllPlayers(): void {
+    this.state.players.forEach((player) => {
+      try {
+        this.persistPlayer(player);
+      } catch (err) {
+        console.error(`[MapRoom] autosave failed for ${player.charId || "unknown"}:`, err);
+      }
     });
   }
 
   // ─── Name validation ──────────────────────────────────────────────────────
-  private static readonly NAME_RE = /^[a-zA-Z0-9 _-]{1,16}$/;
-  private static readonly PROFANITY = new Set(["damn", "hell", "crap"]);
-
-  private validateCharacterName(name: string): string | null {
-    const trimmed = name.trim();
-    if (trimmed.length === 0 || trimmed.length > 16) {
-      return "Name must be 1–16 characters.";
-    }
-    if (!MapRoom.NAME_RE.test(trimmed)) {
-      return "Name may only contain letters, numbers, spaces, hyphens, and underscores.";
-    }
-    const lower = trimmed.toLowerCase();
-    for (const word of MapRoom.PROFANITY) {
-      if (lower.includes(word)) {
-        return "Name contains a blocked word.";
-      }
-    }
-    if (accountStore.characterNameExists(trimmed)) {
-      return "Name is already taken.";
+  /**
+   * Authoritative name check: format + profanity + reserved words (shared
+   * format rules) plus global uniqueness. Returns a `{ code, message }` error
+   * so callers can surface a distinct `name_taken` case, or `null` when valid.
+   */
+  private validateCharacterName(name: string): { code: string; message: string } | null {
+    const formatError = validateCharacterNameFormat(name);
+    if (formatError) return { code: "invalid_name", message: formatError };
+    if (accountStore.characterNameExists(name.trim())) {
+      return { code: NAME_TAKEN_CODE, message: NAME_TAKEN_MESSAGE };
     }
     return null;
   }
@@ -5222,7 +5431,13 @@ export class MapRoom extends Room {
     const name = msg?.name ?? "";
     const err = this.validateCharacterName(name);
     if (err) {
-      client.send("character_error", { reason: err });
+      client.send("character_error", { reason: err.message, code: err.code });
+      return;
+    }
+    if (accountStore.listCharacters(accountId).length >= MAX_CHARACTERS_PER_ACCOUNT) {
+      client.send("character_error", {
+        reason: `You can only have ${MAX_CHARACTERS_PER_ACCOUNT} characters.`,
+      });
       return;
     }
     const appearance = msg?.appearance ?? randomizeAppearance();

@@ -7,7 +7,7 @@
  * Run: npx tsx test/trade.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { accountStore } from "../src/persistence/store";
 import { MessageType } from "../src/types";
@@ -43,7 +43,7 @@ function waitForMessage<T>(
 
 // ─── Test 1: Successful swap ─────────────────────────────────────────────
 
-async function testSuccessfulSwap(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testSuccessfulSwap(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[trade] ── test successful swap ──");
 
   const sellerAcct = "acct_trade_seller";
@@ -185,7 +185,7 @@ async function testSuccessfulSwap(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Capacity-full abort ─────────────────────────────────────────
 
-async function testCapacityFullAbort(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCapacityFullAbort(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[trade] ── test capacity-full abort ──");
 
   const senderAcct = "acct_trade_sender";
@@ -289,7 +289,7 @@ async function testCapacityFullAbort(colyseus: Awaited<ReturnType<typeof boot>>)
 
 // ─── Test 3: Cancel restores both inventories ────────────────────────────
 
-async function testCancelRestores(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCancelRestores(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[trade] ── test cancel restores inventories ──");
 
   const acctA = "acct_trade_cancel_a";
@@ -404,7 +404,7 @@ async function testCancelRestores(colyseus: Awaited<ReturnType<typeof boot>>) {
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testSuccessfulSwap(colyseus);
   await testCapacityFullAbort(colyseus);

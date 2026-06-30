@@ -5,7 +5,7 @@
  * Run: npx tsx test/channels.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -31,7 +31,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Join a specific channel, verify channel list ─────────────────
 
-async function testJoinChannel(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testJoinChannel(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[channels] ── join channel 0 ──");
 
   const acct = `ch_join_${Date.now()}`;
@@ -64,7 +64,7 @@ async function testJoinChannel(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Switch channels, verify state preservation ───────────────────
 
-async function testChannelSwitch(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testChannelSwitch(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[channels] ── switch channel ──");
 
   const acct = `ch_switch_${Date.now()}`;
@@ -127,7 +127,7 @@ async function testChannelSwitch(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Cross-channel whisper ────────────────────────────────────────
 
-async function testCrossChannelWhisper(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCrossChannelWhisper(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[channels] ── cross-channel whisper ──");
 
   const acct1 = `ch_wisp1_${Date.now()}`;
@@ -187,7 +187,7 @@ async function testCrossChannelWhisper(colyseus: Awaited<ReturnType<typeof boot>
 // ─── Main ──────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testJoinChannel(colyseus);
   await testChannelSwitch(colyseus);

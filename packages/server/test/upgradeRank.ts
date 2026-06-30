@@ -7,7 +7,7 @@
  * Run: npx tsx test/upgradeRank.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import {
   ClassArchetype,
   BaseRank,
@@ -37,7 +37,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Successful upgrade NORMAL → ENHANCED ────────────────────────────
 
-async function testUpgradeSuccess(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testUpgradeSuccess(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[upgradeRank] ── successful upgrade ──");
 
   const acct = `upgrade_test_${Date.now()}`;
@@ -148,7 +148,7 @@ async function testUpgradeSuccess(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Not enough mesos ────────────────────────────────────────────────
 
-async function testUpgradeInsufficientMesos(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testUpgradeInsufficientMesos(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[upgradeRank] ── insufficient mesos ──");
 
   const acct = `upgrade_poor_${Date.now()}`;
@@ -215,7 +215,7 @@ async function testUpgradeInsufficientMesos(colyseus: Awaited<ReturnType<typeof 
 
 // ─── Test 3: Item not in inventory ───────────────────────────────────────────
 
-async function testUpgradeMissingItem(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testUpgradeMissingItem(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[upgradeRank] ── missing item ──");
 
   const acct = `upgrade_miss_${Date.now()}`;
@@ -254,7 +254,7 @@ async function testUpgradeMissingItem(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test 4: Not enough shards ───────────────────────────────────────────────
 
-async function testUpgradeInsufficientShards(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testUpgradeInsufficientShards(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[upgradeRank] ── insufficient shards ──");
 
   const acct = `upgrade_noshard_${Date.now()}`;
@@ -314,7 +314,7 @@ async function testUpgradeInsufficientShards(colyseus: Awaited<ReturnType<typeof
 
 // ─── Test 5: Already MYTHIC ──────────────────────────────────────────────────
 
-async function testUpgradeAlreadyMythic(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testUpgradeAlreadyMythic(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[upgradeRank] ── already mythic ──");
 
   const acct = `upgrade_mythic_${Date.now()}`;
@@ -368,7 +368,7 @@ async function testUpgradeAlreadyMythic(colyseus: Awaited<ReturnType<typeof boot
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testUpgradeSuccess(colyseus);
   await testUpgradeInsufficientMesos(colyseus);

@@ -7,7 +7,7 @@
  * Run: npx tsx test/gmCommands.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 import { accountStore } from "../src/persistence/store";
@@ -23,7 +23,7 @@ const watchdog = setTimeout(() => {
 
 // ─── Unit tests: handleGmCommand directly (no Colyseus) ─────────────────────
 
-async function testNonAdminRejected(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testNonAdminRejected(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[gmCommands] ── non-admin rejected ──");
 
   const room = await colyseus.sdk.joinOrCreate("meadowfield", { name: "GMTest_Normal" });
@@ -60,7 +60,7 @@ async function testNonAdminRejected(colyseus: Awaited<ReturnType<typeof boot>>) 
   await room.leave();
 }
 
-async function testAdminGiveMesos(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testAdminGiveMesos(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[gmCommands] ── admin give mesos ──");
 
   // Bootstrap this account as admin via the store directly.
@@ -102,7 +102,7 @@ async function testAdminGiveMesos(colyseus: Awaited<ReturnType<typeof boot>>) {
   await room.leave();
 }
 
-async function testAdminKillAll(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testAdminKillAll(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[gmCommands] ── admin killall ──");
 
   const testAccountId = "gm_acc_killall_" + Date.now();
@@ -191,7 +191,7 @@ function testAuditLog() {
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   // Unit tests (no Colyseus).
   testCommandParsing();

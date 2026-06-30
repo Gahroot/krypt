@@ -8,7 +8,7 @@
  * Run: npx tsx test/rangedCombat.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, AttackType } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -32,7 +32,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Archer hits far mob, Warrior cannot ────────────────────────────
 
-async function testArcherHitsFarMob(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testArcherHitsFarMob(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[rangedCombat] ── Archer vs Warrior range ──");
 
   // Create Warrior + Archer characters in the store.
@@ -189,7 +189,7 @@ async function testArcherHitsFarMob(colyseus: Awaited<ReturnType<typeof boot>>) 
 
 // ─── Test 2: Mage magic bolt hits multiple mobs ─────────────────────────────
 
-async function testMageAoeHitsMultiple(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMageAoeHitsMultiple(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[rangedCombat] ── Mage magic AoE ──");
 
   const mageAcct = `ranged_mage_${Date.now()}`;
@@ -264,7 +264,7 @@ async function testMageAoeHitsMultiple(colyseus: Awaited<ReturnType<typeof boot>
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testArcherHitsFarMob(colyseus);
   await testMageAoeHitsMultiple(colyseus);

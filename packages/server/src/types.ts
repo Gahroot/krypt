@@ -11,6 +11,8 @@ export {
   type CreateCharacterPayload,
   type DeleteCharacterPayload,
   type TravelPayload,
+  type SessionGenerationPayload,
+  type ForceLogoutPayload,
   type FerryBlockedPayload,
   type TalkNpcPayload,
   type DialogLinePayload,

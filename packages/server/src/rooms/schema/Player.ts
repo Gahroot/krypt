@@ -44,6 +44,9 @@ export class Player extends Schema {
   @type("int16") mp = 5;
   @type("int16") maxMp = 5;
   @type("boolean") dead = false;
+  // False while the owner is in the reconnection grace window (flaky-connection drop).
+  // The entity is held in room state during this window; flips back to true on reconnect.
+  @type("boolean") connected = true;
 
   // ─ Stats (STR/DEX/INT/LUK) ─
   @type("uint16") str = 4;

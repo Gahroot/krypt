@@ -9,7 +9,7 @@
  * Run: npx tsx test/skillCast.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, totalSpByLevel, skillStatAt, allSkillsForClass } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
@@ -65,7 +65,7 @@ function findAndPositionMob(state: any, playerX: number, playerY: number): strin
 
 // ─── Test 1: Learn → cast → MP drops + mob takes damage ──────────────────────
 
-async function testLearnAndCast(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testLearnAndCast(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[skillCast] ── learn & cast: warrior.crushing_blow ──");
 
   const accountId = `skillcast_lc_${Date.now()}`;
@@ -154,7 +154,7 @@ async function testLearnAndCast(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 2: Cast without MP → rejected ──────────────────────────────────────
 
-async function testCastNoMp(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCastNoMp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[skillCast] ── cast without MP → rejected ──");
 
   const accountId = `skillcast_nomp_${Date.now()}`;
@@ -204,7 +204,7 @@ async function testCastNoMp(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Cast without learning → rejected ────────────────────────────────
 
-async function testCastNotLearned(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCastNotLearned(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[skillCast] ── cast without learning → rejected ──");
 
   const accountId = `skillcast_nolearn_${Date.now()}`;
@@ -248,7 +248,7 @@ async function testCastNotLearned(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 4: Cast with MP just barely below cost → rejected ──────────────────
 
-async function testCastInsufficientMp(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testCastInsufficientMp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[skillCast] ── MP < cost → rejected ──");
 
   const skillDef = allSkillsForClass(ClassArchetype.WARRIOR).find(
@@ -301,7 +301,7 @@ async function testCastInsufficientMp(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test 5: Beginner nimble_strike learn → cast ────────────────────────────
 
-async function testBeginnerNimbleStrike(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testBeginnerNimbleStrike(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[skillCast] ── beginner.nimble_strike learn & cast ──");
 
   const accountId = `skillcast_beginner_${Date.now()}`;
@@ -379,7 +379,7 @@ async function testBeginnerNimbleStrike(colyseus: Awaited<ReturnType<typeof boot
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testLearnAndCast(colyseus);
   await testCastNoMp(colyseus);

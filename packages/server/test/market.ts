@@ -9,7 +9,7 @@
  * Run: npx tsx test/market.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { accountStore, marketStore, priceHistoryStore } from "../src/persistence/store";
 import { randomizeAppearance } from "@maple/shared";
@@ -21,7 +21,7 @@ const watchdog = setTimeout(() => {
 }, 120_000);
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   const sellerAcct = "acct_seller";
   const buyerAcct = "acct_buyer";

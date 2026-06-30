@@ -88,14 +88,34 @@ function parseVersion(filename: string): number {
 
 // ─── Convenience opener ────────────────────────────────────────────────────
 
-/** Open a database, enable WAL + FK, and run migrations. */
+/**
+ * Open a database, enable WAL + FK, and run migrations.
+ *
+ * Durability notes for crash-safety:
+ *   - `journal_mode = WAL` lets readers run during writes and keeps committed
+ *     transactions recoverable after a hard process kill (the WAL is replayed on
+ *     next open).
+ *   - `synchronous = NORMAL` is the recommended companion to WAL: it fsyncs at
+ *     checkpoints, so a *process* crash (SIGKILL) never loses a committed write.
+ *   - `busy_timeout` avoids spurious SQLITE_BUSY when a checkpoint overlaps a write.
+ */
 export function openDb(dbPath?: string): Database.Database {
   const path = dbPath ? resolveDbPath(dbPath) : resolveDbPath();
   const db = new Database(path);
   db.pragma("journal_mode = WAL");
+  db.pragma("synchronous = NORMAL");
+  db.pragma("busy_timeout = 5000");
   db.pragma("foreign_keys = ON");
   ensureMigrations(db);
   return db;
+}
+
+/**
+ * Force a WAL checkpoint, flushing the write-ahead log into the main DB file.
+ * Call on graceful shutdown so the on-disk `.db` is fully self-contained.
+ */
+export function checkpoint(db: Database.Database): void {
+  db.pragma("wal_checkpoint(TRUNCATE)");
 }
 
 export { Database };

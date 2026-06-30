@@ -5,7 +5,7 @@
  * Run: npx tsx test/mobCombat.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import { ClassArchetype, getMobDef } from "@maple/shared";
 import appConfig from "../src/app.config";
 import { accountStore } from "../src/persistence/store";
@@ -28,7 +28,7 @@ const DEFAULT_APPEARANCE = {
 
 // ─── Test 1: Mob aggros a stationary player and deals damage ─────────────────
 
-async function testMobAggroAndDamage(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMobAggroAndDamage(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[mobCombat] ── mob aggro + damage ──");
 
   const acct = `mob_dmg_${Date.now()}`;
@@ -96,7 +96,7 @@ async function testMobAggroAndDamage(colyseus: Awaited<ReturnType<typeof boot>>)
 
 // ─── Test 2: Mob de-aggros when player moves out of range ────────────────────
 
-async function testMobDeaggro(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMobDeaggro(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[mobCombat] ── mob de-aggro on range ──");
 
   const acct = `mob_deaggro_${Date.now()}`;
@@ -157,7 +157,7 @@ async function testMobDeaggro(colyseus: Awaited<ReturnType<typeof boot>>) {
 
 // ─── Test 3: Mob de-aggros when player goes to different platform (vertical LoS) ─
 
-async function testMobDeaggroVertical(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMobDeaggroVertical(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[mobCombat] ── mob de-aggro on vertical separation ──");
 
   const acct = `mob_vdeaggro_${Date.now()}`;
@@ -217,7 +217,7 @@ async function testMobDeaggroVertical(colyseus: Awaited<ReturnType<typeof boot>>
 
 // ─── Test 4: Dead player mob stops attacking ──────────────────────────────────
 
-async function testMobStopsOnPlayerDeath(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testMobStopsOnPlayerDeath(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[mobCombat] ── mob stops when player dies ──");
 
   const acct = `mob_death_${Date.now()}`;
@@ -272,7 +272,7 @@ async function testMobStopsOnPlayerDeath(colyseus: Awaited<ReturnType<typeof boo
 // ─── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testMobAggroAndDamage(colyseus);
   await testMobDeaggro(colyseus);

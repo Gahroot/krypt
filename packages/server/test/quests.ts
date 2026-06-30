@@ -7,7 +7,7 @@
  * Run: npx tsx test/quests.ts
  */
 import assert from "node:assert";
-import { boot } from "@colyseus/testing";
+import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
 import { accountStore } from "../src/persistence/store";
@@ -25,7 +25,7 @@ const watchdog = setTimeout(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function setupPlayer(colyseus: Awaited<ReturnType<typeof boot>>, accountId: string) {
+async function setupPlayer(colyseus: Awaited<ReturnType<typeof bootAuthed>>, accountId: string) {
   const rec = accountStore.createCharacter(accountId, {
     name: `Quest${Date.now()}`,
     archetype: "BEGINNER",
@@ -81,7 +81,7 @@ function waitForNamed(sdkRoom: unknown, name: string, ms = 3000): Promise<any> {
 // Test: accept kill quest, kill mobs, auto-turn-in
 // ---------------------------------------------------------------------------
 
-async function testKillQuest(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testKillQuest(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[quests] ── kill quest: Pest Control ──");
 
   const accountId = `quest_test_kill_${Date.now()}`;
@@ -250,7 +250,7 @@ async function testKillQuest(colyseus: Awaited<ReturnType<typeof boot>>) {
 // Test: accept quest then try to turn in early (objectives not complete)
 // ---------------------------------------------------------------------------
 
-async function testEarlyTurnInBlocked(colyseus: Awaited<ReturnType<typeof boot>>) {
+async function testEarlyTurnInBlocked(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[quests] ── early turn-in blocked ──");
 
   const accountId = `quest_test_early_${Date.now()}`;
@@ -284,7 +284,7 @@ async function testEarlyTurnInBlocked(colyseus: Awaited<ReturnType<typeof boot>>
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const colyseus = await boot(appConfig);
+  const colyseus = await bootAuthed(appConfig);
 
   await testKillQuest(colyseus);
   await testEarlyTurnInBlocked(colyseus);
