@@ -12,6 +12,9 @@ out/
 .env
 .env.local
 .env.*.local
+.env.production
+# but keep the committed template
+!.env.production.example
 
 # Logs
 *.log

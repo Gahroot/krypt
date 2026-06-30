@@ -1,16 +1,30 @@
 # Lefthook git hooks configuration.
 # Schema: https://lefthook.dev/configuration/
 #
-# pre-commit runs the repo's existing root checks (no full build):
-#   - pnpm typecheck    (tsc --noEmit across all workspaces)
-#   - pnpm lint         (eslint .)
-#   - pnpm format:check (prettier --check .)
-# Skip on demand with: LEFTHOOK=0 git commit ...
+# Installed automatically by `pnpm install` (root `prepare` -> `lefthook install`).
+# Verify on a fresh clone with:  pnpm exec lefthook install && pnpm exec lefthook validate
+#
+# pre-commit  — fast, runs only on STAGED files:
+#   - format  prettier --check  (respects .prettierignore; skips unknown types)
+#   - lint    eslint            (flat config in eslint.config.mjs)
+# pre-push    — whole-repo gate before code leaves the machine:
+#   - typecheck  pnpm -r typecheck  (tsc --noEmit in every workspace)
+#   - test       pnpm -r test       (vitest / tsx suites in every workspace)
+#
+# Bypass in an emergency with: LEFTHOOK=0 git commit ...   (or `git push --no-verify`).
 pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,tsx,js,mjs,cjs,json,jsonc,yml,yaml,css,html}"
+      run: pnpm exec prettier --check --ignore-unknown {staged_files}
+    lint:
+      glob: "packages/**/*.{ts,tsx}"
+      run: pnpm exec eslint {staged_files}
+
+pre-push:
   commands:
     typecheck:
-      run: pnpm typecheck
-    lint:
-      run: pnpm lint
-    format:
-      run: pnpm format:check
+      run: pnpm -r typecheck
+    test:
+      run: pnpm -r test

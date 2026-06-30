@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "deploy:client": "scripts/deploy-client.sh",
     "prepare": "lefthook install"
   },
   "license": "UNLICENSED",
