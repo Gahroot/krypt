@@ -24,7 +24,7 @@ import {
   type CashInfoPayload,
 } from "@maple/shared";
 
-import { getAccountId, getCharId } from "../backend";
+import { getCharId } from "../backend";
 import { uiStore } from "../ui/store";
 import type { CashShopSnapshot, CashShopItem, CashShopFeedback } from "../ui/store";
 
@@ -73,7 +73,6 @@ export class CashShopScene extends Phaser.Scene {
 
   create(): void {
     this.resetState();
-    void getAccountId(); // ensure account exists
     this.charId = getCharId() ?? "";
 
     uiStore.getState().setCashShopActions({

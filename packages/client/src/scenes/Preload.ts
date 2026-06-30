@@ -5,7 +5,7 @@ import { generatePlaceholderTextures, queueTextureLoads } from "../art/textures"
 /**
  * Loads the shared art the rest of the game reuses. Real CC0 platformer art (Kenney) lives under
  * src/assets and is loaded as images here in `preload()`; `create()` then bakes the single
- * remaining procedural primitive (the drop shadow) and advances to character creation.
+ * remaining procedural primitive (the drop shadow) and advances to the login gate.
  */
 export class PreloadScene extends Phaser.Scene {
   constructor() {
@@ -47,6 +47,8 @@ export class PreloadScene extends Phaser.Scene {
 
   create(): void {
     generatePlaceholderTextures(this);
-    this.scene.start("character_create");
+    // Gate the game behind real auth: the login scene shows the Login/Register UI
+    // (or silently resumes a valid session) before character creation.
+    this.scene.start("login");
   }
 }

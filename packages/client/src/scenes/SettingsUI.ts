@@ -20,6 +20,7 @@ import Phaser from "phaser";
 import { keybindings } from "../keybindings";
 import { type ActionId, ALL_ACTION_IDS, type AutoPotConfig, type SkillMacro } from "@maple/shared";
 import { getAudioManager } from "../audio/AudioManager";
+import { logout } from "../backend";
 import { uiStore } from "../ui/store";
 import type {
   SettingsSnapshot,
@@ -122,6 +123,7 @@ export class SettingsScene extends Phaser.Scene {
         this.macros = macros.map((m) => ({ ...m, steps: m.steps.map((st) => ({ ...st })) }));
         this.publish();
       },
+      logout: () => this.onLogout(),
       close: () => this.close(),
     };
     uiStore.getState().setSettingsActions(actions);
@@ -203,6 +205,21 @@ export class SettingsScene extends Phaser.Scene {
   }
 
   // ─── Close ──────────────────────────────────────────────────────────────────
+
+  // ─── Logout ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Drop the session token + bound character, leave the live room, and return to
+   * the login screen. A full reload is the simplest reliable teardown of every
+   * running scene (map + ui + overlays) and guarantees a clean re-auth, after
+   * which Boot → Preload → Login shows the login form (no token).
+   */
+  private onLogout(): void {
+    logout();
+    const room = this.registry.get("room") as { leave?: () => void } | undefined;
+    room?.leave?.();
+    window.location.reload();
+  }
 
   private close(): void {
     this.scene.stop();

@@ -2,6 +2,8 @@ import Phaser from "phaser";
 
 import { BootScene } from "./scenes/Boot";
 import { PreloadScene } from "./scenes/Preload";
+import { LoginScene } from "./scenes/Login";
+import { CharacterSelectScene } from "./scenes/CharacterSelect";
 import { CharacterCreateScene } from "./scenes/CharacterCreate";
 import { MapScene } from "./scenes/MapScene";
 import { UIScene } from "./scenes/UI";
@@ -47,6 +49,8 @@ const config: Phaser.Types.Core.GameConfig = {
   scene: [
     BootScene,
     PreloadScene,
+    LoginScene,
+    CharacterSelectScene,
     CharacterCreateScene,
     IntroScene,
     MapScene,

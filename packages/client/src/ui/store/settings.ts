@@ -64,6 +64,8 @@ export interface SettingsActions {
   setAutoPot(config: AutoPotConfig): void;
   /** Replace the skill-macro list. */
   setMacros(macros: SkillMacro[]): void;
+  /** Log out — drop the session token and return to the login screen. */
+  logout(): void;
   /** Close the settings overlay. */
   close(): void;
 }

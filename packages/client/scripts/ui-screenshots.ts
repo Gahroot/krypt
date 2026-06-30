@@ -29,7 +29,15 @@ const clientRoot = resolve(here, "..");
 const outDir = resolve(clientRoot, "artifacts/ui-screenshots");
 
 /** Console messages that are expected dev-server noise, not real failures. */
-const IGNORE_CONSOLE = [/favicon/i, /\[vite\]/i, /Download the React DevTools/i, /WebGL/i];
+const IGNORE_CONSOLE = [
+  /favicon/i,
+  /\[vite\]/i,
+  /Download the React DevTools/i,
+  /WebGL/i,
+  // Phaser's WebGL framebuffer errors when its canvas is hidden (#game { display:
+  // none }) so captures show only the React overlay — expected, not a panel bug.
+  /Framebuffer status/i,
+];
 
 async function startDevServer(): Promise<ViteDevServer> {
   const server = await createServer({
@@ -73,7 +81,11 @@ async function main(): Promise<void> {
         if (IGNORE_CONSOLE.some((re) => re.test(text))) return;
         errors.push(text);
       });
-      page.on("pageerror", (err: Error) => errors.push(err.message));
+      page.on("pageerror", (err: Error) => {
+        const text = err.message;
+        if (IGNORE_CONSOLE.some((re) => re.test(text))) return;
+        errors.push(text);
+      });
 
       await page.goto(url, { waitUntil: "load" });
 
@@ -82,10 +94,10 @@ async function main(): Promise<void> {
         timeout: 15_000,
       });
 
-      // A fresh Playwright context has no persisted character, so Phaser boots
-      // straight into CharacterCreate and opens that panel. Wait for that signal
-      // so we seed AFTER Phaser has finished opening its own panels — otherwise
-      // the scene re-opens CharacterCreate on top of our seeded panel.
+      // A fresh Playwright context has no token, so Phaser boots into the Login
+      // gate and opens that panel (or, with a persisted session, CharacterCreate).
+      // Wait for whichever boot panel opens so we seed AFTER Phaser has finished
+      // opening its own panels — otherwise the scene re-opens it over our seed.
       await page
         .waitForFunction(
           () => {
@@ -94,17 +106,21 @@ async function main(): Promise<void> {
                 __uiStore: { getState: () => Record<string, unknown> };
               }
             ).__uiStore.getState();
-            return s.characterCreateOpen === true;
+            return s.loginOpen === true || s.characterCreateOpen === true;
           },
           undefined,
           { timeout: 15_000 },
         )
         .catch(() => {
-          /* No character-create gate (e.g. persisted charId) — proceed. */
+          /* No boot gate (e.g. persisted charId) — proceed. */
         });
 
-      // Hide the Phaser canvas so captures show the panel cleanly.
-      await page.addStyleTag({ content: "#game { display: none !important; }" });
+      // Hide the Phaser canvas so captures show the panel cleanly. Use opacity
+      // (not display:none) so the WebGL context stays alive — display:none
+      // triggers spurious "Framebuffer status: Incomplete Attachment" errors.
+      await page.addStyleTag({
+        content: "#game { opacity: 0 !important; pointer-events: none !important; }",
+      });
 
       // Seed the panel through the bridge store, exactly like Phaser would.
       await page.evaluate((seeds: StoreSeed[]) => {

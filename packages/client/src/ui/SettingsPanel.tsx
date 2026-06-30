@@ -9,6 +9,7 @@ import {
   X,
   Swords,
   FlaskConical,
+  LogOut,
 } from "lucide-react";
 import {
   type ActionId,
@@ -21,6 +22,7 @@ import {
 } from "@maple/shared";
 
 import { keyBindFromEventCode } from "@/keybindings";
+import { VERSION_LABEL } from "@/version";
 import { Panel } from "@/ui/components/Panel";
 import { Button } from "@/ui/components/ui/button";
 import { Switch } from "@/ui/components/ui/switch";
@@ -611,6 +613,17 @@ export function SettingsPanel() {
                 onCheckedChange={(v) => toggle("gameplay.showMinimapNames", v)}
               />
             </Row>
+
+            <Separator className="my-3" />
+            <SectionLabel>Account</SectionLabel>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="w-full"
+              onClick={() => actions?.logout()}
+            >
+              <LogOut className="size-3.5" /> Log Out
+            </Button>
           </TabsContent>
 
           {/* ── Combat QoL ── */}
@@ -683,6 +696,11 @@ export function SettingsPanel() {
           </TabsContent>
         </div>
       </Tabs>
+
+      {/* Build/protocol version — visible in-game so testers can quote it in bug reports. */}
+      <div className="mt-2 border-t border-border pt-2 text-center text-[10px] text-muted-foreground select-text">
+        {VERSION_LABEL}
+      </div>
     </Panel>
   );
 }

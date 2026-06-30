@@ -1,0 +1,21 @@
+# Netlify config for the static CryptoMaple client.
+#
+# One-command deploy from the repo root (recommended — bakes the wss:// URL):
+#   VITE_BACKEND_URL=wss://api.example.com scripts/deploy-client.sh netlify
+#
+# Or connect this repo to a Netlify site and set VITE_BACKEND_URL in the
+# Netlify build environment; the build command below runs from the repo root.
+[build]
+  base = "."
+  command = "pnpm --filter @maple/client build"
+  publish = "packages/client/dist"
+
+# VITE_BACKEND_URL must be set in the Netlify site's environment (Site settings →
+# Environment variables) — it is baked into the bundle at build time. It MUST be
+# wss:// or the https page cannot open the WebSocket.
+
+# Single entry point: serve index.html for any path.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

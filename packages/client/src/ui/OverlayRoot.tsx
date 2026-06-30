@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType } from "react";
 
 import { InventoryPanel } from "@/ui/InventoryPanel";
 import { CharacterCreatePanel } from "@/ui/CharacterCreatePanel";
+import { CharacterSelectPanel } from "@/ui/CharacterSelectPanel";
 import { DialogPanel } from "@/ui/DialogPanel";
 import { QuestOfferPanel } from "@/ui/QuestOfferPanel";
 import { QuestLogPanel } from "@/ui/QuestLogPanel";
@@ -10,6 +11,7 @@ import { ReportDialog } from "@/ui/ReportDialog";
 import { ChannelSelectPanel } from "@/ui/ChannelSelectPanel";
 import { CoachMarks } from "@/ui/CoachMarks";
 import { IntroPanel } from "@/ui/IntroPanel";
+import { LoginPanel } from "@/ui/LoginPanel";
 import { HUD } from "@/ui/HUD";
 import { Toaster } from "@/ui/components/ui/sonner";
 import { useUIStore, type UIState } from "@/ui/store";
@@ -87,6 +89,7 @@ export function OverlayRoot() {
   return (
     <>
       <HUD />
+      <CharacterSelectPanel />
       <CharacterCreatePanel />
       <InventoryPanel />
       <DialogPanel />
@@ -97,6 +100,7 @@ export function OverlayRoot() {
       <ChannelSelectPanel />
       <CoachMarks />
       <IntroPanel />
+      <LoginPanel />
 
       {/* Heavy, on-demand panels — code-split, fetched on first open. */}
       <LazyPanel open={(s) => s.marketOpen} component={MarketPanel} />

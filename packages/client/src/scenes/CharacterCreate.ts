@@ -1,13 +1,11 @@
 import Phaser from "phaser";
-import { Client } from "@colyseus/sdk";
 import {
-  MessageType,
   STARTER_OUTFITS,
   randomizeAppearance,
   type CharacterAppearance,
   type Gender,
 } from "@maple/shared";
-import { BACKEND_URL, getAccountId, setCharId } from "../backend";
+import { createCharacterRequest } from "../backend";
 import { uiStore } from "../ui/store";
 
 // Background fill behind the React overlay (matches the UI palette).
@@ -19,8 +17,9 @@ const BG = 0x0c1019;
 // All UI now lives in the React overlay (`ui/CharacterCreatePanel.tsx`). This
 // scene owns the authoritative appearance + connection state, pushes plain
 // snapshots into the bridge store, and registers the imperative actions React
-// calls. On Confirm it joins the `dawn_isle` room, sends CREATE_CHARACTER, and
-// hands off to the intro cinematic.
+// calls. On Confirm it creates the character via `POST /characters` and returns
+// to the Character Select screen so the player can pick who to play. Back also
+// returns to Character Select.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export class CharacterCreateScene extends Phaser.Scene {
@@ -95,50 +94,30 @@ export class CharacterCreateScene extends Phaser.Scene {
       this.publish("Name is required.");
       return;
     }
-    if (!/^[a-zA-Z0-9 _-]{1,16}$/.test(trimmed)) {
-      this.publish("1\u201316 chars: letters, numbers, space, _ or -");
+    if (!/^[a-zA-Z0-9 _-]{2,16}$/.test(trimmed)) {
+      this.publish("2\u201316 chars: letters, numbers, space, _ or -");
       return;
     }
 
     this.sending = true;
-    this.publish("Connecting\u2026");
+    this.publish("Creating\u2026");
 
     try {
-      const client = new Client(BACKEND_URL);
-      const room = await client.joinOrCreate("dawn_isle", {
-        accountId: getAccountId(),
-      });
-
-      room.onMessage("character_created", (msg: { charId: string; name: string }) => {
-        setCharId(msg.charId);
-        localStorage.setItem("cryptomaple.name", msg.name);
-        room.leave();
-        uiStore.getState().setCharacterCreateOpen(false);
-        // Brand-new character → intro cinematic, then Dawn Isle.
-        this.scene.start("intro");
-      });
-
-      room.onMessage("character_error", (msg: { reason: string }) => {
-        this.sending = false;
-        this.publish(msg.reason);
-        room.leave();
-      });
-
-      room.send(MessageType.CREATE_CHARACTER, {
-        name: trimmed,
-        gender: appearance.gender,
-        appearance,
-      });
+      // Server validates name/uniqueness/slot-cap and binds the new character to
+      // the authenticated account (identity from the signed token, not the body).
+      await createCharacterRequest(trimmed, appearance);
+      uiStore.getState().setCharacterCreateOpen(false);
+      // Return to the roster so the player can pick the new character to play.
+      this.scene.start("character_select");
     } catch (err) {
-      console.error("[character_create] failed to connect", err);
       this.sending = false;
-      this.publish("Could not connect to server.");
+      this.publish(err instanceof Error ? err.message : "Could not create character.");
     }
   }
 
-  // ─── Back → restart flow ───────────────────────────────────────────────────
+  // ─── Back → Character Select ───────────────────────────────────────────────
   private onBack(): void {
     uiStore.getState().setCharacterCreateOpen(false);
-    this.scene.start("preload");
+    this.scene.start("character_select");
   }
 }

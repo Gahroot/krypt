@@ -34,6 +34,7 @@ export interface PlayerView {
   mp: number;
   maxMp: number;
   dead: boolean;
+  connected: boolean;
   str: number;
   dex: number;
   intel: number;

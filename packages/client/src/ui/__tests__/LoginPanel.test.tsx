@@ -1,0 +1,99 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+import { LoginPanel } from "@/ui/LoginPanel";
+import { uiStore, type LoginActions } from "@/ui/store";
+
+/**
+ * Smoke / render tests for the auth-gate overlay panel.
+ *
+ * These drive the SAME bridge store the live LoginScene does: push a snapshot in
+ * via `setLogin`, then assert React renders it and routes user intent back out
+ * through the `loginActions.*` registry.
+ */
+
+function mockActions(): LoginActions {
+  return {
+    loginEmail: vi.fn(),
+    registerEmail: vi.fn(),
+    connectWallet: vi.fn(),
+    guest: vi.fn(),
+  };
+}
+
+let actions: LoginActions;
+
+beforeEach(() => {
+  actions = mockActions();
+  uiStore.getState().setLogin({ error: "", sending: false, walletAvailable: true });
+  uiStore.getState().setLoginActions(actions);
+  uiStore.getState().setLoginOpen(true);
+});
+
+afterEach(() => {
+  uiStore.getState().setLoginOpen(false);
+});
+
+describe("LoginPanel", () => {
+  it("renders nothing when closed", () => {
+    uiStore.getState().setLoginOpen(false);
+    const { container } = render(<LoginPanel />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("renders the auth gate with both alternative sign-in methods", () => {
+    render(<LoginPanel />);
+    expect(screen.getByRole("heading", { name: /welcome to cryptomaple/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /connect wallet/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue as guest/i })).toBeInTheDocument();
+  });
+
+  it("routes email + password to actions.loginEmail in sign-in mode", async () => {
+    const user = userEvent.setup();
+    render(<LoginPanel />);
+
+    await user.type(screen.getByLabelText(/email/i), "hero@example.com");
+    await user.type(screen.getByLabelText(/password/i), "hunter2");
+    await user.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    expect(actions.loginEmail).toHaveBeenCalledWith("hero@example.com", "hunter2");
+    expect(actions.registerEmail).not.toHaveBeenCalled();
+  });
+
+  it("routes to actions.registerEmail after switching to the Register tab", async () => {
+    const user = userEvent.setup();
+    render(<LoginPanel />);
+
+    await user.click(screen.getByRole("tab", { name: /register/i }));
+    await user.type(screen.getByLabelText(/email/i), "new@example.com");
+    await user.type(screen.getByLabelText(/password/i), "s3cret!");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    expect(actions.registerEmail).toHaveBeenCalledWith("new@example.com", "s3cret!");
+  });
+
+  it("routes the guest button to actions.guest", async () => {
+    const user = userEvent.setup();
+    render(<LoginPanel />);
+
+    await user.click(screen.getByRole("button", { name: /continue as guest/i }));
+    expect(actions.guest).toHaveBeenCalled();
+  });
+
+  it("disables Connect Wallet when no wallet is available", () => {
+    uiStore.getState().setLogin({ error: "", sending: false, walletAvailable: false });
+    render(<LoginPanel />);
+    expect(screen.getByRole("button", { name: /connect wallet/i })).toBeDisabled();
+  });
+
+  it("surfaces an auth error from the snapshot", () => {
+    uiStore.getState().setLogin({
+      error: "invalid email or password",
+      sending: false,
+      walletAvailable: true,
+    });
+    render(<LoginPanel />);
+    expect(screen.getByText(/invalid email or password/i)).toBeInTheDocument();
+  });
+});

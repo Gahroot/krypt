@@ -19,6 +19,8 @@ import {
   type NpcDef,
   type DialogLinePayload,
   type TravelPayload,
+  type SessionGenerationPayload,
+  type ForceLogoutPayload,
   type JobAdvancePayload,
   type BranchListPayload,
   type RuneSpawnPayload,
@@ -27,16 +29,23 @@ import {
   type TreasureSpawnPayload,
   type TreasureHitPayload,
   type TreasureDestroyPayload,
+  type ServerAnnouncementPayload,
   getMobDef,
+  PROTOCOL_VERSION,
+  PROTOCOL_MISMATCH_CODE,
 } from "@maple/shared";
 
 import {
   BACKEND_URL,
-  getAccountId,
+  CONNECT_TIMEOUT_MS,
+  authenticateForPlay,
+  BannedError,
   getCharId,
   getCurrentChannel,
   setCurrentChannel,
   getPlayerName,
+  setSessionExpiredHandler,
+  clearSession,
 } from "../backend";
 import { keybindings } from "../keybindings";
 import type { ActionId } from "@maple/shared";
@@ -150,6 +159,31 @@ const DIALOG_OPEN_KEY = "dialogOpen";
 /** Registry key for quest notification overlay text (set by Meadowfield, consumed by UIScene). */
 const QUEST_NOTIFY_KEY = "questNotify";
 
+// ─── Connection robustness ─────────────────────────────────────────────────────────────────────
+/** Live connection state surfaced by the HUD indicator. */
+type ConnStatus = "connecting" | "online" | "reconnecting" | "offline";
+
+/** The distinct, user-actionable ways a connect attempt can fail. */
+type ConnectErrorKind = "offline" | "timeout" | "version" | "banned" | "full" | "unknown";
+
+/** A classified connect failure, ready to render on the friendly error screen. */
+interface ConnectErrorInfo {
+  kind: ConnectErrorKind;
+  title: string;
+  message: string;
+}
+
+/** Thrown when `joinOrCreate` doesn't settle within CONNECT_TIMEOUT_MS. */
+class ConnectTimeoutError extends Error {
+  constructor() {
+    super("connect timed out");
+    this.name = "ConnectTimeoutError";
+  }
+}
+
+/** Shared monospace font stack used across the connection overlays. */
+const CONN_FONT = "ui-monospace, Menlo, monospace";
+
 /** Map an NPC's spriteKey to the procedural TextureKey for rendering. */
 function npcTextureKey(spriteKey: string): string {
   const map: Record<string, string> = {
@@ -221,7 +255,39 @@ export class MapScene extends Phaser.Scene {
   private mapId = "dawn_isle";
   private map!: GameMap;
   private transitioning = false;
+  /** True while the SDK is auto-reconnecting a dropped socket (the overlay is up). */
+  private reconnecting = false;
+  /** "Reconnecting…" overlay shown while we ride out a flaky connection. */
+  private reconnectOverlay?: Phaser.GameObjects.Container;
+  /** Tween animating the overlay's ellipsis; stopped when the overlay hides. */
+  private reconnectDotsEvent?: Phaser.Time.TimerEvent;
+
+  // ── Connect lifecycle / error UX ────────────────────────────────
+  /** Monotonic id for the current connect attempt; lets a timed-out join abandon a late room. */
+  private connectAttempt = 0;
+  /** Screen-fixed friendly error panel (with Retry) shown when a connect attempt fails. */
+  private connectErrorOverlay?: Phaser.GameObjects.Container;
+  /** Last classified error, kept so a window resize can re-lay-out the panel. */
+  private lastConnectError?: ConnectErrorInfo;
+  /** Retry handler bound to the current error panel (used when re-laying-out on resize). */
+  private lastConnectRetry?: () => void;
+  /** Screen-fixed HUD connection-status pill (dot + label). */
+  private connStatusContainer?: Phaser.GameObjects.Container;
+  private connStatusDot?: Phaser.GameObjects.Arc;
+  private connStatusText?: Phaser.GameObjects.Text;
+  /** Auto-hide timer for the "Online" pill so a healthy HUD stays uncluttered. */
+  private connStatusHideEvent?: Phaser.Time.TimerEvent;
+  /** Most recent server announcement; used to surface a ban/kick reason on a join-time disconnect. */
+  private lastAnnouncement?: { text: string; at: number };
+
   private pendingSpawnId?: string;
+  /**
+   * Per-login generation token for the single-live-session guard. Issued by the server on
+   * the first join and echoed on every map/channel transfer so a relocation isn't treated
+   * as a duplicate login. Held in-memory (NOT persisted) so a fresh tab/login starts
+   * without one and is correctly recognised as a second session.
+   */
+  private sessionGeneration?: string;
   private readonly portalLabels = new Map<string, Phaser.GameObjects.Text>();
   private readonly portalPrompts = new Map<string, Phaser.GameObjects.Text>();
   /** Local player's last-seen mesos / level / exp, used to float gain feedback. */
@@ -258,11 +324,14 @@ export class MapScene extends Phaser.Scene {
     mapId?: string;
     spawnId?: string;
     channel?: number;
+    generation?: string;
     _welcomeBanner?: string;
     _fromTransition?: boolean;
   }): Promise<void> {
     this.mapId = data?.mapId ?? "dawn_isle";
     this.pendingSpawnId = data?.spawnId;
+    // Carry the session generation across a transfer (a fresh login leaves it undefined).
+    this.sessionGeneration = data?.generation;
     this.registry.set("mapId", this.mapId);
     const resolvedMap = getMap(this.mapId);
     if (!resolvedMap) {
@@ -271,6 +340,28 @@ export class MapScene extends Phaser.Scene {
     }
     this.map = resolvedMap;
     this.transitioning = false;
+    // Phaser reuses the scene instance across restarts (travel / channel switch), so reset
+    // reconnection state here — the prior overlay GameObjects were destroyed on shutdown,
+    // leaving these refs dangling.
+    this.reconnecting = false;
+    this.reconnectOverlay = undefined;
+    this.reconnectDotsEvent = undefined;
+    // Connection-UX state is likewise per-instance — clear dangling refs from a prior run.
+    this.connectErrorOverlay = undefined;
+    this.lastConnectError = undefined;
+    this.connStatusContainer = undefined;
+    this.connStatusDot = undefined;
+    this.connStatusText = undefined;
+    this.connStatusHideEvent = undefined;
+    this.lastAnnouncement = undefined;
+
+    // Re-layout the connection overlays when the (RESIZE-mode) canvas changes size, and
+    // detach the listener on scene shutdown so restarts don't stack handlers.
+    this.scale.on(Phaser.Scale.Events.RESIZE, this.reflowConnectionUi, this);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.scale.off(Phaser.Scale.Events.RESIZE, this.reflowConnectionUi, this);
+      this.connStatusHideEvent?.remove();
+    });
 
     // Kill the loading scene if we arrived via a portal transition.
     if (this.scene.isActive("loading")) {
@@ -312,12 +403,7 @@ export class MapScene extends Phaser.Scene {
     // Render NPCs placed on this map.
     this.spawnNpcs();
 
-    try {
-      await this.connect();
-    } catch (err) {
-      console.error(`[map] failed to join ${this.mapId}`, err);
-      this.showConnectionError();
-    }
+    await this.attemptConnect();
 
     // ── Loot All hotkey ──
     this.input.keyboard?.on("keydown", (event: KeyboardEvent) => {
@@ -335,6 +421,9 @@ export class MapScene extends Phaser.Scene {
   override update(_time: number, delta: number): void {
     const room = this.room;
     if (!room || !this.cursors || !this.wasd || !this.localPlayer) return;
+    // While the socket is dropped, the SDK buffers sends (and would flush stale movement
+    // on reconnect). Freeze input/interaction until we're back; the world holds in place.
+    if (this.reconnecting) return;
 
     // 0) Suppress game input while a text field is focused, or settings/dialog open.
     //    `chatFocused` is the central "player is typing in the overlay" flag
@@ -634,17 +723,70 @@ export class MapScene extends Phaser.Scene {
   }
 
   // ─── Connection + state binding ───────────────────────────────────────────────────────────────
+  /**
+   * Drive a single connect attempt with full error UX:
+   *   - clears any prior error panel and flags the HUD "connecting",
+   *   - on an expired/invalid token (AUTH_FAILED) routes to a clean re-login,
+   *   - on any other failure classifies it and shows a friendly, retryable error screen
+   *     (instead of the old generic dead-end).
+   *
+   * Re-entrant by design: the Retry button calls straight back into this.
+   */
+  private async attemptConnect(): Promise<void> {
+    this.clearConnectionError();
+    this.setConnStatus("connecting");
+    try {
+      await this.connect();
+    } catch (err) {
+      // AUTH_FAILED means the token is expired/invalid — not "server down". Force a clean
+      // re-login (preserving local UI state) rather than showing the offline panel.
+      if (this.isAuthError(err)) {
+        console.warn(`[map] join rejected (auth) — forcing re-login`);
+        this.forceRelogin();
+        return;
+      }
+      const info = this.classifyConnectError(err);
+      console.error(`[map] connect failed (${info.kind}) for ${this.mapId}`, err);
+      this.setConnStatus("offline");
+      this.showConnectionError(info);
+    }
+  }
+
   private async connect(): Promise<void> {
+    const attempt = ++this.connectAttempt;
     const client = new Client(BACKEND_URL);
+    // Present the server-issued session token minted by the login flow. The server
+    // derives identity from this token — never from options. We set it as the bearer
+    // credential AND pass it in the join options (onAuth reads either).
+    const { token } = await authenticateForPlay();
+    client.auth.token = token;
+    // If a proactive refresh ever fails (token expired/revoked while playing), route
+    // cleanly back to login — preserving local UI state (clearSession keeps it).
+    setSessionExpiredHandler(() => this.forceRelogin());
     // Use channel-named rooms: `{mapId}__ch{N}` for N>0, bare `{mapId}` for channel 0 (compat).
     const channel = (this.registry.get("channel") as number | undefined) ?? getCurrentChannel();
     const roomName = channel > 0 ? `${this.mapId}__ch${channel}` : this.mapId;
-    const room = await client.joinOrCreate<TownStateView>(roomName, {
+    const room = await this.joinWithTimeout(client, roomName, {
+      token,
+      // Report the wire-protocol version so the server can reject a stale client with a clear
+      // "please refresh" instead of letting a mismatched build silently misbehave.
+      protocolVersion: PROTOCOL_VERSION,
       name: getPlayerName(),
-      accountId: getAccountId(),
       charId: getCharId() ?? undefined,
       spawnId: this.pendingSpawnId,
+      // Echo the generation token (if this is a transfer) so the server's single-live-
+      // session guard recognises us as the same login relocating, not a second login.
+      generation: this.sessionGeneration,
     });
+
+    // A newer attempt superseded us (rapid retry) or the scene is tearing down —
+    // abandon this room so we don't double-bind or leak a socket.
+    if (attempt !== this.connectAttempt || this.transitioning) {
+      void room.leave().catch(() => {
+        /* already closing */
+      });
+      return;
+    }
 
     this.room = room;
     this.localSessionId = room.sessionId;
@@ -653,10 +795,241 @@ export class MapScene extends Phaser.Scene {
     this.registry.set(CHAT_FOCUSED_KEY, false);
 
     room.onError((code, message) => console.error(`[map] room error ${code}: ${message ?? ""}`));
-    room.onLeave((code) => console.warn(`[map] left ${this.mapId} (code ${code})`));
+
+    // A banned account (or a moderation kick) is delivered as a server announcement
+    // immediately before the server closes the socket. Capture the latest one so a
+    // join-time disconnect can surface the reason on the error screen.
+    room.onMessage(MessageType.SERVER_ANNOUNCEMENT, (payload: ServerAnnouncementPayload) => {
+      this.lastAnnouncement = { text: payload.text, at: Date.now() };
+    });
+
+    this.configureReconnection(room);
 
     this.bindState(room);
     this.bindChat(room);
+
+    // We're live — flip the HUD indicator green (it auto-hides shortly after).
+    this.setConnStatus("online");
+  }
+
+  /**
+   * Wrap `joinOrCreate` in a configurable timeout so a silent/half-open socket can't
+   * leave the player on a frozen screen. If the join hasn't settled within
+   * CONNECT_TIMEOUT_MS we reject with a ConnectTimeoutError; a late-arriving room is
+   * abandoned by the attempt-id guard in connect().
+   */
+  private joinWithTimeout(
+    client: Client,
+    roomName: string,
+    options: Record<string, unknown>,
+  ): Promise<Room<unknown, TownStateView>> {
+    return new Promise<Room<unknown, TownStateView>>((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new ConnectTimeoutError());
+      }, CONNECT_TIMEOUT_MS);
+      client.joinOrCreate<TownStateView>(roomName, options).then(
+        (room) => {
+          clearTimeout(timer);
+          if (settled) {
+            // Timed out already — don't leak the socket that arrived late.
+            void room.leave().catch(() => {
+              /* already closing */
+            });
+            return;
+          }
+          settled = true;
+          resolve(room);
+        },
+        (err: unknown) => {
+          clearTimeout(timer);
+          if (settled) return;
+          settled = true;
+          reject(err as Error);
+        },
+      );
+    });
+  }
+
+  /**
+   * Wire graceful reconnection on top of the Colyseus SDK's built-in auto-reconnect.
+   *
+   * The SDK transparently re-establishes the SAME room instance (state + all our
+   * `bindState` callbacks survive), so a successful reconnect resumes the player in place
+   * — the server held our Player entity for its grace window (MapRoom.onDrop). We only
+   * layer on UX: a "Reconnecting…" overlay on drop, resume on success, and a clean
+   * fall-back to the login / character-select flow when retries are exhausted.
+   *
+   * Retry budget is tuned to slightly outlast the server's RECONNECT_GRACE_SECONDS (20s)
+   * so a within-window restore always succeeds, while a longer drop gives up promptly.
+   */
+  private configureReconnection(room: Room<unknown, TownStateView>): void {
+    const r = room.reconnection;
+    r.enabled = true;
+    r.minUptime = 0; // reconnect even if the drop happens moments after joining
+    r.maxDelay = 2000; // cap backoff so each retry stays responsive
+    r.maxRetries = 14; // ~23s total budget (just past the 20s server grace window)
+
+    // Unexpected socket drop — the SDK has begun auto-reconnecting with backoff.
+    room.onDrop((code, reason) => {
+      // A consented leave we initiated (travel / channel switch / force logout / kick)
+      // routes through onLeave instead; if a transition is already underway, ignore.
+      if (this.transitioning) return;
+      console.warn(`[map] dropped (code ${code}${reason ? `: ${reason}` : ""}) — reconnecting…`);
+      this.reconnecting = true;
+      this.setConnStatus("reconnecting");
+      this.showReconnectOverlay();
+    });
+
+    // Reconnection succeeded — same session, state stream resumes; just drop the overlay.
+    room.onReconnect(() => {
+      console.log("[map] reconnected");
+      this.reconnecting = false;
+      this.setConnStatus("online");
+      this.hideReconnectOverlay();
+    });
+
+    // Terminal leave: either a consented leave we initiated, or reconnection ultimately
+    // failed (retries exhausted / server grace window elapsed). If we didn't initiate it,
+    // fall back cleanly to the login screen (which lands on character select).
+    room.onLeave((code, reason) => {
+      console.warn(`[map] left ${this.mapId} (code ${code}${reason ? `: ${reason}` : ""})`);
+      this.reconnecting = false;
+      this.hideReconnectOverlay();
+      if (this.transitioning) return; // a normal scene transition is already handling this
+
+      // A ban / moderation kick arrives as a SERVER_ANNOUNCEMENT immediately before the
+      // server closes the socket. If we saw one in the last few seconds, surface the reason
+      // on the error screen instead of silently bouncing to login.
+      const ban = this.recentBanAnnouncement();
+      if (ban) {
+        this.setConnStatus("offline");
+        this.room = undefined;
+        this.registry.set(ROOM_REGISTRY_KEY, undefined);
+        this.showConnectionError({
+          kind: "banned",
+          title: "Account banned",
+          message: ban,
+        });
+        return;
+      }
+      this.handleTerminalDisconnect();
+    });
+  }
+
+  /**
+   * The text of a ban/kick announcement received within the last ~4s, or null.
+   * Used to distinguish a moderation disconnect from an ordinary network drop.
+   */
+  private recentBanAnnouncement(): string | null {
+    const a = this.lastAnnouncement;
+    if (!a) return null;
+    if (Date.now() - a.at > 4000) return null;
+    return a.text;
+  }
+
+  /** Whether a join error was an auth rejection (expired/invalid token → AUTH_FAILED 4212). */
+  private isAuthError(err: unknown): boolean {
+    const code = (err as { code?: number } | null)?.code;
+    return code === 4212; // Colyseus ErrorCode.AUTH_FAILED
+  }
+
+  /**
+   * The session is no longer valid (token expired/revoked). Drop the credential but
+   * KEEP local UI state (selected character, name, quickslots, channel) so the player
+   * resumes where they were after signing back in, then route cleanly to login.
+   */
+  private forceRelogin(): void {
+    if (this.transitioning) return;
+    this.transitioning = true;
+    setSessionExpiredHandler(null);
+    clearSession();
+    this.room = undefined;
+    this.registry.set(ROOM_REGISTRY_KEY, undefined);
+    this.scene.start("login");
+  }
+
+  /**
+   * Could not reconnect in time (server down / network lost / grace window elapsed).
+   * Instead of the old dead-end bounce to login, show the friendly retryable error
+   * screen. Retry does a CLEAN scene restart (fresh room + state bind, no duplicate
+   * sprites) so that when the server returns the player rejoins the same map.
+   */
+  private handleTerminalDisconnect(): void {
+    this.room = undefined;
+    this.registry.set(ROOM_REGISTRY_KEY, undefined);
+    this.setConnStatus("offline");
+    this.showConnectionError(
+      {
+        kind: "offline",
+        title: "Connection lost",
+        message: `You were disconnected from ${this.map?.name ?? "the server"} and couldn't reconnect. The server may be down or restarting. Retry when you're ready.`,
+      },
+      () => this.restartScene(),
+    );
+  }
+
+  /** Clean restart of this map scene — re-runs create() → attemptConnect() from scratch. */
+  private restartScene(): void {
+    this.clearConnectionError();
+    this.scene.restart({
+      mapId: this.mapId,
+      spawnId: this.pendingSpawnId,
+      generation: this.sessionGeneration,
+    });
+  }
+
+  /** Build (once) and show the screen-fixed "Reconnecting…" overlay with an animated ellipsis. */
+  private showReconnectOverlay(): void {
+    if (this.reconnectOverlay) {
+      this.reconnectOverlay.setVisible(true);
+      return;
+    }
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const backdrop = this.add.rectangle(0, 0, w, h, 0x05070d, 0.62).setOrigin(0);
+    const panel = this.add.rectangle(w / 2, h / 2, 320, 120, 0x131a2b, 0.95).setOrigin(0.5);
+    panel.setStrokeStyle(1, 0x3b4a66, 1);
+    const title = this.add
+      .text(w / 2, h / 2 - 16, "Reconnecting", {
+        fontFamily: "ui-monospace, Menlo, monospace",
+        fontSize: "20px",
+        color: "#f6c177",
+        align: "center",
+      })
+      .setOrigin(0.5);
+    const sub = this.add
+      .text(w / 2, h / 2 + 18, "Hold tight — restoring your session", {
+        fontFamily: "ui-monospace, Menlo, monospace",
+        fontSize: "12px",
+        color: "#9aa7c2",
+        align: "center",
+      })
+      .setOrigin(0.5);
+
+    const overlay = this.add.container(0, 0, [backdrop, panel, title, sub]);
+    overlay.setScrollFactor(0).setDepth(20_000);
+    this.reconnectOverlay = overlay;
+
+    // Animate the trailing ellipsis so it's visibly "working".
+    let dots = 0;
+    this.reconnectDotsEvent = this.time.addEvent({
+      delay: 350,
+      loop: true,
+      callback: () => {
+        dots = (dots + 1) % 4;
+        title.setText(`Reconnecting${".".repeat(dots)}`);
+      },
+    });
+  }
+
+  /** Hide the reconnection overlay and stop its animation (kept for cheap re-show). */
+  private hideReconnectOverlay(): void {
+    this.reconnectDotsEvent?.remove();
+    this.reconnectDotsEvent = undefined;
+    this.reconnectOverlay?.setVisible(false);
   }
 
   /** Attach all add/change/remove listeners. `getStateCallbacks` is the verified 0.17 SDK API. */
@@ -805,6 +1178,10 @@ export class MapScene extends Phaser.Scene {
           const t = this.playerTags.get(sessionId);
           if (t) this.updatePlayerTagText(t, player.name, player.level, player.equippedTitle);
           this.syncPlayerAppearance(sprite, player);
+          // Dim remote players who are riding out a reconnection grace window so others
+          // can tell they've briefly dropped (entity is held server-side until they
+          // resume or the window elapses).
+          sprite.setAlpha(player.connected ? 1 : 0.4);
         });
       }
       this.applyDepthAndShadow(sprite);
@@ -1001,6 +1378,22 @@ export class MapScene extends Phaser.Scene {
       }
     });
 
+    // Store the per-login generation token so transfers carry it (single-session guard).
+    room.onMessage(MessageType.SESSION_GENERATION, (payload: SessionGenerationPayload) => {
+      this.sessionGeneration = payload.generation;
+    });
+
+    // The server kicked this session because the character logged in elsewhere.
+    // Drop back to the login screen (which lands on character select) — it does NOT
+    // auto-rejoin a map, so there's no kick ping-pong with the session that took over.
+    room.onMessage(MessageType.FORCE_LOGOUT, (payload: ForceLogoutPayload) => {
+      console.warn(`[map] force logout: ${payload.reason}`);
+      this.transitioning = true;
+      this.room?.leave();
+      this.room = undefined;
+      this.scene.start("login");
+    });
+
     room.onMessage(MessageType.TRAVEL, (payload: TravelPayload) => {
       if (this.transitioning) return;
       this.transitioning = true;
@@ -1024,6 +1417,7 @@ export class MapScene extends Phaser.Scene {
         this.scene.start("map", {
           mapId: payload.mapId,
           spawnId: payload.spawnId,
+          generation: this.sessionGeneration,
           _welcomeBanner: destName,
         });
       });
@@ -1062,6 +1456,7 @@ export class MapScene extends Phaser.Scene {
           mapId: payload.mapId,
           spawnId: payload.spawnId,
           channel: payload.channel,
+          generation: this.sessionGeneration,
           _welcomeBanner: destName,
         });
       });
@@ -2776,22 +3171,273 @@ export class MapScene extends Phaser.Scene {
     });
   }
 
-  private showConnectionError(): void {
-    this.add
-      .text(
-        this.scale.width / 2,
-        this.scale.height / 2,
-        `Couldn't reach ${this.map?.name ?? "the server"}.\nIs the server running?`,
-        {
-          fontFamily: "ui-monospace, Menlo, monospace",
-          fontSize: "16px",
-          color: "#f6c177",
-          align: "center",
-        },
-      )
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(10_000);
+  /**
+   * Classify a failed connect attempt into a distinct, user-actionable kind so the error
+   * screen can say something concrete (server down vs. version mismatch vs. full vs. banned)
+   * rather than a generic "Could not connect".
+   *
+   * Colyseus surfaces matchmaking failures as a `MatchMakeError`/`ServerError` carrying a
+   * numeric `code`: the HTTP-ish ErrorCode range (520–526) for matchmaking, or a raw network
+   * error code (e.g. "ECONNREFUSED") when the server is unreachable. We also fold in our own
+   * ConnectTimeoutError and any banned-account hint already received over the socket.
+   */
+  private classifyConnectError(err: unknown): ConnectErrorInfo {
+    const serverName = this.map?.name ?? "the server";
+
+    // An auth-layer ban (server-issued 403 with the reason) surfaces as a BannedError.
+    if (err instanceof BannedError) {
+      return { kind: "banned", title: "Account banned", message: err.reason };
+    }
+
+    if (err instanceof ConnectTimeoutError) {
+      return {
+        kind: "timeout",
+        title: "Connection timed out",
+        message: `${serverName} didn't respond in time. Your connection may be slow, or the server may be busy. Check your network and try again.`,
+      };
+    }
+
+    // A ban can also be delivered as an announcement right before the socket closes
+    // during the join handshake — prefer that explicit reason if it's fresh.
+    const ban = this.recentBanAnnouncement();
+    if (ban) {
+      return { kind: "banned", title: "Account banned", message: ban };
+    }
+
+    const code = (err as { code?: number | string } | null)?.code;
+    const rawMessage =
+      typeof (err as { message?: unknown } | null)?.message === "string"
+        ? ((err as { message: string }).message ?? "")
+        : "";
+    const lower = rawMessage.toLowerCase();
+
+    // Network-level failure (server down / DNS / refused / offline). Colyseus forwards the
+    // underlying Node/browser error code as a string like "ECONNREFUSED".
+    const networkCodes = new Set(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "ECONNRESET"]);
+    const looksOffline =
+      (typeof code === "string" && networkCodes.has(code)) ||
+      code === 1006 || // ABNORMAL_CLOSURE
+      lower.includes("failed to fetch") ||
+      lower.includes("networkerror") ||
+      lower.includes("network error") ||
+      lower.includes("econnrefused") ||
+      lower.includes("all endpoints failed");
+    if (looksOffline) {
+      return {
+        kind: "offline",
+        title: "Can't reach the server",
+        message: `${serverName} isn't responding. It may be down or restarting. Please wait a moment and retry.`,
+      };
+    }
+
+    // Room full — server rejects matchmaking when the room is at capacity.
+    if (lower.includes("locked") || lower.includes("full") || lower.includes("is full")) {
+      return {
+        kind: "full",
+        title: "Server is full",
+        message: `${serverName} is at capacity right now. Try a different channel, or retry in a moment.`,
+      };
+    }
+
+    // Version / protocol mismatch — the client build is out of date for this server. The server's
+    // onAuth rejects a stale client with PROTOCOL_MISMATCH_CODE; we also fold in the generic
+    // "version"/"protocol"/no-handler hints as a belt-and-braces fallback.
+    if (
+      code === PROTOCOL_MISMATCH_CODE ||
+      lower.includes("version") ||
+      lower.includes("protocol") ||
+      lower.includes("please refresh") ||
+      lower.includes("no handler") ||
+      code === 520 // MATCHMAKE_NO_HANDLER
+    ) {
+      return {
+        kind: "version",
+        title: "Update required",
+        message:
+          "This game client is out of date and can't connect. Refresh the page to load the latest version.",
+      };
+    }
+
+    if (lower.includes("ban")) {
+      return {
+        kind: "banned",
+        title: "Account banned",
+        message: rawMessage || "Your account has been banned.",
+      };
+    }
+
+    return {
+      kind: "unknown",
+      title: "Connection failed",
+      message: `Couldn't connect to ${serverName}${rawMessage ? ` (${rawMessage})` : ""}. Please try again.`,
+    };
+  }
+
+  /**
+   * Render the friendly, retryable connect-error screen. Distinct from the old generic
+   * dead-end: it shows a classified title + actionable message and a real Retry button
+   * (version-mismatch retries by reloading the page; everything else re-runs the connect).
+   */
+  private showConnectionError(info: ConnectErrorInfo, onRetry?: () => void): void {
+    this.lastConnectError = info;
+    this.lastConnectRetry = onRetry;
+    this.clearConnectionError();
+
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const panelW = Math.min(440, w - 48);
+    const panelH = 240;
+
+    const backdrop = this.add.rectangle(0, 0, w, h, 0x05070d, 0.78).setOrigin(0);
+    backdrop.setInteractive(); // swallow clicks so the world behind isn't pokeable
+    const panel = this.add.rectangle(w / 2, h / 2, panelW, panelH, 0x131a2b, 0.97).setOrigin(0.5);
+    panel.setStrokeStyle(1, 0x3b4a66, 1);
+
+    // Icon hint per kind (kept as a glyph so we don't need new texture assets).
+    const glyph =
+      info.kind === "banned"
+        ? "⛔"
+        : info.kind === "full"
+          ? "⏳"
+          : info.kind === "version"
+            ? "⬆"
+            : info.kind === "timeout"
+              ? "⏱"
+              : "⚠";
+    const icon = this.add
+      .text(w / 2, h / 2 - panelH / 2 + 34, glyph, { fontFamily: CONN_FONT, fontSize: "28px" })
+      .setOrigin(0.5);
+
+    const title = this.add
+      .text(w / 2, h / 2 - panelH / 2 + 74, info.title, {
+        fontFamily: CONN_FONT,
+        fontSize: "19px",
+        color: "#f6c177",
+        align: "center",
+      })
+      .setOrigin(0.5);
+
+    const body = this.add
+      .text(w / 2, h / 2 - 4, info.message, {
+        fontFamily: CONN_FONT,
+        fontSize: "13px",
+        color: "#cbd5e9",
+        align: "center",
+        wordWrap: { width: panelW - 48 },
+        lineSpacing: 4,
+      })
+      .setOrigin(0.5);
+
+    // ── Retry button ──
+    const btnLabel = info.kind === "version" ? "Reload" : "Retry";
+    const btnY = h / 2 + panelH / 2 - 36;
+    const btnW = 150;
+    const btnH = 38;
+    const btnBg = this.add.rectangle(w / 2, btnY, btnW, btnH, 0x2f6f4f, 1).setOrigin(0.5);
+    btnBg.setStrokeStyle(1, 0x4ade80, 1);
+    btnBg.setInteractive({ useHandCursor: true });
+    const btnText = this.add
+      .text(w / 2, btnY, btnLabel, {
+        fontFamily: CONN_FONT,
+        fontSize: "15px",
+        color: "#eafff2",
+      })
+      .setOrigin(0.5);
+
+    btnBg.on("pointerover", () => btnBg.setFillStyle(0x3a8a62, 1));
+    btnBg.on("pointerout", () => btnBg.setFillStyle(0x2f6f4f, 1));
+    btnBg.on("pointerdown", () => btnBg.setFillStyle(0x255a40, 1));
+    btnBg.on("pointerup", () => {
+      if (info.kind === "version") {
+        // A stale client can't recover by re-joining — reload to fetch the new build.
+        window.location.reload();
+        return;
+      }
+      if (onRetry) {
+        onRetry();
+        return;
+      }
+      void this.attemptConnect();
+    });
+
+    const overlay = this.add.container(0, 0, [backdrop, panel, icon, title, body, btnBg, btnText]);
+    overlay.setScrollFactor(0).setDepth(21_000);
+    this.connectErrorOverlay = overlay;
+  }
+
+  /** Tear down the connect-error overlay (if any) — called before a retry and on success. */
+  private clearConnectionError(): void {
+    this.connectErrorOverlay?.destroy(true);
+    this.connectErrorOverlay = undefined;
+  }
+
+  // ─── HUD connection-status indicator ───────────────────────────────────────────────────
+  /**
+   * Update the connection-status indicator (a small dot+label pill, top-right). It stays
+   * visible while anything is wrong (connecting / reconnecting / offline) and auto-hides a
+   * couple of seconds after going green so a healthy HUD stays clean.
+   */
+  private setConnStatus(status: ConnStatus): void {
+    this.registry.set("connStatus", status); // exposed for the React HUD / tests
+    this.ensureConnStatusPill();
+
+    const palette: Record<ConnStatus, { color: number; label: string }> = {
+      connecting: { color: 0xf6c177, label: "Connecting…" },
+      online: { color: 0x4ade80, label: "Online" },
+      reconnecting: { color: 0xf6c177, label: "Reconnecting…" },
+      offline: { color: 0xef4444, label: "Offline" },
+    };
+    const { color, label } = palette[status];
+    this.connStatusDot?.setFillStyle(color, 1);
+    this.connStatusText?.setText(label).setColor(`#${color.toString(16).padStart(6, "0")}`);
+    this.connStatusContainer?.setVisible(true);
+
+    this.connStatusHideEvent?.remove();
+    this.connStatusHideEvent = undefined;
+    if (status === "online") {
+      // Fade the pill out shortly after a healthy connection settles.
+      this.connStatusHideEvent = this.time.addEvent({
+        delay: 2500,
+        callback: () => this.connStatusContainer?.setVisible(false),
+      });
+    }
+  }
+
+  /** Build the status pill once (top-right, screen-fixed), reused across status changes. */
+  private ensureConnStatusPill(): void {
+    if (this.connStatusContainer) return;
+    const pillW = 132;
+    const pillH = 22;
+    const x = this.scale.width - pillW / 2 - 12;
+    const y = 16;
+    const bg = this.add.rectangle(0, 0, pillW, pillH, 0x0c1019, 0.82).setOrigin(0.5);
+    bg.setStrokeStyle(1, 0x3b4a66, 1);
+    const dot = this.add.circle(-pillW / 2 + 14, 0, 5, 0xf6c177, 1);
+    const text = this.add
+      .text(-pillW / 2 + 26, 0, "Connecting…", {
+        fontFamily: CONN_FONT,
+        fontSize: "11px",
+        color: "#f6c177",
+      })
+      .setOrigin(0, 0.5);
+    const container = this.add.container(x, y, [bg, dot, text]);
+    container.setScrollFactor(0).setDepth(20_500);
+    this.connStatusContainer = container;
+    this.connStatusDot = dot;
+    this.connStatusText = text;
+  }
+
+  /** Re-position/re-flow the screen-fixed connection overlays after a canvas resize. */
+  private reflowConnectionUi(): void {
+    const w = this.scale.width;
+    // Re-anchor the status pill to the top-right.
+    if (this.connStatusContainer) {
+      this.connStatusContainer.setPosition(w - 132 / 2 - 12, 16);
+    }
+    // Rebuild the error panel centered at the new size (cheap; only up during an error).
+    if (this.connectErrorOverlay && this.lastConnectError) {
+      this.showConnectionError(this.lastConnectError, this.lastConnectRetry);
+    }
   }
 
   // ─── Level-up in-world burst effect ─────────────────────────────────────────────

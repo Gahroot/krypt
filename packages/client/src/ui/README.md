@@ -162,6 +162,44 @@ shared kit so the next panel reuses it. Match the existing shadcn style
 
 ---
 
+## Migration status: React vs. remaining canvas
+
+The React overlay is the **single UI surface**. Every interactive panel — login,
+inventory, character create/select, HUD (status bars, skill bar, minimap, quest
+tracker, chat), market, cash shop, general store, trade, storage, settings,
+party, guild, friends, skill tree, stats, equipment, quests, dialogs — is a DOM
+panel built from the shared kit. `UIScene` and the feature scenes (Market,
+Storage, CashShop, …) are **thin controllers**: they publish snapshots into the
+bridge store and wire `room.send` actions — they draw nothing.
+
+A handful of in-game overlays are still rendered on the Phaser canvas inside
+`UIScene` (not yet migrated to React). These are **live features**, not orphaned
+code from the completed migrations:
+
+| Feature | Toggle | Status |
+| --- | --- | --- |
+| Mesos counter (top-right pill) | always-on | Canvas — data already in `inventory.mesos` |
+| Control hint line (top-left) | always-on | Canvas — static text |
+| Mute toggle (top-right) | click | Canvas — state in settings slice |
+| Combo counter (combat FX) | transient | Canvas (FX overlay) |
+| Level-up flash | transient | Canvas (FX overlay) |
+| Party HUD (compact member bars) | in-party | Canvas — data already in party slice |
+| Cube (potential reroll) panel | C | Canvas |
+| Upgrade (base-rank forge) panel | U | Canvas |
+| Maple Guide panel | J | Canvas |
+| Familiar panel | — | Canvas |
+| Codex (monster book) panel | — | Canvas |
+| World-map travel overlay | W | Canvas |
+| Blocked-list panel | — | Canvas |
+| Player right-click context menu | — | Canvas |
+| Announcement banner | transient | Canvas |
+| Feedback / bug-report panel | — | Canvas |
+
+All **game-world** rendering (map tiles, sprites, mobs, particles, parallax) lives
+in `MapScene` and is correctly canvas-only.
+
+---
+
 ## Adding a new panel (copy the inventory reference)
 
 `InventoryPanel.tsx` is the **reference panel**. To add, say, a shop panel:
@@ -279,7 +317,9 @@ pnpm --filter @maple/client ui:screenshots
 ```
 
 `scripts/ui-screenshots.ts` boots the Vite dev server in-process, opens a
-headless Chromium, and for each panel in `panelFixtures`:
+headless Chromium, and for each panel in `panelFixtures` (currently **14
+panels**: login, inventory, character select/create, HUD, general store, cash
+shop, free market, trade, storage, settings, party, guild, friends):
 
 1. waits for the dev-only `window.__uiStore` to be exposed (see `mount.tsx`),
 2. force-closes every `*Open` flag (so Phaser's own panels don't bleed in),

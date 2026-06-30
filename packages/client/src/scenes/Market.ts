@@ -1,8 +1,13 @@
 import Phaser from "phaser";
 import { Client, getStateCallbacks, type Room } from "@colyseus/sdk";
-import { getItemDef, getPotentialTierInfo, type PotentialTier } from "@maple/shared";
+import {
+  getItemDef,
+  getPotentialTierInfo,
+  type PotentialTier,
+  PROTOCOL_VERSION,
+} from "@maple/shared";
 
-import { BACKEND_URL, getAccountId } from "../backend";
+import { BACKEND_URL, authenticate, getAccountId } from "../backend";
 import type { MarketStateView, ListingView, WalletMessage } from "../state-views";
 import { uiStore } from "../ui/store";
 import type { MarketSnapshot, MarketListing, MarketWalletItem, MarketFeedback } from "../ui/store";
@@ -111,8 +116,12 @@ export class MarketScene extends Phaser.Scene {
   // ─── Connection + reactive binding ───────────────────────────────────────────
   private async connect(): Promise<void> {
     const client = new Client(BACKEND_URL);
+    // Authenticate and present the server-issued token; identity is derived server-side.
+    const { token, accountId } = await authenticate();
+    client.auth.token = token;
+    this.accountId = accountId;
     const room = await client.joinOrCreate<MarketStateView>("market_room", {
-      accountId: this.accountId,
+      protocolVersion: PROTOCOL_VERSION,
     });
 
     // The scene may have closed while connecting — don't bind to a dead scene.

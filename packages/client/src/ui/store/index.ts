@@ -4,6 +4,7 @@ import type { InventoryTab } from "@maple/shared";
 
 import { createInventorySlice, type InventorySlice } from "./inventory";
 import { createCharacterCreateSlice, type CharacterCreateSlice } from "./characterCreate";
+import { createCharacterSelectSlice, type CharacterSelectSlice } from "./characterSelect";
 import { createShopSlice, type ShopSlice } from "./shop";
 import { createCashShopSlice, type CashShopSlice } from "./cashShop";
 import { createMarketSlice, type MarketSlice } from "./market";
@@ -23,6 +24,7 @@ import { createReportSlice, type ReportSlice } from "./report";
 import { createChannelSelectSlice, type ChannelSelectSlice } from "./channelSelect";
 import { createCoachMarksSlice, type CoachMarksSlice } from "./coachMarks";
 import { createIntroSlice, type IntroSlice } from "./intro";
+import { createLoginSlice, type LoginSlice } from "./login";
 
 /**
  * The React-overlay bridge store (root).
@@ -55,6 +57,12 @@ export type {
   CharacterCreateActions,
   CharacterCreateSlice,
 } from "./characterCreate";
+export type {
+  CharacterSelectEntry,
+  CharacterSelectSnapshot,
+  CharacterSelectActions,
+  CharacterSelectSlice,
+} from "./characterSelect";
 export type {
   ShopBuySlot,
   ShopSellEntry,
@@ -161,6 +169,7 @@ export type {
 } from "./channelSelect";
 export type { CoachMarkPosition, CoachMarkSnapshot, CoachMarksSlice } from "./coachMarks";
 export type { IntroLineSnapshot, IntroSnapshot, IntroActions, IntroSlice } from "./intro";
+export type { LoginSnapshot, LoginActions, LoginSlice } from "./login";
 
 /**
  * Imperative actions the Phaser scene wires up so React can drive the game.
@@ -187,6 +196,7 @@ export interface ActionsSlice {
 /** The full overlay store state: every feature slice plus the action registry. */
 export type UIState = InventorySlice &
   CharacterCreateSlice &
+  CharacterSelectSlice &
   ShopSlice &
   CashShopSlice &
   MarketSlice &
@@ -206,6 +216,7 @@ export type UIState = InventorySlice &
   ChannelSelectSlice &
   CoachMarksSlice &
   IntroSlice &
+  LoginSlice &
   ActionsSlice;
 
 export const uiStore = createStore<UIState>((...args) => {
@@ -213,6 +224,7 @@ export const uiStore = createStore<UIState>((...args) => {
   return {
     ...createInventorySlice(...args),
     ...createCharacterCreateSlice(...args),
+    ...createCharacterSelectSlice(...args),
     ...createShopSlice(...args),
     ...createCashShopSlice(...args),
     ...createMarketSlice(...args),
@@ -232,6 +244,7 @@ export const uiStore = createStore<UIState>((...args) => {
     ...createChannelSelectSlice(...args),
     ...createCoachMarksSlice(...args),
     ...createIntroSlice(...args),
+    ...createLoginSlice(...args),
 
     // ── Actions registry (cross-cutting) ──
     actions: null,

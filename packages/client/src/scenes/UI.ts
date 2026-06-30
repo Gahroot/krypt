@@ -44,6 +44,7 @@ import type {
 } from "../state-views";
 import { uiStore, type InvItemSnapshot, type HudSkillSlot, type ChatChannel } from "../ui/store";
 import { getLastLogLines } from "../logBuffer";
+import { VERSION_LABEL } from "../version";
 import type { QuickSlotEntry } from "../backend";
 import { getQuickslots, setQuickslots } from "../backend";
 import { getCharId } from "../backend";
@@ -222,7 +223,6 @@ const FEEDBACK_CATEGORY_BTN_H = 28;
 const FEEDBACK_TEXTAREA_H = 120;
 const FEEDBACK_SUBMIT_BTN_W = 140;
 const FEEDBACK_SUBMIT_BTN_H = 32;
-const FEEDBACK_CLIENT_VERSION = "alpha-0.0.1";
 
 // ─── Guide (Maple Guide) panel geometry (toggled with J) ──────────────────────
 const GUIDE_PANEL_W = 360;
@@ -4658,6 +4658,14 @@ export class UIScene extends Phaser.Scene {
     });
     this.feedbackContainer.add(title);
 
+    // Build/protocol version, attached to every report and shown so testers can quote it.
+    const versionLabel = this.add.text(px + pad + 140, y + 2, VERSION_LABEL, {
+      fontFamily: FONT,
+      fontSize: "10px",
+      color: TEXT.dim,
+    });
+    this.feedbackContainer.add(versionLabel);
+
     const closeBtn = this.add
       .text(px + pw - pad - 20, y, "✕", {
         fontFamily: FONT,
@@ -4919,7 +4927,7 @@ export class UIScene extends Phaser.Scene {
         mapId: this.currentMapId,
         level: p.level,
         archetype: p.archetype,
-        clientVersion: FEEDBACK_CLIENT_VERSION,
+        clientVersion: VERSION_LABEL,
         logLines: getLastLogLines(50),
         userAgent: navigator.userAgent,
       },
