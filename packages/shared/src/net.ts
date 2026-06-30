@@ -240,6 +240,13 @@ export const MessageType = {
   LFG_LIST_RESULT: 146,
   LFG_JOIN: 147,
   LFG_REMOVE: 148,
+
+  // ─── Single-live-session guard ─────────────────────────────────────────
+  // Server → client: the generation token a client must echo on map/channel
+  // transfers so relocations aren't mistaken for a duplicate login.
+  SESSION_GENERATION: 149,
+  // Server → client: this session was kicked because the character logged in elsewhere.
+  FORCE_LOGOUT: 150,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -293,6 +300,20 @@ export interface DeleteCharacterPayload {
 export interface TravelPayload {
   mapId: string;
   spawnId: string;
+}
+
+/**
+ * Server → client: the per-login generation token for the single-live-session guard.
+ * The client stores it and echoes it as the `generation` join option on every map/channel
+ * transfer so the relocation isn't treated as a duplicate login.
+ */
+export interface SessionGenerationPayload {
+  generation: string;
+}
+
+/** Server → client: this session was forcibly logged out (e.g. logged in elsewhere). */
+export interface ForceLogoutPayload {
+  reason: string;
 }
 
 /** Server → client: portal use blocked (e.g. level requirement not met). */

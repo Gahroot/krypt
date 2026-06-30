@@ -6,6 +6,7 @@
  */
 
 export * from "./net.js";
+export * from "./protocol.js";
 export * from "./rarity.js";
 export * from "./stats.js";
 export * from "./classes.js";
