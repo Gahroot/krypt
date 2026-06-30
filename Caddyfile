@@ -1,0 +1,31 @@
+# CryptoMaple — production reverse proxy with automatic HTTPS.
+#
+# Caddy obtains and auto-renews real TLS certificates (Let's Encrypt / ZeroSSL)
+# for the domains below, then terminates TLS and forwards plaintext to the two
+# app containers. Because TLS is terminated here, browsers loaded from an
+# https:// page can open a secure `wss://` socket to the game server (they would
+# refuse a plaintext ws:// from an https page).
+#
+# Required environment (supplied by docker-compose.prod.yml from .env.production):
+#   GAME_DOMAIN    e.g. api.cryptomaple.example   → Colyseus game server (wss + https)
+#   CLIENT_DOMAIN  e.g. play.cryptomaple.example  → static Phaser client
+#   ACME_EMAIL     contact email for certificate expiry notices
+{
+	email {$ACME_EMAIL}
+}
+
+# ── Game server: TLS termination + WebSocket/HTTP proxy to Colyseus ──────────
+# reverse_proxy transparently negotiates the WebSocket Upgrade, so a browser
+# connecting to wss://{$GAME_DOMAIN} reaches Colyseus on :2567 inside the network.
+# The same hostname serves the HTTP API (https://{$GAME_DOMAIN}/healthz, /auth/*,
+# /monitor, …) — the client derives the https base by swapping wss→https.
+{$GAME_DOMAIN} {
+	encode gzip
+	reverse_proxy server:2567
+}
+
+# ── Static game client (Vite build, served by its nginx container) ───────────
+{$CLIENT_DOMAIN} {
+	encode gzip
+	reverse_proxy client:80
+}
