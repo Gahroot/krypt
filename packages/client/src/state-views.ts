@@ -11,7 +11,14 @@ export interface InventoryItemView {
   baseRank: string;
   potentialTier: string;
   lines: number;
+  /** Potential bonus lines as JSON string: [{"stat":"ATK","percent":9}, ...]. */
+  potentialLines: string;
+  /** Flame bonus stats as JSON string: [{"stat":"STR","value":5,"tier":"RARE"}, ...]. */
+  bonusStats: string;
   minted: boolean;
+  /** Star Force level (0–15). */
+  stars: number;
+  count: number;
 }
 
 export interface PlayerView {
@@ -36,7 +43,29 @@ export interface PlayerView {
   sp: number;
   mesos: number;
   attacking: boolean;
+  // Side-scroller physics
+  vy: number;
+  grounded: boolean;
+  climbing: boolean;
+  ladderId: number;
   inventory: MapSchema<InventoryItemView>;
+  equipped: MapSchema<string>;
+  comboCount: number;
+  knockbackVx: number;
+  // Appearance (synced from server Player schema)
+  gender: string;
+  skinId: string;
+  hairId: string;
+  hairColorId: string;
+  faceId: string;
+  outfitId: string;
+  // Titles
+  equippedTitle: string;
+  ownedTitles: string[];
+  // Identity
+  charId: string;
+  // Fame (synced from server — field is displayFame to avoid clash with FameState)
+  displayFame: number;
 }
 
 export interface MobView {
@@ -48,6 +77,9 @@ export interface MobView {
   maxHp: number;
   dead: boolean;
   hit: boolean;
+  vy: number;
+  grounded: boolean;
+  isElite: boolean;
 }
 
 export interface LootView {
@@ -60,12 +92,42 @@ export interface LootView {
   legendary: boolean;
 }
 
+export interface FamiliarView {
+  mobId: string;
+  ownerSession: string;
+  x: number;
+  y: number;
+  facing: number;
+  hp: number;
+  maxHp: number;
+  dead: boolean;
+  hit: boolean;
+}
+
 export interface TownStateView {
   mapWidth: number;
   mapHeight: number;
   players: MapSchema<PlayerView>;
   mobs: MapSchema<MobView>;
   loot: MapSchema<LootView>;
+  familiars: MapSchema<FamiliarView>;
+}
+
+// ─── Party (group play, session-scoped) ───────────────────────────────────────────────────────
+
+/** A single party member as received via PARTY_UPDATE. */
+export interface PartyMemberView {
+  charId: string;
+  sessionId: string;
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  mp: number;
+  maxMp: number;
+  dead: boolean;
+  mapId: string;
+  leader: boolean;
 }
 
 // ─── Free Market (market_room) ───────────────────────────────────────────────────────────────────
@@ -82,13 +144,75 @@ export interface ListingView {
   lines: number;
   price: number;
   createdAt: number;
+  /** Listing type: "fixed" (immediate buy) or "auction" (bidding). */
+  listingType: string;
+  /** Epoch-ms when the listing expires (0 = no expiry). */
+  endsAt: number;
+  /** Current highest bid for auctions (0 for fixed). */
+  currentBid: number;
+  /** charId of the current highest bidder ("" if none). */
+  highBidderCharId: string;
+}
+
+/** A buy order (want-to-buy) posted by a player. */
+export interface BuyOrderView {
+  buyOrderId: string;
+  buyerCharId: string;
+  buyerName: string;
+  defId: string;
+  maxPrice: number;
+  qty: number;
+  mesosEscrowed: number;
+  createdAt: number;
 }
 
 /** The synced order book published by MarketRoom. */
 export interface MarketStateView {
   listings: MapSchema<ListingView>;
+  buyOrders: MapSchema<BuyOrderView>;
   /** Protocol fee in basis points taken from each sale (250 = 2.5%). */
   feeBps: number;
+}
+
+// ─── Guild (persistent cross-map social) ─────────────────────────────────────────
+
+/** A single guild member as received via GUILD_UPDATE. */
+export interface GuildMemberView {
+  charId: string;
+  name: string;
+  level: number;
+  rank: string;
+  online: boolean;
+}
+
+/** Full guild state pushed by the server. */
+export interface GuildUpdateView {
+  guildId: string;
+  guildName: string;
+  emblem: { color: number; label: string };
+  members: GuildMemberView[];
+  createdDate: number;
+}
+
+// ─── Friends / Buddy list ───────────────────────────────────────────────────────
+
+/** A single friend as received via FRIEND_LIST. */
+export interface FriendEntryView {
+  charId: string;
+  name: string;
+  level: number;
+  online: boolean;
+  mapId?: string;
+}
+
+/** Mirrors StatusEffectInfo from @maple/shared/net — a single active buff/debuff. */
+export interface StatusEffectView {
+  id: string;
+  kind: string;
+  label: string;
+  stacks: number;
+  durationMs: number;
+  remainingMs: number;
 }
 
 /**

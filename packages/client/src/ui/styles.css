@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/*
+ * Self-hosted, open-licensed type system (bundled via Fontsource — no network
+ * fetch at runtime). Both faces are SIL Open Font License 1.1:
+ *   - Fredoka  — rounded, friendly DISPLAY face for titles/headings (the game's
+ *                voice). License: node_modules/@fontsource-variable/fredoka/LICENSE
+ *   - Inter    — clean, legible UI body face. Monospace is reserved for
+ *                numbers/code via the system mono stack (--font-mono).
+ *                License: node_modules/@fontsource-variable/inter/LICENSE
+ * See ./README.md → "Typography" for attribution + usage.
+ */
+@import "@fontsource-variable/fredoka";
+@import "@fontsource-variable/inter";
+
+/*
+ * shadcn/ui design tokens (Tailwind CSS v4) for the CryptoMaple React overlay.
+ *
+ * The game is dark-only, so the dark palette is applied directly on :root. The
+ * surface tokens mirror shadcn's "zinc" base, nudged toward the game's
+ * slate/indigo HUD so the React panels sit naturally over the Phaser canvas.
+ *
+ * RARITY is special: the authoritative values live in @maple/shared (rarity.ts).
+ * The hexes seeded in :root below are only a build-time fallback so the utilities
+ * exist before JS runs; `theme.ts` (called from mount.tsx) overwrites them at
+ * runtime from POTENTIAL_TIERS / BASE_RANKS so the UI can never drift from the
+ * in-game item colors. Use the generated utilities (e.g. `border-rarity-epic`,
+ * `text-rank-mythic`) OR pass the shared hex inline (ItemCell does the latter).
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* Rarity — Potential tier (item border) + Base rank (item name). Mirror of
+     @maple/shared; synced at runtime by theme.ts. */
+  --color-rarity-rare: var(--rarity-rare);
+  --color-rarity-epic: var(--rarity-epic);
+  --color-rarity-unique: var(--rarity-unique);
+  --color-rarity-legendary: var(--rarity-legendary);
+  --color-rank-normal: var(--rank-normal);
+  --color-rank-enhanced: var(--rank-enhanced);
+  --color-rank-starforged: var(--rank-starforged);
+  --color-rank-mythic: var(--rank-mythic);
+
+  /* Type system. Fredoka = display/headings, Inter = UI body, mono = numbers/code. */
+  --font-sans:
+    "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-display: "Fredoka Variable", "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Panel chrome shadow — a touch deeper than shadow-2xl so floating windows
+     read clearly above the busy game canvas. */
+  --shadow-panel: 0 10px 30px -12px rgb(0 0 0 / 0.6), 0 2px 8px -2px rgb(0 0 0 / 0.4);
+
+  /* Open transition for floating windows (opacity-only so it never fights a
+     panel's centering `translate`). Respect prefers-reduced-motion via the
+     motion-safe: variant at the call site. */
+  --animate-panel-in: panel-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.21 0.03 264);
+  --foreground: oklch(0.97 0 0);
+  --card: oklch(0.25 0.03 264);
+  --card-foreground: oklch(0.97 0 0);
+  --popover: oklch(0.23 0.03 264);
+  --popover-foreground: oklch(0.97 0 0);
+  --primary: oklch(0.72 0.18 145);
+  --primary-foreground: oklch(0.2 0.05 145);
+  --secondary: oklch(0.3 0.03 264);
+  --secondary-foreground: oklch(0.97 0 0);
+  --muted: oklch(0.3 0.03 264);
+  --muted-foreground: oklch(0.7 0.02 264);
+  --accent: oklch(0.34 0.04 264);
+  --accent-foreground: oklch(0.97 0 0);
+  --destructive: oklch(0.62 0.22 25);
+  --destructive-foreground: oklch(0.97 0 0);
+  --border: oklch(0.4 0.03 264 / 35%);
+  --input: oklch(0.4 0.03 264 / 40%);
+  --ring: oklch(0.72 0.18 145);
+
+  /* Rarity fallbacks (overwritten at runtime by theme.ts from @maple/shared). */
+  --rarity-rare: #3b82f6;
+  --rarity-epic: #a855f7;
+  --rarity-unique: #f59e0b;
+  --rarity-legendary: #22c55e;
+  --rank-normal: #e5e7eb;
+  --rank-enhanced: #60a5fa;
+  --rank-starforged: #c084fc;
+  --rank-mythic: #f87171;
+
+  /* Responsive HUD anchoring scale. Clamp()-based so panels keep a comfortable
+     gutter from ~1280px up to large displays without magic pixel offsets. */
+  --hud-edge: clamp(0.75rem, 1.5vw, 1.5rem); /* viewport-edge gutter */
+  --hud-top: clamp(3rem, 6vh, 4.5rem); /* below the top HUD bar */
+  --panel-w: 20rem; /* default floating-window width (320px) */
+  --panel-max-h: 85vh; /* default; body scrolls internally past this */
+}
+
+/*
+ * Scope the type system to the overlay. Body uses Inter (sans); headings opt
+ * into Fredoka via the `font-display` utility / Panel chrome. The rest of the
+ * page (Phaser DOM elements like the character-create name input) gets a plain
+ * system sans default below — NO global monospace.
+ */
+html,
+body {
+  font-family: var(--font-sans);
+}
+
+#react-overlay {
+  font-family: var(--font-sans);
+  color: var(--color-foreground);
+}
+
+#react-overlay *,
+#react-overlay *::before,
+#react-overlay *::after {
+  box-sizing: border-box;
+}
+
+/*
+ * Polish primitive: a consistent keyboard focus ring for bespoke interactive
+ * elements (item cells, custom hit-targets) that aren't a shadcn Button. Pairs
+ * the ring with a background-colored halo so it reads on any surface.
+ */
+@utility focus-ring {
+  outline: none;
+
+  &:focus-visible {
+    box-shadow:
+      0 0 0 2px var(--color-background),
+      0 0 0 4px var(--color-ring);
+  }
+}

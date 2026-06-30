@@ -1,16 +1,19 @@
 import Phaser from "phaser";
 
 /**
- * Procedural placeholder art for CryptoMaple.
+ * Art registry for CryptoMaple.
  *
- * Every texture here is generated at runtime from colored shapes via
- * `Phaser.GameObjects.Graphics` + `generateTexture` — there are **no external image files** and we
- * ship **zero MapleStory assets** (see WORLD.md). The palette targets Meadowfield's cozy, pastoral
- * "everything is okay here" vibe.
+ * The visuals are **real, open-licensed (CC0) 2D platformer art** sourced from Kenney
+ * ("Platformer Pack Redux" + "Background Elements Redux"). The raw packs are cropped/resized into
+ * small, game-ready frames under `src/assets/` by `scripts/build-assets.py`; at runtime those files
+ * are loaded as plain images and registered under the stable texture keys below. See
+ * `src/assets/CREDITS.md` for the full source + license list. Zero Nexon/MapleStory assets ship.
  *
- * NOTE: These are CC0 / placeholder visuals. They exist so the game is fully playable before an
- * artist is involved, and are meant to be swapped out for real art later — keep the texture keys
- * stable (scenes reference them by key) and you can replace the pixels without touching gameplay.
+ * Contract: scenes reference textures **by key** (the `TextureKeys` map and the per-appearance /
+ * mob animation keys). Those keys are stable — you can swap the underlying art (regenerate
+ * `src/assets`) without touching any scene. `queueTextureLoads()` is called from PreloadScene's
+ * `preload()`; `generatePlaceholderTextures()` then bakes the single remaining procedural primitive
+ * (the soft drop shadow) during `create()`.
  */
 
 /** Canonical texture keys. Import these instead of hard-coding strings in scenes. */
@@ -18,223 +21,349 @@ export const TextureKeys = {
   TileGrass: "tile_grass",
   TileGrassAlt: "tile_grass_alt",
   PlayerWarrior: "player_warrior",
-  MobSlime: "mob_slime",
+  WarriorIdle0: "warrior_idle_0",
+  WarriorIdle1: "warrior_idle_1",
+  WarriorWalk0: "warrior_walk_0",
+  WarriorWalk1: "warrior_walk_1",
+  WarriorWalk2: "warrior_walk_2",
+  WarriorWalk3: "warrior_walk_3",
+  WarriorJump: "warrior_jump",
+  WarriorFall: "warrior_fall",
+  WarriorClimb0: "warrior_climb_0",
+  WarriorClimb1: "warrior_climb_1",
+  WarriorAttack0: "warrior_attack_0",
+  WarriorAttack1: "warrior_attack_1",
+  MobSlime0: "mob_slime_0",
+  MobSlime1: "mob_slime_1",
+  MobSlime2: "mob_slime_2",
+  MobSlime3: "mob_slime_3",
+  MobHopper0: "mob_hopper_0",
+  MobHopper1: "mob_hopper_1",
+  MobHopper2: "mob_hopper_2",
+  MobHopper3: "mob_hopper_3",
   LootGem: "loot_gem",
   LootGemLegendary: "loot_gem_legendary",
   Shadow: "shadow",
+  TerrainGrassTop: "terrain_grass_top",
+  TerrainDirt: "terrain_dirt",
+  LadderWood: "ladder_wood",
+  LadderRope: "ladder_rope",
+  ParallaxSky: "parallax_sky",
+  ParallaxHills: "parallax_hills",
+  ParallaxTrees: "parallax_trees",
+  NpcGuideIris: "npc_guide_iris",
+  NpcFerryCole: "npc_ferry_cole",
+  NpcStorageKeep: "npc_storage_keep",
+  NpcElderWillow: "npc_elder_willow",
+  NpcMerchantBram: "npc_merchant_bram",
+  NpcSenseiTanren: "npc_sensei_tanren",
+  NpcCrystalKeeperLuna: "npc_crystal_keeper_luna",
+  NpcPortrait: "npc_portrait",
 } as const;
 
 export type TextureKey = (typeof TextureKeys)[keyof typeof TextureKeys];
 
-/** Pixel dimensions for each generated texture — the single source of truth used when baking. */
-export const TextureSize: Record<TextureKey, { w: number; h: number }> = {
-  [TextureKeys.TileGrass]: { w: 32, h: 32 },
-  [TextureKeys.TileGrassAlt]: { w: 32, h: 32 },
-  [TextureKeys.PlayerWarrior]: { w: 28, h: 40 },
-  [TextureKeys.MobSlime]: { w: 30, h: 24 },
-  [TextureKeys.LootGem]: { w: 16, h: 16 },
-  [TextureKeys.LootGemLegendary]: { w: 16, h: 16 },
-  [TextureKeys.Shadow]: { w: 24, h: 8 },
+/** Ground tile edge length — handy for tilemap math. The grass/dirt tiles are square 32px. */
+export const TILE_SIZE = 32;
+
+// ─── Asset URL resolution (Vite) ──────────────────────────────────────────────
+// Eagerly import every PNG under src/assets as a hashed, bundled URL. Keyed by the path relative
+// to this module, e.g. "../assets/characters/green_idle_0.png".
+const ASSET_URLS = import.meta.glob("../assets/**/*.png", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+/** Resolve an asset path (relative to src/assets) to its bundled URL, or throw if missing. */
+function assetUrl(rel: string): string {
+  const u = ASSET_URLS[`../assets/${rel}`];
+  if (!u) throw new Error(`[textures] missing asset: src/assets/${rel}`);
+  return u;
+}
+
+// ─── Player colours / appearance ──────────────────────────────────────────────
+
+/** The five Kenney alien colourways used as player/NPC skins. */
+const PLAYER_COLORS = ["green", "blue", "pink", "beige", "yellow"] as const;
+type PlayerColor = (typeof PLAYER_COLORS)[number];
+
+/** Canonical per-character frame names (one PNG each, per colour). */
+const PLAYER_FRAMES = [
+  "idle_0",
+  "idle_1",
+  "walk_0",
+  "walk_1",
+  "walk_2",
+  "walk_3",
+  "jump",
+  "fall",
+  "climb_0",
+  "climb_1",
+  "attack_0",
+  "attack_1",
+] as const;
+
+/** Minimal appearance shape — the 5 fields the renderer reads. */
+export interface AppearanceParams {
+  skinId: string;
+  hairId: string;
+  hairColorId: string;
+  faceId: string;
+  outfitId: string;
+}
+
+/** Outfit → alien colourway. Different outfits read as visibly different characters. */
+const OUTFIT_COLOR: Record<string, PlayerColor> = {
+  outfit_tunic: "blue",
+  outfit_robe: "pink",
+  outfit_vest: "green",
+  outfit_dress: "yellow",
 };
 
-/** Ground tile edge length — handy for tilemap math in Meadowfield. */
-export const TILE_SIZE = TextureSize[TextureKeys.TileGrass].w;
+function colorForAppearance(a: AppearanceParams): PlayerColor {
+  return OUTFIT_COLOR[a.outfitId] ?? "beige";
+}
 
-/** Palette. Hex ints so they drop straight into Graphics fill/line styles. */
-const Color = {
-  grassBase: 0x86c25a,
-  grassSpeckDark: 0x6ba343,
-  grassSpeckLight: 0x9ad06b,
-  grassAltBase: 0x77b14c,
-  grassAltSpeckDark: 0x5e9a3e,
-  grassAltSpeckLight: 0x8ac25e,
+/** Unique prefix for texture/animation keys of a given appearance (one per colourway). */
+export function appearancePrefix(a: AppearanceParams): string {
+  return `pc_${colorForAppearance(a)}`;
+}
 
-  skin: 0xf1c58b,
-  hair: 0x6b4a2f,
-  warriorBody: 0x4c63a8,
-  warriorArm: 0x3f5596,
-  warriorBelt: 0x2e3a57,
-  warriorLegs: 0x33415f,
-  ink: 0x1f2937,
+/** Animation key for a specific animation type of a given appearance. */
+export function appearanceAnimKey(a: AppearanceParams, animType: string): string {
+  return `${appearancePrefix(a)}_${animType}`;
+}
 
-  slimeBody: 0x6fcf5f,
-  slimeShade: 0x4fa83f,
-  slimeGloss: 0xbff0ae,
+/** Texture key for a specific frame of a given appearance. */
+export function appearanceTextureKey(a: AppearanceParams, frameName: string): string {
+  return `${appearancePrefix(a)}_${frameName}`;
+}
 
-  gemBody: 0x38bdf8,
-  gemFacet: 0xbae6fd,
-  gemOutline: 0x0ea5e9,
+// ─── Static texture-key → asset-file map ───────────────────────────────────────
+// Everything except the procedural Shadow and the per-colour player frames.
+const FILE_TEXTURES: Record<string, string> = {
+  [TextureKeys.TileGrass]: "tiles/grass_top.png",
+  [TextureKeys.TileGrassAlt]: "tiles/grass_center.png",
+  [TextureKeys.TerrainGrassTop]: "tiles/grass_top.png",
+  [TextureKeys.TerrainDirt]: "tiles/dirt.png",
+  [TextureKeys.LadderWood]: "tiles/ladder.png",
+  [TextureKeys.LadderRope]: "tiles/rope.png",
 
-  legendaryBody: 0x34d399,
-  legendaryFacet: 0xa7f3d0,
-  legendaryOutline: 0x059669,
-  legendaryGlow: 0x22c55e, // bright green halo so legendary drops read instantly
-} as const;
+  // Legacy single-frame "warrior" keys (used as fallbacks + by WarriorAnimDefs) → green alien.
+  [TextureKeys.PlayerWarrior]: "characters/green_idle_0.png",
+  [TextureKeys.WarriorIdle0]: "characters/green_idle_0.png",
+  [TextureKeys.WarriorIdle1]: "characters/green_idle_1.png",
+  [TextureKeys.WarriorWalk0]: "characters/green_walk_0.png",
+  [TextureKeys.WarriorWalk1]: "characters/green_walk_1.png",
+  [TextureKeys.WarriorWalk2]: "characters/green_walk_2.png",
+  [TextureKeys.WarriorWalk3]: "characters/green_walk_3.png",
+  [TextureKeys.WarriorJump]: "characters/green_jump.png",
+  [TextureKeys.WarriorFall]: "characters/green_fall.png",
+  [TextureKeys.WarriorClimb0]: "characters/green_climb_0.png",
+  [TextureKeys.WarriorClimb1]: "characters/green_climb_1.png",
+  [TextureKeys.WarriorAttack0]: "characters/green_attack_0.png",
+  [TextureKeys.WarriorAttack1]: "characters/green_attack_1.png",
 
-type DrawFn = (g: Phaser.GameObjects.Graphics, w: number, h: number) => void;
+  [TextureKeys.MobSlime0]: "mobs/slime_0.png",
+  [TextureKeys.MobSlime1]: "mobs/slime_1.png",
+  [TextureKeys.MobSlime2]: "mobs/slime_2.png",
+  [TextureKeys.MobSlime3]: "mobs/slime_3.png",
+  [TextureKeys.MobHopper0]: "mobs/hopper_0.png",
+  [TextureKeys.MobHopper1]: "mobs/hopper_1.png",
+  [TextureKeys.MobHopper2]: "mobs/hopper_2.png",
+  [TextureKeys.MobHopper3]: "mobs/hopper_3.png",
+
+  [TextureKeys.LootGem]: "items/gem.png",
+  [TextureKeys.LootGemLegendary]: "items/gem_legendary.png",
+
+  [TextureKeys.ParallaxSky]: "bg/sky.png",
+  [TextureKeys.ParallaxHills]: "bg/hills.png",
+  [TextureKeys.ParallaxTrees]: "bg/trees.png",
+
+  [TextureKeys.NpcGuideIris]: "npc/guide_iris.png",
+  [TextureKeys.NpcFerryCole]: "npc/ferrymaster_cole.png",
+  [TextureKeys.NpcStorageKeep]: "npc/storage_keep.png",
+  [TextureKeys.NpcElderWillow]: "npc/elder_willow.png",
+  [TextureKeys.NpcMerchantBram]: "npc/merchant_bram.png",
+  [TextureKeys.NpcSenseiTanren]: "npc/sensei_tanren.png",
+  [TextureKeys.NpcCrystalKeeperLuna]: "npc/crystal_keeper_luna.png",
+  [TextureKeys.NpcPortrait]: "npc/portrait.png",
+};
 
 /**
- * Bake one texture from a draw callback. Idempotent: if the key already exists (e.g. across a Vite
- * HMR reload) we skip it, so textures are never double-generated.
+ * Queue every image load for the game. Call from PreloadScene.preload() so Phaser's loader handles
+ * progress + completion before the first scene starts.
  */
-function bake(scene: Phaser.Scene, key: TextureKey, draw: DrawFn): void {
-  if (scene.textures.exists(key)) return;
+export function queueTextureLoads(scene: Phaser.Scene): void {
+  for (const [key, rel] of Object.entries(FILE_TEXTURES)) {
+    if (!scene.textures.exists(key)) scene.load.image(key, assetUrl(rel));
+  }
+  // Per-colour player frames (drive ensureAppearanceTextures animations).
+  for (const color of PLAYER_COLORS) {
+    for (const frame of PLAYER_FRAMES) {
+      const key = `pc_${color}_${frame}`;
+      if (!scene.textures.exists(key)) {
+        scene.load.image(key, assetUrl(`characters/${color}_${frame}.png`));
+      }
+    }
+  }
+}
 
-  const { w, h } = TextureSize[key];
-  // `make.graphics` builds an off-display-list Graphics we only use as a stamp, then discard.
+// ─── Warrior animation definitions ───────────────────────────────────────────
+
+/** A single animation definition: key, frame texture keys, frame-rate, and repeat count. */
+export interface WarriorAnimDef {
+  key: string;
+  frames: readonly string[];
+  frameRate: number;
+  repeat: number;
+}
+
+/** All warrior animations. Feed these into `Phaser.Animations.create()` once at scene boot. */
+export const WarriorAnimDefs: readonly WarriorAnimDef[] = [
+  {
+    key: "warrior_idle",
+    frames: [TextureKeys.WarriorIdle0, TextureKeys.WarriorIdle1],
+    frameRate: 1.5,
+    repeat: -1,
+  },
+  {
+    key: "warrior_walk",
+    frames: [
+      TextureKeys.WarriorWalk0,
+      TextureKeys.WarriorWalk1,
+      TextureKeys.WarriorWalk2,
+      TextureKeys.WarriorWalk3,
+    ],
+    frameRate: 8,
+    repeat: -1,
+  },
+  { key: "warrior_jump", frames: [TextureKeys.WarriorJump], frameRate: 1, repeat: 0 },
+  { key: "warrior_fall", frames: [TextureKeys.WarriorFall], frameRate: 1, repeat: 0 },
+  {
+    key: "warrior_climb",
+    frames: [TextureKeys.WarriorClimb0, TextureKeys.WarriorClimb1],
+    frameRate: 3,
+    repeat: -1,
+  },
+  {
+    key: "warrior_attack",
+    frames: [TextureKeys.WarriorAttack0, TextureKeys.WarriorAttack1],
+    frameRate: 10,
+    repeat: 0,
+  },
+];
+
+// ─── Mob animation definitions ───────────────────────────────────────────────
+
+export interface MobAnimDef {
+  key: string;
+  frames: readonly string[];
+  frameRate: number;
+  repeat: number;
+}
+
+export const MobAnimDefs: readonly MobAnimDef[] = [
+  {
+    key: "mob_slime_idle",
+    frames: [
+      TextureKeys.MobSlime0,
+      TextureKeys.MobSlime1,
+      TextureKeys.MobSlime2,
+      TextureKeys.MobSlime3,
+    ],
+    frameRate: 4,
+    repeat: -1,
+  },
+  {
+    key: "mob_hopper_idle",
+    frames: [
+      TextureKeys.MobHopper0,
+      TextureKeys.MobHopper1,
+      TextureKeys.MobHopper2,
+      TextureKeys.MobHopper3,
+    ],
+    frameRate: 5,
+    repeat: -1,
+  },
+];
+
+/** Map from server mobId → mob animation key. Falls back to `mob_slime_idle` for unknowns. */
+export function mobAnimKey(mobId: string): string {
+  if (mobId === "mob.thornback_hopper") return "mob_hopper_idle";
+  return "mob_slime_idle";
+}
+
+/** Map from server mobId → first-frame texture key for the sprite constructor. */
+export function mobTextureKey(mobId: string): TextureKey {
+  if (mobId === "mob.thornback_hopper") return TextureKeys.MobHopper0;
+  return TextureKeys.MobSlime0;
+}
+
+// ─── Per-appearance player animations ──────────────────────────────────────────
+
+/**
+ * Register the six player animations for a given appearance. The frame textures themselves are
+ * loaded up-front in PreloadScene (one set per colourway), so this only needs to wire up the
+ * Animations the first time a given colourway is seen. Idempotent.
+ */
+export function ensureAppearanceTextures(scene: Phaser.Scene, a: AppearanceParams): void {
+  const prefix = appearancePrefix(a);
+  if (scene.anims.exists(`${prefix}_idle`)) return;
+
+  const defs: { key: string; frames: string[]; frameRate: number; repeat: number }[] = [
+    {
+      key: `${prefix}_idle`,
+      frames: [`${prefix}_idle_0`, `${prefix}_idle_1`],
+      frameRate: 1.5,
+      repeat: -1,
+    },
+    {
+      key: `${prefix}_walk`,
+      frames: [`${prefix}_walk_0`, `${prefix}_walk_1`, `${prefix}_walk_2`, `${prefix}_walk_3`],
+      frameRate: 8,
+      repeat: -1,
+    },
+    { key: `${prefix}_jump`, frames: [`${prefix}_jump`], frameRate: 1, repeat: 0 },
+    { key: `${prefix}_fall`, frames: [`${prefix}_fall`], frameRate: 1, repeat: 0 },
+    {
+      key: `${prefix}_climb`,
+      frames: [`${prefix}_climb_0`, `${prefix}_climb_1`],
+      frameRate: 3,
+      repeat: -1,
+    },
+    {
+      key: `${prefix}_attack`,
+      frames: [`${prefix}_attack_0`, `${prefix}_attack_1`],
+      frameRate: 10,
+      repeat: 0,
+    },
+  ];
+
+  for (const def of defs) {
+    if (scene.anims.exists(def.key)) continue;
+    // Only include frames whose textures actually loaded (defensive — they always should).
+    const frames = def.frames.filter((f) => scene.textures.exists(f)).map((f) => ({ key: f }));
+    if (frames.length === 0) continue;
+    scene.anims.create({ key: def.key, frames, frameRate: def.frameRate, repeat: def.repeat });
+  }
+}
+
+// ─── Remaining procedural primitive: the soft drop shadow ──────────────────────
+
+/**
+ * Bake the one texture that has no art asset: a soft elliptical drop shadow drawn under sprites.
+ * Idempotent. Called from PreloadScene.create() after the image loads complete.
+ */
+export function generatePlaceholderTextures(scene: Phaser.Scene): void {
+  const key = TextureKeys.Shadow;
+  if (scene.textures.exists(key)) return;
+  const w = 24;
+  const h = 8;
   const g = scene.make.graphics();
-  draw(g, w, h);
+  g.fillStyle(0x000000, 0.28);
+  g.fillEllipse(w / 2, h / 2, w - 2, h - 1);
   g.generateTexture(key, w, h);
   g.destroy();
-}
-
-/** Soft pastoral ground. `specks` add subtle, deterministic texture so flat fills don't look dead. */
-function drawGrass(
-  g: Phaser.GameObjects.Graphics,
-  w: number,
-  h: number,
-  base: number,
-  speckDark: number,
-  speckLight: number,
-): void {
-  g.fillStyle(base, 1);
-  g.fillRect(0, 0, w, h);
-
-  // Fixed positions (not random) so adjacent tiles read as one cohesive field.
-  const dark: [number, number][] = [
-    [5, 7],
-    [22, 4],
-    [13, 18],
-    [27, 23],
-    [8, 27],
-  ];
-  const light: [number, number][] = [
-    [17, 9],
-    [3, 20],
-    [25, 14],
-    [11, 3],
-    [20, 26],
-  ];
-
-  g.fillStyle(speckDark, 0.5);
-  for (const [x, y] of dark) g.fillRect(x, y, 2, 2);
-  g.fillStyle(speckLight, 0.5);
-  for (const [x, y] of light) g.fillRect(x, y, 2, 2);
-}
-
-/** Simple humanoid block (body + head), drawn facing right. Tint/flip is applied at render time. */
-function drawWarrior(g: Phaser.GameObjects.Graphics): void {
-  // Legs (behind everything).
-  g.fillStyle(Color.warriorLegs, 1);
-  g.fillRoundedRect(8, 30, 5, 9, 2);
-  g.fillRoundedRect(15, 30, 5, 9, 2);
-
-  // Right arm drawn before the torso so only a stub peeks out on the facing side.
-  g.fillStyle(Color.warriorArm, 1);
-  g.fillRoundedRect(20, 18, 5, 11, 2);
-
-  // Torso.
-  g.fillStyle(Color.warriorBody, 1);
-  g.fillRoundedRect(5, 16, 18, 16, 4);
-
-  // Belt.
-  g.fillStyle(Color.warriorBelt, 1);
-  g.fillRect(5, 28, 18, 3);
-
-  // Head.
-  g.fillStyle(Color.skin, 1);
-  g.fillCircle(14, 9, 7);
-
-  // Hair cap sitting on top of the head.
-  g.fillStyle(Color.hair, 1);
-  g.fillRoundedRect(7, 2, 14, 7, { tl: 4, tr: 4, bl: 0, br: 0 });
-
-  // Eye on the right side signals the facing-right baseline.
-  g.fillStyle(Color.ink, 1);
-  g.fillCircle(17, 9, 1.5);
-}
-
-/** Rounded green slime blob with a glossy highlight, eyes, and a bottom rim shade for grounding. */
-function drawSlime(g: Phaser.GameObjects.Graphics, w: number, h: number): void {
-  const cx = w / 2;
-
-  // Darker base ellipse, filling the texture, so a rim of shade shows along the bottom.
-  g.fillStyle(Color.slimeShade, 1);
-  g.fillEllipse(cx, h - 11, w, h - 2);
-
-  // Body, nudged up 1px to reveal the shade below it.
-  g.fillStyle(Color.slimeBody, 1);
-  g.fillEllipse(cx, h - 12, w - 2, h - 5);
-
-  // Glossy highlight, upper-left.
-  g.fillStyle(Color.slimeGloss, 0.85);
-  g.fillEllipse(10, 8, 8, 5);
-
-  // Eyes (pupils shifted right to match a rightward gaze).
-  g.fillStyle(0xffffff, 1);
-  g.fillCircle(11, 12, 2.6);
-  g.fillCircle(20, 12, 2.6);
-  g.fillStyle(Color.ink, 1);
-  g.fillCircle(11.6, 12.4, 1.2);
-  g.fillCircle(20.6, 12.4, 1.2);
-
-  // Tiny mouth.
-  g.fillRect(13, 17, 4, 1.2);
-}
-
-/** A 16x16 diamond. Shared by the common and legendary gems with different colorways. */
-function drawDiamond(
-  g: Phaser.GameObjects.Graphics,
-  body: number,
-  facet: number,
-  outline: number,
-): void {
-  const pts = [
-    { x: 8, y: 1 },
-    { x: 15, y: 8 },
-    { x: 8, y: 15 },
-    { x: 1, y: 8 },
-  ];
-
-  g.fillStyle(body, 1);
-  g.fillPoints(pts, true);
-
-  // Upper-left facet to fake a lit edge.
-  g.fillStyle(facet, 0.9);
-  g.fillTriangle(8, 1, 1, 8, 8, 8);
-
-  g.lineStyle(1, outline, 1);
-  g.strokePoints(pts, true);
-}
-
-/** Generate every placeholder texture into the scene's Texture Manager. Safe to call repeatedly. */
-export function generatePlaceholderTextures(scene: Phaser.Scene): void {
-  bake(scene, TextureKeys.TileGrass, (g, w, h) =>
-    drawGrass(g, w, h, Color.grassBase, Color.grassSpeckDark, Color.grassSpeckLight),
-  );
-  bake(scene, TextureKeys.TileGrassAlt, (g, w, h) =>
-    drawGrass(g, w, h, Color.grassAltBase, Color.grassAltSpeckDark, Color.grassAltSpeckLight),
-  );
-
-  bake(scene, TextureKeys.PlayerWarrior, (g) => drawWarrior(g));
-
-  bake(scene, TextureKeys.MobSlime, (g, w, h) => drawSlime(g, w, h));
-
-  bake(scene, TextureKeys.LootGem, (g) =>
-    drawDiamond(g, Color.gemBody, Color.gemFacet, Color.gemOutline),
-  );
-
-  bake(scene, TextureKeys.LootGemLegendary, (g) => {
-    // Bright green glow ring first (behind the gem): a soft halo plus a crisp inner ring.
-    g.lineStyle(3, Color.legendaryGlow, 0.3);
-    g.strokeCircle(8, 8, 7);
-    g.lineStyle(1.5, Color.legendaryGlow, 0.95);
-    g.strokeCircle(8, 8, 6);
-    drawDiamond(g, Color.legendaryBody, Color.legendaryFacet, Color.legendaryOutline);
-  });
-
-  bake(scene, TextureKeys.Shadow, (g, w, h) => {
-    g.fillStyle(0x000000, 0.28);
-    g.fillEllipse(w / 2, h / 2, w - 2, h - 1);
-  });
 }

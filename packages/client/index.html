@@ -17,13 +17,35 @@
         width: 100vw;
         height: 100vh;
       }
-      * {
-        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      /* React UI overlay sits above the Phaser canvas. It is click-through by
+         default; individual panels re-enable pointer events on themselves. */
+      #react-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        pointer-events: none;
+      }
+      /* Plain system sans as a pre-CSS fallback for non-overlay DOM (e.g. the
+         Phaser character-create name input). The React overlay's own type system
+         (Inter / Fredoka / mono) is scoped in src/ui/styles.css. No global
+         monospace — that read coder-y and fought the game's voice. */
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          Helvetica,
+          Arial,
+          sans-serif;
       }
     </style>
   </head>
   <body>
     <div id="game"></div>
+    <!-- React UI overlay host (mounted by src/ui/mount.tsx). Sits above the
+         Phaser canvas; click-through except for individual panels. -->
+    <div id="react-overlay"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
