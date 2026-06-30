@@ -8,10 +8,13 @@ will follow.
 - **World / content spine:** [`WORLD.md`](../WORLD.md)
 - **Contracts package (Phase 2, stubs + tests):** [`packages/contracts/README.md`](../packages/contracts/README.md)
 
-> **Status.** Phase 1 is live and runs **entirely off-chain** (`@maple/server` + `@maple/client`): walk
-> Meadowfield as a Warrior, kill a mob, get a rarity-rolled drop, sell it on the Free Market for Mesos.
-> The chain layer (`packages/contracts`) is **scaffolded but deferred** — stubs with passing unit tests,
-> no deploy scripts, no keys, no broadcasts — until the slice is proven fun.
+> **Status.** Phase 1 is live and runs **entirely off-chain** (`@maple/server` + `@maple/client`): a broad
+> alpha far past the original one-mob slice — 5 fully-specced classes, ~26 authored maps (3 wired as live
+> rooms today), 53 mobs (9 bosses), two-layer rarity loot, a search-rich Free Market, plus quests,
+> parties, guilds, party quests, channels, trade, storage, achievements and a monster codex. Some authored
+> systems aren't wired into the live loop yet (see [§8](#8-authored-but-not-yet-wired)). The chain layer
+> (`packages/contracts`) is **scaffolded but deferred** — stubs with passing unit tests, no deploy
+> scripts, no keys, no broadcasts — until the game is proven fun.
 
 ---
 
@@ -33,7 +36,7 @@ fast and shares code without a serialization boundary.
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  CLIENT — Phaser 3 + Vite (browser)                           │
-│  scenes: Boot → Preload → Meadowfield (+ UI, Market overlays) │
+│  scenes: Boot → Preload → CharacterCreate → MapScene + UI HUD │
 │  • sends INPUTS only (move/attack/pickup intents)             │
 │  • predicts the LOCAL player, LERPs remotes, renders state    │
 │  • can NEVER move authoritatively, award mesos, or mint gear  │
@@ -43,7 +46,7 @@ fast and shares code without a serialization boundary.
                 │  ▼ down: authoritative @colyseus/schema state patches (+ private wallet push)
 ┌───────────────▼──────────────────────────────────────────────┐
 │  GAME SERVER — Colyseus (authoritative, Node)                 │
-│  TownRoom (Meadowfield)        MarketRoom (Free Market)       │
+│  MapRoom (any map, channelled) MarketRoom · PartyQuestRoom    │
 │  • fixed 1000/60 simulation    • order book + validation      │
 │  • movement, combat, mob AI    • escrow, mesos, protocol fee  │
 │  • loot rolls + mesos + exp    • accountStore / marketStore   │
@@ -80,7 +83,7 @@ pnpm workspaces, Node ≥ 20, TypeScript strict.
 ```
 packages/
   shared/     plain TS — the single source of truth (rarity, stats, classes, items, mobs, net), unit-tested
-  server/     Colyseus authoritative game server (TownRoom + MarketRoom + persistence)
+  server/     Colyseus authoritative game server (MapRoom + MarketRoom + PartyQuestRoom + managers + SQLite)
   client/     Phaser 3 + Vite browser client
   contracts/  Foundry / Solidity — Phase-2 on-chain layer (stubs + tests, deferred; not a pnpm member)
 ```
@@ -114,9 +117,11 @@ The client imports **types and data from `shared`, and the Colyseus _client_ SDK
 The simulation follows the verified Colyseus + Phaser tutorial pattern (the tutorial's `Part4Room` /
 `Part4Scene`), adapted to a top-down field. Real files:
 
-- **Server room:** `packages/server/src/rooms/TownRoom.ts`
+- **Server room:** `packages/server/src/rooms/MapRoom.ts` — **one room class hosts every map** (the map id
+  is a constructor arg). Live maps register as `dawn_isle`, `heartland_harbor`, `meadowfield`, plus channel
+  variants `{mapId}__ch{N}` (`CHANNELS_PER_MAP = 3`); registration lives in `app.config.ts`.
 - **Synced schema:** `packages/server/src/rooms/schema/*` (`Player`, `Mob`, `LootDrop`, `TownState`, …)
-- **Client scene:** `packages/client/src/scenes/Meadowfield.ts`
+- **Client scene:** `packages/client/src/scenes/MapScene.ts`
 
 ### Fixed timestep + per-player input queue + `fixedTick()`
 
@@ -125,7 +130,7 @@ time accumulator in fixed `1000 / 60` ms steps, calling `fixedTick()` exactly on
 wall-clock jitter:
 
 ```ts
-// TownRoom.ts — fixedTimeStep = 1000 / 60
+// MapRoom.ts — fixedTimeStep = 1000 / 60
 let elapsed = 0;
 this.setSimulationInterval((deltaTime) => {
   elapsed += deltaTime;
@@ -179,7 +184,7 @@ export class Player extends Schema {
 
 ### Client reconciliation + interpolation
 
-`Meadowfield.ts` runs the verified split-treatment of local vs. remote entities:
+`MapScene.ts` runs the verified split-treatment of local vs. remote entities:
 
 - **Local player — client-side prediction.** Every frame the scene sends its `InputData`, then applies the
   *same* movement the server will (`step = PLAYER_SPEED * (delta / FIXED_TIMESTEP)`), so control feels
@@ -253,18 +258,21 @@ the direct answer to a central operator secretly nerfing rates (the Nexon cube-o
 
 Five archetypes (`WARRIOR`, `MAGE`, `ARCHER`, `THIEF`, `PIRATE`), each with a primary stat, a home town
 from `WORLD.md`, HP/MP growth, and job-advancement tiers gated by level (1st @10 → 2nd @30 → 3rd @60 →
-4th @100). **Warrior is fully specced** (Squire/Vanguard tiers with named skills) for the MVP slice; the
-other four are wired stubs (gates + titles) so the server/UI can already reference them.
-`unlockedJobTier()` / `maxHpForLevel()` / `maxMpForLevel()` are pure helpers.
+4th @100). **All five are fully specced** — 90+ named skills across active / buff / passive kinds, with
+2nd-job **branches** (e.g. Warrior → Berserker / Guardian / Warlord) feeding distinct 3rd/4th-tier trees.
+`allSkillsForClass()` / `unlockedJobTier()` / `maxHpForLevel()` / `maxMpForLevel()` are pure helpers.
 
 ### Items & mobs (`items.ts`, `mobs.ts`)
 
 - **`ItemDef`** = static template (slot, level req, primary stat, base attack); **`ItemInstance`** = a
-  concrete owned item with its rolled `baseRank` + `potentialTier` + bonus `PotentialLine`s. MVP catalog:
-  Bronze Shortsword, Iron Broadsword, Leather Cap, Traveler's Jerkin.
-- **`MobDef`** carries HP, exp, a mesos range, and a drop table. A kill rolls in two independent, tested
-  stages: `rollMesos()` for currency, then `rollItemDrops()` per drop-table entry, then `rollPotential()`
-  for each dropped item's tier. Starter mob: **Meadow Slime** (`mob.meadow_slime`).
+  concrete owned item with its rolled `baseRank` + `potentialTier` + bonus `PotentialLine`s. The catalog is
+  **~150 items** across **16 equip slots** and **10 weapon types** (a 6-tier ladder per weapon type to
+  Lv 60), plus consumables and materials.
+- **`MobDef`** carries HP, exp, a mesos range, element, and a drop table. A kill rolls in two independent,
+  tested stages: `rollMesos()` for currency, then `rollItemDrops()` per drop-table entry, then
+  `rollPotential()` for each dropped item's tier. The roster is **53 mobs incl. 9 bosses**; boss
+  encounters (phases, telegraphs, summon-adds, loot-owner tracking) run server-side in `bossManager.ts`,
+  and spawns in `spawnManager.ts`.
 
 ---
 
@@ -279,16 +287,18 @@ order book: clients send list/buy/cancel **requests**; the server validates and 
 
 ### Shared persistence (why the loop is real)
 
-`store.ts` exports two singletons shared by **both** rooms, so the full loop closes end-to-end:
+`store.ts` exports the core singletons shared across rooms, so the full loop closes end-to-end:
 
 - **`accountStore`** — accounts keyed by a stable `accountId`, each with `mesos` + an `inventory` of
   `ItemRecord`s. New accounts start with `STARTER_MESOS = 300`.
 - **`marketStore`** — the global listing order book (`ListingRecord`s with a monotonic `lst_N` id).
 
-Both are in-memory with **debounced atomic JSON snapshots under `.data/`** (and a best-effort flush on
-shutdown). The loop: loot a drop in `TownRoom` → `accountStore.addItem` writes it through → open the
-Market → `MarketRoom` lists/sells it → mesos move between accounts. This off-chain ledger is exactly what
-the on-chain Premium Market mirrors later.
+Persistence is **SQLite via `better-sqlite3`** (WAL mode; numbered migrations in `persistence/migrations/`,
+opened in `persistence/db.ts`); `importFileData.ts` imports a legacy `.data/` JSON snapshot when present.
+Beyond `accountStore` and `marketStore`, the store layer also holds `treasuryStore` (the fee sink),
+`feedbackStore`, `moderationStore`, and analytics. The loop: loot a drop in `MapRoom` →
+`accountStore.addItem` writes it through → open the Market → `MarketRoom` lists/sells it → mesos move
+between accounts. This off-chain ledger is exactly what the on-chain Premium Market mirrors later.
 
 ### List / buy / cancel — server-side validation + the protocol fee
 
@@ -321,7 +331,7 @@ By design, **not everything is an NFT.** Common/uncommon drops stay off-chain Me
 the top Potential tier ever touches chain — `isMintWorthy(tier)` is **Legendary-only**. This keeps gas and
 chain volume sane and makes true ownership meaningful.
 
-The hook already exists server-side. On a Legendary drop, `TownRoom`:
+The hook already exists server-side. On a Legendary drop, `MapRoom`:
 
 1. flags the `LootDrop.legendary` schema field (the client shows a pulsing green legendary gem);
 2. on pickup, appends a `PendingMint { session, itemUid, defId, tier }` to an **in-memory queue only the
@@ -401,6 +411,28 @@ Be honest about the trust model — it's a load-bearing part of the pitch.
   shut down**, and immutable public odds + VRF **can't be secretly nerfed**. Players truly *own* and can
   sell their god-roll gear. We don't claim "decentralized game" — we claim **un-killable market + provably-
   fair drops + true ownership**, which is exactly the gap [`PLANNING.md`](../PLANNING.md) sets out to fill.
+
+---
+
+## 8. Authored but not yet wired
+
+A few systems exist as data/code but aren't applied in the live loop yet. They're called out here (and on
+the task list) so the doc never overstates what runs today:
+
+- **Buff/passive skills don't change stats yet.** Casting a buff broadcasts a cosmetic `STATUS_EFFECTS`
+  message; `shared/effects.ts` (DoT / HoT / stun / buff aggregation) is fully written but not imported by
+  the server, so buffs and passives don't yet modify damage or defense.
+- **Elements & status effects are data-only.** Mobs carry `element` + `elementMods` and `SkillDef` has an
+  `element` field, but `computeDamage` takes no element, so the damage triangle and debuffs aren't applied.
+  Mob `wDef / mDef / avoid` are also passed as `0` on player attacks today.
+- **Scrolling is built but unwired.** `shared/consumables.ts` ships `SCROLLS` + `applyScroll` and
+  `ItemInstance.enhancements`, but no room calls it. (Cube reroll and base-rank upgrade *are* wired.)
+- **Friends list is UI-only.** The client panel + `FRIEND_*` messages exist; there's no server handler or
+  persistence yet.
+- **Only 3 of ~26 maps are registered as rooms.** `dawn_isle`, `heartland_harbor`, `meadowfield` (+
+  channels); the rest are authored in `world.ts` but not yet joinable.
+
+These are deliberate next steps, not regressions — the foundation is in place; the wiring is the work.
 
 ---
 

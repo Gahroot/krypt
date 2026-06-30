@@ -20,7 +20,7 @@ CryptoMaple is a **2D side-scroller MMORPG** with a player-owned free market. **
 | --- | --- | --- |
 | [`packages/shared`](./packages/shared) (`@maple/shared`) | Plain TS — rarity / stats / classes / items / mobs. **Source of truth** for game data; both apps import it. | **vitest** |
 | [`packages/server`](./packages/server) (`@maple/server`) | **Colyseus authoritative** game server (combat, mesos, drops, soft market). | **tsx** scripts (`tsx test/*.ts`) |
-| [`packages/client`](./packages/client) (`@maple/client`) | **Phaser 3 + Vite** browser client. | typecheck + build only |
+| [`packages/client`](./packages/client) (`@maple/client`) | **Phaser 3 + Vite** browser client. | **vitest** (React Testing Library + jsdom) for the React UI overlay, plus typecheck + build; a **Playwright** screenshot harness (`ui:screenshots`) captures each panel |
 | [`packages/contracts`](./packages/contracts) | **Foundry** on-chain layer — **Phase 2, DEFERRED**. Stubs + unit tests only. | `forge test` |
 
 **Note on `contracts`:** it has **no `package.json`** (Foundry, not pnpm), so pnpm ignores it. Its `lib/` dependencies (forge-std, OpenZeppelin v5, Chainlink) are **git-ignored** — don't expect them present and don't commit them. See [`packages/contracts/README.md`](./packages/contracts/README.md) before touching it.
@@ -45,7 +45,9 @@ Target a single workspace when iterating:
 ```bash
 pnpm --filter @maple/shared test       # vitest
 pnpm --filter @maple/server test       # tsx test/smoke.ts && tsx test/market.ts
+pnpm --filter @maple/client test       # vitest run (UI render/smoke tests)
 pnpm --filter @maple/client build      # tsc --noEmit && vite build
+pnpm --filter @maple/client ui:screenshots  # Playwright: capture a PNG per panel (needs `npx playwright install chromium`)
 ```
 
 ## Conventions

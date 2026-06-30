@@ -84,18 +84,25 @@ everything" lives.
 
 ---
 
-## What we build FIRST (MVP slice — resist the rest)
-Do **not** build this whole map. The map is the *destination*. The MVP is one vertical slice that proves the feel:
+## Build status (June 2026) — slice shipped, world expanding
+The original MVP slice (one town, one class, one mob) is **done and surpassed**. Where the map stands now:
 
-1. **Dawn Isle** (tiny) → **Meadowfield** (the cozy pastoral starter town).
-2. **One class** to start: **Warrior** (melee is the simplest to make feel good).
-3. **One mob** + **one mini-boss** in the fields outside Meadowfield.
-4. **The Free Market** stub attached to the town (Mesos, off-chain).
-5. Everything else on this page is the **content backlog** we expand into, region by region.
+- **Authored & live (joinable rooms):** Dawn Isle, Tidewatch Harbor, Meadowfield. These 3 maps are
+  registered as Colyseus rooms (with channels) and playable today.
+- **Authored, content-ready, not yet wired as rooms:** the rest of the Heartland (Sylvanreach, Craghold,
+  Dusk Ward, Crossway, Mirefen + dungeons) and the first Far Reaches biomes (Skyhaven, Frosthold + their
+  sub-maps), plus the Dusk Subway party-quest maps — **~26 maps total exist in `world.ts`**. Registering
+  every map as a room is a tracked task.
+- **All five classes** (Warrior, Mage, Archer, Thief, Pirate) are specced with branching job trees; **53
+  mobs (9 bosses)**, two-layer rarity loot, the Free Market, quests, parties, guilds and party quests are
+  all in.
+- **Not built yet (the backlog):** the back half of the arc — the Tideways (underwater), Cogtown, Sector
+  Zero, Sunmarch/Alkest, Long Vale, Drakemoor (endgame) and the Timeless Spire, plus the faction isles.
 
 > Rule: every new region added later must bring a *genuinely different* vibe (movement, palette, enemies).
 > Variety is the product. Sameness is death.
 
 ---
 
-*This is the content bible. `PLANNING.md` = the systems & business plan. Next: scaffold the MVP slice.*
+*This is the content bible. `PLANNING.md` = the systems & business plan. The slice is built — now we widen
+the world region by region.*
