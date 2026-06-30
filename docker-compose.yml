@@ -1,0 +1,35 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - "2567:2567"
+    environment:
+      - PORT=2567
+      - HOST=0.0.0.0
+      - NODE_ENV=production
+      - DATABASE_URL=sqlite://./data/maple.db
+      - CORS_ORIGIN=*
+    volumes:
+      - server-data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2567/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  client:
+    build:
+      context: .
+      dockerfile: packages/client/Dockerfile
+      args:
+        VITE_BACKEND_URL: ws://localhost:2567
+    ports:
+      - "8080:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  server-data:

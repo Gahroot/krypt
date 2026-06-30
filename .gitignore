@@ -27,8 +27,16 @@ pnpm-debug.log*
 # Test coverage
 coverage/
 
-# Server runtime data (off-chain market persistence, etc.)
+# Server runtime data (off-chain market persistence, SQLite DB, etc.)
 packages/server/.data/
+packages/server/data/
+
+# UI screenshot harness output (packages/client/scripts/ui-screenshots.ts)
+packages/client/artifacts/
+
+# Agent tooling scratch (plans, generated screenshots, uploads)
+.ezcoder/
+.gg/
 
 # Foundry (Phase 2 contracts)
 packages/contracts/out/

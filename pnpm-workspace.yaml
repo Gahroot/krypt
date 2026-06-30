@@ -15,6 +15,7 @@ blockExoticSubdeps: false
 #   - lefthook: its postinstall fetches the platform binary; MUST be `true` so the `lefthook`
 #     executable is available for the root `prepare` script (`lefthook install`).
 allowBuilds:
+  better-sqlite3: true
   esbuild: false
   lefthook: true
   msgpackr-extract: false

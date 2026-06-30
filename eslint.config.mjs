@@ -22,6 +22,18 @@ export default defineConfig([
       tseslint.configs.strict,
       tseslint.configs.stylistic,
     ],
+    rules: {
+      // Allow intentionally-unused bindings via an explicit leading underscore
+      // (e.g. Colyseus message handlers that ignore the payload: `(client, _msg) => {}`).
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
+      ],
+    },
   },
   // Test harnesses pragmatically cast the synced Colyseus state (`room.state as any`) to read it by
   // hand, so `any` is allowed in test files only — not in shipped source.

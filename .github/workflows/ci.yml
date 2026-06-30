@@ -18,6 +18,10 @@ jobs:
   node:
     name: Node — lint · types · test · build
     runs-on: ubuntu-latest
+    env:
+      # Server tests boot Colyseus rooms in-process against SQLite. Default to a writable temp DB
+      # so no step depends on a committed ./data path. (Each package may still override locally.)
+      DATABASE_URL: sqlite://${{ runner.temp }}/maple-ci.db
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,20 +41,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Separate steps so a failure points at the exact gate.
       - name: Format check (Prettier)
         run: pnpm format:check
+
+      - name: Typecheck (all workspaces)
+        run: pnpm -r typecheck
 
       - name: Lint (ESLint)
         run: pnpm lint
 
-      - name: Typecheck (all workspaces)
-        run: pnpm typecheck
-
       - name: Test (all workspaces)
-        run: pnpm test
+        run: pnpm -r test
 
       - name: Build (all workspaces)
-        run: pnpm build
+        run: pnpm -r build
 
   contracts:
     name: Contracts — Foundry build · test · fmt
