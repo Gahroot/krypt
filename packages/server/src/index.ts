@@ -6,6 +6,15 @@
  */
 import { listen } from "@colyseus/tools";
 import appConfig from "./app.config";
+import { log } from "./logger";
 
-// listen() respects the PORT env var, defaulting to 2567.
-listen(appConfig);
+const PORT = Number(process.env.PORT || 2567);
+const HOST = process.env.HOST || "0.0.0.0";
+
+listen(appConfig, PORT).then(() => {
+  log.info("server started", {
+    port: PORT,
+    host: HOST,
+    nodeEnv: process.env.NODE_ENV ?? "development",
+  });
+});
