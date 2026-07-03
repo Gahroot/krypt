@@ -2,6 +2,7 @@ import { StatusBars } from "@/ui/hud/StatusBars";
 import { SkillBar } from "@/ui/hud/SkillBar";
 import { Minimap } from "@/ui/hud/Minimap";
 import { QuestTracker } from "@/ui/hud/QuestTracker";
+import { GuidancePanel } from "@/ui/hud/GuidancePanel";
 import { ChatBox } from "@/ui/hud/ChatBox";
 import { useUIStore } from "@/ui/store";
 
@@ -29,6 +30,7 @@ export function HUD() {
     <>
       <Minimap />
       <QuestTracker />
+      <GuidancePanel />
       <ChatBox />
       <StatusBars />
       <SkillBar />
