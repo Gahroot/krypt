@@ -5,7 +5,7 @@ import {
   type CharacterAppearance,
   type Gender,
 } from "@maple/shared";
-import { createCharacterRequest, setCharId, setPlayerName, markIntroSeen } from "../backend";
+import { createCharacterRequest, setCharId, setPlayerName } from "../backend";
 import { uiStore } from "../ui/store";
 
 // Background fill behind the React overlay (matches the UI palette).
@@ -114,14 +114,10 @@ export class CharacterCreateScene extends Phaser.Scene {
       uiStore.getState().setCharacterCreateOpen(false);
 
       if (this.guest) {
-        // Guest: skip character-select and intro — drop straight into the world.
+        // Guest: skip character-select but play the intro cinematic.
         setCharId(summary.charId);
         setPlayerName(summary.name);
-        markIntroSeen(summary.charId);
-        this.scene.start("map", {
-          mapId: "dawn_isle",
-          _welcomeBanner: "Dawn Isle",
-        });
+        this.scene.start("intro");
       } else {
         // Return to the roster so the player can pick the new character to play.
         this.scene.start("character_select");
