@@ -314,7 +314,7 @@ export const NPCS: Record<string, NpcDef> = {
     id: "npc.dawn_instructor_pirate",
     name: "Pirate Instructor",
     mapId: "dawn_isle",
-    x: 1260,
+    x: 1200,
     y: 400 - 40,
     spriteKey: "npc.pirate_instructor",
     role: "job",
