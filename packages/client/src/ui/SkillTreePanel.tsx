@@ -9,7 +9,7 @@ import {
   type JobTier,
 } from "@maple/shared";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { Button } from "@/ui/components/ui/button";
 import { Separator } from "@/ui/components/ui/separator";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
@@ -19,7 +19,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/ui/components/ui/tooltip";
-import { EmptyState } from "@/ui/components/EmptyState";
 import { useUIStore } from "@/ui/store";
 
 /**
@@ -159,28 +158,14 @@ export function SkillTreePanel() {
   const archetype = character.archetype as ClassArchetype;
   const onClose = () => actions?.closeSkillTree();
 
-  if (archetype === ClassArchetype.BEGINNER) {
-    return (
-      <Panel
-        title="Skills"
-        hotkey="K"
-        onClose={onClose}
-        className="absolute top-[52px] left-1/2 w-[460px] -translate-x-1/2"
-      >
-        <EmptyState
-          title="No skill tree yet"
-          description="Advance to a first job to unlock your skill tree."
-        />
-      </Panel>
-    );
-  }
-
   const cls = getClass(archetype);
   const maxSp = totalSpByLevel(character.level);
   const spent = spSpent(skillBook);
   const remaining = Math.max(0, maxSp - spent);
   const learnableIds = new Set(
-    skillsAvailableAt(archetype, character.level, skillBook).map((s) => s.id),
+    skillsAvailableAt(archetype, character.level, skillBook, character.branchId || undefined).map(
+      (s) => s.id,
+    ),
   );
   const hasSp = remaining > 0;
 
@@ -188,11 +173,11 @@ export function SkillTreePanel() {
 
   return (
     <TooltipProvider delayDuration={120}>
-      <Panel
+      <DraggableWindow
         title={`${cls.name} Skills`}
         hotkey="K"
         onClose={onClose}
-        className="absolute top-[52px] left-1/2 w-[460px] -translate-x-1/2"
+        defaultPosition={{ x: 410, y: 72 }}
         headerExtra={
           <span className="text-[10px] font-medium text-primary tabular-nums">
             SP {remaining} / {maxSp}
@@ -234,7 +219,7 @@ export function SkillTreePanel() {
             {spent} SP spent · level up to earn more.
           </p>
         </ScrollArea>
-      </Panel>
+      </DraggableWindow>
     </TooltipProvider>
   );
 }

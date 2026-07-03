@@ -110,12 +110,19 @@ describe("skillsAvailableAt", () => {
     expect(at30withCB.map((s) => s.id)).toContain("warrior.cleave");
   });
 
-  it("returns Beginner skills at level 10+", () => {
-    // Beginner has tier-1 skills: nimble_strike (levelReq=10) and island_ward (levelReq=12)
+  it("returns Beginner tutorial skills at level 1 and later skills at higher levels", () => {
+    // Beginner now has 6 skills available progressively from Lv1
+    const at1 = skillsAvailableAt(ClassArchetype.BEGINNER, 1);
+    const ids1 = at1.map((s) => s.id);
+    expect(ids1).toContain("beginner.recovery");
+    expect(ids1).toContain("beginner.double_strike");
+    expect(ids1).not.toContain("beginner.nimble_strike");
+    expect(ids1).not.toContain("beginner.island_ward");
+
     const at10 = skillsAvailableAt(ClassArchetype.BEGINNER, 10);
-    const ids = at10.map((s) => s.id);
-    expect(ids).toContain("beginner.nimble_strike");
-    expect(ids).not.toContain("beginner.island_ward");
+    const ids10 = at10.map((s) => s.id);
+    expect(ids10).toContain("beginner.nimble_strike");
+    expect(ids10).not.toContain("beginner.island_ward");
 
     const at15 = skillsAvailableAt(ClassArchetype.BEGINNER, 15);
     expect(at15.map((s) => s.id)).toContain("beginner.island_ward");

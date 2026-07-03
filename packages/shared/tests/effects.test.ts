@@ -5,11 +5,15 @@ import {
   aggregateSecondary,
   buffEffectToSecondary,
   skillBuffToStatusEffect,
+  skillDebuffToStatusEffects,
   consumableBuffToStatusEffect,
   passiveEffectBonus,
+  isStunned,
+  getSlowMultiplier,
   MAX_STACKS,
   type StatusEffect,
 } from "../src/effects.js";
+import type { DebuffEffect } from "../src/classes.js";
 import { deriveSecondary } from "../src/stats.js";
 import type { SecondaryStats, CharacterStats } from "../src/stats.js";
 import { ClassArchetype } from "../src/classes.js";
@@ -395,6 +399,14 @@ describe("buffEffectToSecondary", () => {
     expect(buffEffectToSecondary({ speed: 10 })).toEqual({ speed: 10 });
   });
 
+  it("maps jump", () => {
+    expect(buffEffectToSecondary({ jump: 15 })).toEqual({ jump: 15 });
+  });
+
+  it("maps hpMpRegen to both hpRegen and mpRegen", () => {
+    expect(buffEffectToSecondary({ hpMpRegen: 5 })).toEqual({ hpRegen: 5, mpRegen: 5 });
+  });
+
   it("returns empty for mpPercent (handled separately)", () => {
     expect(buffEffectToSecondary({ mpPercent: 10 })).toEqual({});
   });
@@ -672,5 +684,230 @@ describe("end-to-end buff integration via deriveSecondary", () => {
 
     expect(active).toHaveLength(0);
     expect(aggregateSecondary(active)).toEqual({});
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// isStunned
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("isStunned", () => {
+  it("returns false for an empty effect list", () => {
+    expect(isStunned([])).toBe(false);
+  });
+
+  it("returns false when only buffs are active", () => {
+    expect(isStunned([makeBuff("a"), makeBuff("b")])).toBe(false);
+  });
+
+  it("returns false when only debuffs are active", () => {
+    expect(isStunned([makeDebuff("slow")])).toBe(false);
+  });
+
+  it("returns false when only DoT/HoT are active", () => {
+    expect(isStunned([makeDot(), makeHot()])).toBe(false);
+  });
+
+  it("returns true when a stun effect is present", () => {
+    expect(isStunned([makeStun("test.stun", 3000)])).toBe(true);
+  });
+
+  it("returns true when stun is mixed with other effects", () => {
+    expect(isStunned([makeBuff("a"), makeStun(), makeDebuff("slow")])).toBe(true);
+  });
+
+  it("returns false after the stun expires", () => {
+    const stun = makeStun("test.stun", 500);
+    const elapsed = new Map<string, number>([["test.stun", 0]]);
+    const result = tickEffects([stun], 600, elapsed);
+    expect(isStunned(result.active)).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// getSlowMultiplier
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("getSlowMultiplier", () => {
+  it("returns 1.0 for an empty effect list", () => {
+    expect(getSlowMultiplier([])).toBe(1);
+  });
+
+  it("returns 1.0 for buffs and stuns (no slow)", () => {
+    expect(getSlowMultiplier([makeBuff("a"), makeStun()])).toBe(1);
+  });
+
+  it("returns 0.7 for a 30% slow debuff", () => {
+    const slow: StatusEffect = {
+      id: "test.slow",
+      kind: "debuff",
+      secondary: { speed: -30 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    expect(getSlowMultiplier([slow])).toBeCloseTo(0.7);
+  });
+
+  it("returns 0.5 for a 50% slow debuff", () => {
+    const slow: StatusEffect = {
+      id: "test.slow",
+      kind: "debuff",
+      secondary: { speed: -50 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    expect(getSlowMultiplier([slow])).toBeCloseTo(0.5);
+  });
+
+  it("adds multiple slow debuffs additively", () => {
+    const a: StatusEffect = {
+      id: "a",
+      kind: "debuff",
+      secondary: { speed: -20 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    const b: StatusEffect = {
+      id: "b",
+      kind: "debuff",
+      secondary: { speed: -15 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    // 35% slow → 0.65
+    expect(getSlowMultiplier([a, b])).toBeCloseTo(0.65);
+  });
+
+  it("caps at 70% slow (minimum 0.3x speed)", () => {
+    const a: StatusEffect = {
+      id: "a",
+      kind: "debuff",
+      secondary: { speed: -50 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    const b: StatusEffect = {
+      id: "b",
+      kind: "debuff",
+      secondary: { speed: -40 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    // 90% would exceed cap → clamped to 70% → 0.3
+    expect(getSlowMultiplier([a, b])).toBeCloseTo(0.3);
+  });
+
+  it("respects stacks in slow calculation", () => {
+    const slow: StatusEffect = {
+      id: "test.slow",
+      kind: "debuff",
+      secondary: { speed: -10 },
+      durationMs: 5000,
+      stacks: 3,
+      source: "test",
+    };
+    // 10% × 3 stacks = 30% slow → 0.7
+    expect(getSlowMultiplier([slow])).toBeCloseTo(0.7);
+  });
+
+  it("ignores debuffs without a speed secondary", () => {
+    const debuff: StatusEffect = {
+      id: "test.debuff",
+      kind: "debuff",
+      secondary: { wDef: -5 },
+      durationMs: 5000,
+      stacks: 1,
+      source: "test",
+    };
+    expect(getSlowMultiplier([debuff])).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// skillDebuffToStatusEffects
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("skillDebuffToStatusEffects", () => {
+  it("creates a stun effect from stunMs debuff", () => {
+    const debuff: DebuffEffect = { stunMs: 1500 };
+    const effects = skillDebuffToStatusEffects("warrior.battle_cry", debuff, "player1");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]!).toEqual({
+      id: "warrior.battle_cry.stun",
+      kind: "stun",
+      durationMs: 1500,
+      stacks: 1,
+      source: "player1",
+    });
+  });
+
+  it("creates a slow debuff from slowPercent/slowMs", () => {
+    const debuff: DebuffEffect = { slowPercent: 30, slowMs: 3000 };
+    const effects = skillDebuffToStatusEffects("archer.ice_arrow", debuff, "player2");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]!).toEqual({
+      id: "archer.ice_arrow.slow",
+      kind: "debuff",
+      secondary: { speed: -30 },
+      durationMs: 3000,
+      stacks: 1,
+      source: "player2",
+    });
+  });
+
+  it("creates a DoT (poison) from poisonTickDamage/TickMs/Ms", () => {
+    const debuff: DebuffEffect = {
+      poisonTickDamage: 15,
+      poisonTickMs: 1000,
+      poisonMs: 4000,
+    };
+    const effects = skillDebuffToStatusEffects("thief.poison", debuff, "player3");
+    expect(effects).toHaveLength(1);
+    expect(effects[0]!).toEqual({
+      id: "thief.poison.poison",
+      kind: "dot",
+      tickDamage: 15,
+      tickMs: 1000,
+      durationMs: 4000,
+      stacks: 1,
+      source: "player3",
+    });
+  });
+
+  it("returns empty array for unknown debuff shape", () => {
+    // @ts-expect-error testing unknown shape
+    const effects = skillDebuffToStatusEffects("x", {}, "test");
+    expect(effects).toHaveLength(0);
+  });
+
+  it("stun effects integrate with isStunned", () => {
+    const debuff: DebuffEffect = { stunMs: 2000 };
+    const effects = skillDebuffToStatusEffects("warrior.bash", debuff, "src");
+    expect(isStunned(effects)).toBe(true);
+  });
+
+  it("slow effects integrate with getSlowMultiplier", () => {
+    const debuff: DebuffEffect = { slowPercent: 40, slowMs: 3000 };
+    const effects = skillDebuffToStatusEffects("archer.ice_shot", debuff, "src");
+    expect(getSlowMultiplier(effects)).toBeCloseTo(0.6);
+  });
+
+  it("poison effects integrate with tickEffects", () => {
+    const debuff: DebuffEffect = {
+      poisonTickDamage: 10,
+      poisonTickMs: 1000,
+      poisonMs: 5000,
+    };
+    const effects = skillDebuffToStatusEffects("thief.venom", debuff, "src");
+    const elapsed = new Map<string, number>();
+    const result = tickEffects(effects, 1000, elapsed);
+    expect(result.hpDelta).toBe(-10);
+    expect(result.active).toHaveLength(1);
   });
 });

@@ -40,6 +40,8 @@ export type BuffEffect =
   | { readonly atkPercent: number }
   | { readonly defPercent: number }
   | { readonly speed: number }
+  | { readonly jump: number }
+  | { readonly hpMpRegen: number }
   | { readonly mpPercent: number };
 
 /** Debuff effect applied to targets by an active attack skill. Exactly one key is present. */
@@ -557,8 +559,56 @@ const BEGINNER: ClassDef = {
     {
       tier: 1,
       title: "Islander",
-      levelReq: 10,
+      levelReq: 1,
       skills: [
+        // ── Tutorial skills (Lv 1–9) ─────────────────────────────────────
+        {
+          id: "beginner.recovery",
+          name: "Recovery",
+          description:
+            "Passive: island life toughens the body, passively restoring a small amount of HP and MP over time.",
+          maxLevel: 5,
+          jobTier: 1,
+          levelReq: 1,
+          kind: "passive",
+          buffEffect: { hpMpRegen: 5 },
+        },
+        {
+          id: "beginner.double_strike",
+          name: "Double Strike",
+          description: "A quick two-hit combo. The first attack skill available to every Beginner.",
+          maxLevel: 10,
+          jobTier: 1,
+          levelReq: 1,
+          kind: "active",
+          mpCost: { base: 3, perLevel: 0 },
+          cooldownMs: { base: 500, perLevel: 0 },
+          damagePercent: { base: 100, perLevel: 5 },
+          hitCount: { base: 2, perLevel: 0 },
+          targetCount: { base: 1, perLevel: 0 },
+        },
+        {
+          id: "beginner.leap",
+          name: "Leap",
+          description:
+            "Passive: learned from the island's cliff edges, granting a permanent boost to jump height.",
+          maxLevel: 5,
+          jobTier: 1,
+          levelReq: 3,
+          kind: "passive",
+          buffEffect: { jump: 15 },
+        },
+        {
+          id: "beginner.nimble_feet",
+          name: "Nimble Feet",
+          description: "Passive: years of island running grant swiftness, boosting movement speed.",
+          maxLevel: 5,
+          jobTier: 1,
+          levelReq: 5,
+          kind: "passive",
+          buffEffect: { speed: 10 },
+        },
+        // ── Pre-advancement skills (Lv 10+) ─────────────────────────────
         {
           id: "beginner.nimble_strike",
           name: "Nimble Strike",
@@ -1021,7 +1071,7 @@ const ARCHER: ClassDef = {
           kind: "active",
           mpCost: { base: 6, perLevel: 1 },
           cooldownMs: { base: 700, perLevel: 0 },
-          damagePercent: { base: 120, perLevel: 5 },
+          damagePercent: { base: 75, perLevel: 3 },
           hitCount: { base: 2, perLevel: 0 },
           targetCount: { base: 1, perLevel: 0 },
         },
@@ -1796,8 +1846,8 @@ const PIRATE: ClassDef = {
           levelReq: 10,
           kind: "active",
           mpCost: { base: 8, perLevel: 1 },
-          cooldownMs: { base: 800, perLevel: 0 },
-          damagePercent: { base: 150, perLevel: 5 },
+          cooldownMs: { base: 700, perLevel: 0 },
+          damagePercent: { base: 140, perLevel: 5 },
           hitCount: { base: 1, perLevel: 0 },
           targetCount: { base: 1, perLevel: 0 },
         },

@@ -612,6 +612,8 @@ export function computeSetBonuses(
     jump: number;
     accuracy: number;
     avoid: number;
+    hpRegen: number;
+    mpRegen: number;
     STR: number;
     DEX: number;
     INT: number;
@@ -630,6 +632,8 @@ export function computeSetBonuses(
     jump: 0,
     accuracy: 0,
     avoid: 0,
+    hpRegen: 0,
+    mpRegen: 0,
     STR: 0,
     DEX: 0,
     INT: 0,

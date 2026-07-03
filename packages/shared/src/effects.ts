@@ -200,6 +200,8 @@ export function buffEffectToSecondary(bf: BuffEffect): Partial<SecondaryStats> {
   if ("atkPercent" in bf) return { atk: bf.atkPercent };
   if ("defPercent" in bf) return { wDef: bf.defPercent, mDef: bf.defPercent };
   if ("speed" in bf) return { speed: bf.speed };
+  if ("jump" in bf) return { jump: bf.jump };
+  if ("hpMpRegen" in bf) return { hpRegen: bf.hpMpRegen, mpRegen: bf.hpMpRegen };
   if ("mpPercent" in bf) return {}; // MP% handled separately by caller
   return {};
 }

@@ -32,6 +32,10 @@ export interface SecondaryStats {
   readonly accuracy: number;
   /** Avoidance (evasion) rating. */
   readonly avoid: number;
+  /** Passive HP regeneration per tick. */
+  readonly hpRegen: number;
+  /** Passive MP regeneration per tick. */
+  readonly mpRegen: number;
 }
 
 export interface CharacterStats {
@@ -140,6 +144,8 @@ export const BASE_SECONDARY: Readonly<SecondaryStats> = {
   jump: 100,
   accuracy: 0,
   avoid: 0,
+  hpRegen: 0,
+  mpRegen: 0,
 } as const;
 
 /**
@@ -185,6 +191,8 @@ export function deriveSecondary(
     jump: BASE_SECONDARY.jump,
     accuracy: Math.floor(baseAcc),
     avoid: Math.floor(baseAvoid),
+    hpRegen: BASE_SECONDARY.hpRegen,
+    mpRegen: BASE_SECONDARY.mpRegen,
   };
 
   // Apply optional equipment and effect (buff/passive) bonuses.
@@ -201,6 +209,8 @@ export function deriveSecondary(
     jump: base.jump + (eq.jump ?? 0) + (eff.jump ?? 0),
     accuracy: base.accuracy + (eq.accuracy ?? 0) + (eff.accuracy ?? 0),
     avoid: base.avoid + (eq.avoid ?? 0) + (eff.avoid ?? 0),
+    hpRegen: base.hpRegen + (eq.hpRegen ?? 0) + (eff.hpRegen ?? 0),
+    mpRegen: base.mpRegen + (eq.mpRegen ?? 0) + (eff.mpRegen ?? 0),
   };
 }
 
