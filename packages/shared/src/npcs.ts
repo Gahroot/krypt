@@ -16,7 +16,14 @@
 
 /** A single action the server should execute when a player picks a dialog choice. */
 export interface DialogAction {
-  readonly kind: "openShop" | "giveQuest" | "advanceJob" | "travel" | "enterPQ" | "end";
+  readonly kind:
+    | "openShop"
+    | "giveQuest"
+    | "advanceJob"
+    | "travel"
+    | "enterPQ"
+    | "openStorage"
+    | "end";
   /** Meaning depends on `kind`: quest id, shop id, map id, job class key, etc. */
   readonly payload?: string;
   /** Mesos fee for travel actions; server deducts before teleporting. */
@@ -95,7 +102,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Use arrow keys to move and Z to attack. Try it on the snails below!",
+        text: "Use arrow keys to move and SPACE to attack. Try it on the snails below!",
         next: 2,
       },
       {
@@ -118,7 +125,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Press Z near a mob to attack. You can jump with X!",
+        text: "Press SPACE near a mob to attack. You can jump with ALT!",
         next: 2,
       },
       {
@@ -172,7 +179,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "I can hold your extra items. Open your storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -293,7 +300,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is LUK. At level 10, you can advance to a Cutpurse in Dusk-Ward and learn Lucky Seven and Shadow Instinct.",
+        text: "Your primary stat is LUK. At level 10, you can advance to a Cutpurse in Dusk-Ward and learn Shadow Rush and Shadow Instinct.",
         next: 3,
       },
       {
@@ -1271,7 +1278,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "Welcome to the Harbor Vault. I'll keep your extra gear safe and sound. Open your storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -1388,7 +1395,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The stables double as a warehouse around here. I can hold your extra gear. Open your storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -1537,7 +1544,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The roots of the Great Elder Tree hold many secrets — and they can hold your extra gear too. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -1650,7 +1657,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The stone vaults are carved deep into the cliff. Nothing gets stolen here. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -1763,7 +1770,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "Nothing leaves the Black Vault without my say-so. And nothing enters without your key. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -1912,7 +1919,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The ancient roots form natural vaults beneath the boardwalk. Safe from water, safe from thieves. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -2025,7 +2032,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The World Tree shelters all who gather at Crossway — even your spare gear. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -2176,7 +2183,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The Sky Vault is carved into the living rock of this floating island. Your gear is safe here. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
@@ -2311,7 +2318,7 @@ export const NPCS: Record<string, NpcDef> = {
       {
         kind: "line",
         text: "The Permafrost Vault never thaws. Your gear will be preserved for eternity. Open storage?",
-        action: { kind: "end" },
+        action: { kind: "openStorage" },
       },
     ],
   },
