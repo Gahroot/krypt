@@ -8,7 +8,9 @@ import {
   connectWallet,
   guestSignIn,
   isWalletAvailable,
+  fetchAlphaGateStatus,
   logout,
+  fetchCharacters,
 } from "../backend";
 import { uiStore } from "../ui/store";
 
@@ -40,6 +42,14 @@ export class LoginScene extends Phaser.Scene {
 
     this.registerActions();
     this.publish("");
+
+    // Fetch the alpha-gate status so the UI knows whether to show the invite code field.
+    void fetchAlphaGateStatus().then((enabled) => {
+      uiStore.getState().setLogin({
+        ...uiStore.getState().login,
+        inviteCodeRequired: enabled,
+      });
+    });
 
     // Hide the overlay panel when this scene shuts down (hand-off to next scene).
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -80,10 +90,10 @@ export class LoginScene extends Phaser.Scene {
   private registerActions(): void {
     uiStore.getState().setLoginActions({
       loginEmail: (email, password) => void this.run(() => loginWithPassword(email, password)),
-      registerEmail: (email, password) =>
-        void this.run(() => registerWithPassword(email, password)),
-      connectWallet: () => void this.run(() => connectWallet()),
-      guest: () => void this.run(() => guestSignIn()),
+      registerEmail: (email, password, inviteCode) =>
+        void this.run(() => registerWithPassword(email, password, inviteCode)),
+      connectWallet: (inviteCode) => void this.run(() => connectWallet(inviteCode)),
+      guest: (inviteCode) => void this.runGuest(inviteCode),
     });
   }
 
@@ -101,10 +111,49 @@ export class LoginScene extends Phaser.Scene {
     }
   }
 
+  /** Guest sign-in: authenticate then auto-create if roster is empty. */
+  private async runGuest(inviteCode?: string): Promise<void> {
+    if (this.sending) return;
+    this.sending = true;
+    this.publish("");
+    try {
+      await guestSignIn(inviteCode);
+      await this.proceedGuestFastPath();
+    } catch (err) {
+      this.sending = false;
+      this.publish(err instanceof Error ? err.message : "Authentication failed.");
+    }
+  }
+
   /** Authenticated — close the panel and hand off to the character roster. */
   private proceed(): void {
     this.sending = false;
     uiStore.getState().setLoginOpen(false);
     this.scene.start("character_select");
+  }
+
+  /**
+   * Guest fast-path: when the roster is empty, route to character creation so
+   * the player can pick a name and appearance before entering the world.
+   * Returning guests (roster non-empty) go through the normal character-select.
+   */
+  private async proceedGuestFastPath(): Promise<void> {
+    try {
+      const { characters } = await fetchCharacters();
+      if (characters.length > 0) {
+        // Returning guest — normal flow.
+        this.proceed();
+        return;
+      }
+
+      // Brand-new guest — open the character creation screen so they can pick
+      // their name and appearance before entering the world.
+      this.sending = false;
+      uiStore.getState().setLoginOpen(false);
+      this.scene.start("character_create", { guest: true });
+    } catch {
+      // fetchCharacters failed — fall back to the standard character-select flow.
+      this.proceed();
+    }
   }
 }

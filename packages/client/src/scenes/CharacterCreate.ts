@@ -5,7 +5,7 @@ import {
   type CharacterAppearance,
   type Gender,
 } from "@maple/shared";
-import { createCharacterRequest } from "../backend";
+import { createCharacterRequest, setCharId, setPlayerName, markIntroSeen } from "../backend";
 import { uiStore } from "../ui/store";
 
 // Background fill behind the React overlay (matches the UI palette).
@@ -20,17 +20,22 @@ const BG = 0x0c1019;
 // calls. On Confirm it creates the character via `POST /characters` and returns
 // to the Character Select screen so the player can pick who to play. Back also
 // returns to Character Select.
+//
+// When started with `{ guest: true }` (from the guest login fast-path), Confirm
+// drops straight into Dawn Isle and Back returns to the Login screen.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export class CharacterCreateScene extends Phaser.Scene {
   private appearance!: CharacterAppearance;
   private sending = false;
+  private guest = false;
 
   constructor() {
     super("character_create");
   }
 
-  create(): void {
+  create(data: { guest?: boolean } = {}): void {
+    this.guest = !!data.guest;
     this.appearance = randomizeAppearance();
     this.sending = false;
     this.cameras.main.setBackgroundColor(BG);
@@ -105,19 +110,35 @@ export class CharacterCreateScene extends Phaser.Scene {
     try {
       // Server validates name/uniqueness/slot-cap and binds the new character to
       // the authenticated account (identity from the signed token, not the body).
-      await createCharacterRequest(trimmed, appearance);
+      const summary = await createCharacterRequest(trimmed, appearance);
       uiStore.getState().setCharacterCreateOpen(false);
-      // Return to the roster so the player can pick the new character to play.
-      this.scene.start("character_select");
+
+      if (this.guest) {
+        // Guest: skip character-select and intro — drop straight into the world.
+        setCharId(summary.charId);
+        setPlayerName(summary.name);
+        markIntroSeen(summary.charId);
+        this.scene.start("map", {
+          mapId: "dawn_isle",
+          _welcomeBanner: "Dawn Isle",
+        });
+      } else {
+        // Return to the roster so the player can pick the new character to play.
+        this.scene.start("character_select");
+      }
     } catch (err) {
       this.sending = false;
       this.publish(err instanceof Error ? err.message : "Could not create character.");
     }
   }
 
-  // ─── Back → Character Select ───────────────────────────────────────────────
+  // ─── Back ─────────────────────────────────────────────────────────────────
   private onBack(): void {
     uiStore.getState().setCharacterCreateOpen(false);
-    this.scene.start("character_select");
+    if (this.guest) {
+      this.scene.start("login");
+    } else {
+      this.scene.start("character_select");
+    }
   }
 }
