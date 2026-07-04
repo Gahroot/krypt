@@ -331,7 +331,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is STR. At level 10, you can advance to a Deckhand in Tidewatch Harbor and learn Powder Blast and Sea Fortitude.",
+        text: "Your primary stat is STR. At level 10, you can advance to a Deckhand in Tidewatch Harbor and learn Gut Punch and Sea Fortitude.",
         next: 3,
       },
       {
