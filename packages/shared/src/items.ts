@@ -270,11 +270,71 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 2,
     baseAttack: 14,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 4,
     wDef: 1,
     speed: 2,
     setId: "set.starter_warrior",
   },
+  // ── Lv 1 starter weapons (non-Warrior) ──────────────────────────────
+  "wpn.apprentice_wand": {
+    id: "wpn.apprentice_wand",
+    name: "Apprentice Wand",
+    slot: EquipSlot.WEAPON,
+    levelReq: 1,
+    primaryStat: "INT",
+    baseStatBonus: 2,
+    baseAttack: 11,
+    weaponType: WeaponType.WAND,
+    classReq: [ClassArchetype.MAGE],
+    reqInt: 4,
+    mDef: 1,
+    speed: 1,
+  },
+  "wpn.shortbow": {
+    id: "wpn.shortbow",
+    name: "Shortbow",
+    slot: EquipSlot.WEAPON,
+    levelReq: 1,
+    primaryStat: "DEX",
+    baseStatBonus: 2,
+    baseAttack: 11,
+    weaponType: WeaponType.BOW,
+    classReq: [ClassArchetype.ARCHER],
+    reqDex: 4,
+    wDef: 1,
+    speed: 2,
+  },
+  "wpn.rusty_dagger": {
+    id: "wpn.rusty_dagger",
+    name: "Rusty Dagger",
+    slot: EquipSlot.WEAPON,
+    levelReq: 1,
+    primaryStat: "LUK",
+    baseStatBonus: 2,
+    baseAttack: 11,
+    weaponType: WeaponType.DAGGER,
+    classReq: [ClassArchetype.THIEF],
+    reqLuk: 4,
+    wDef: 1,
+    speed: 3,
+  },
+  "wpn.driftwood_cutlass": {
+    id: "wpn.driftwood_cutlass",
+    name: "Driftwood Knuckle",
+    slot: EquipSlot.WEAPON,
+    levelReq: 1,
+    primaryStat: "STR",
+    baseStatBonus: 2,
+    baseAttack: 11,
+    weaponType: WeaponType.KNUCKLE,
+    classReq: [ClassArchetype.PIRATE],
+    reqStr: 4,
+    wDef: 1,
+    speed: 2,
+  },
+
+  // ── Lv 10 weapons ─────────────────────────────────────────────────────
   "wpn.iron_broadsword": {
     id: "wpn.iron_broadsword",
     name: "Iron Broadsword",
@@ -284,6 +344,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 5,
     baseAttack: 32,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 35,
     reqDex: 15,
     wDef: 3,
@@ -361,6 +422,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 8,
     baseAttack: 52,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 65,
     reqDex: 30,
     wDef: 5,
@@ -376,6 +438,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 14,
     baseAttack: 78,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 100,
     reqDex: 55,
     wDef: 7,
@@ -390,6 +453,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 20,
     baseAttack: 108,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 145,
     reqDex: 85,
     wDef: 10,
@@ -405,6 +469,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 28,
     baseAttack: 148,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 200,
     reqDex: 125,
     wDef: 13,
@@ -420,6 +485,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 38,
     baseAttack: 195,
     weaponType: WeaponType.SWORD,
+    classReq: [ClassArchetype.WARRIOR],
     reqStr: 270,
     reqDex: 175,
     wDef: 16,
@@ -2712,6 +2778,70 @@ export const ITEMS: Record<string, ItemDef> = {
     speed: 3,
     hpBonus: 52,
     setId: "set.galeforce",
+  },
+
+  "shoes.ironshod_boots": {
+    id: "shoes.ironshod_boots",
+    name: "Ironshod Boots",
+    slot: EquipSlot.SHOES,
+    levelReq: 10,
+    primaryStat: "STR",
+    baseStatBonus: 2,
+    baseAttack: 0,
+    reqStr: 15,
+    reqDex: 8,
+    wDef: 4,
+    mDef: 2,
+    speed: 2,
+    hpBonus: 15,
+  },
+  "shoes.stormwall_greaves": {
+    id: "shoes.stormwall_greaves",
+    name: "Stormwall Greaves",
+    slot: EquipSlot.SHOES,
+    levelReq: 30,
+    primaryStat: "STR",
+    baseStatBonus: 6,
+    baseAttack: 0,
+    reqStr: 70,
+    reqDex: 30,
+    wDef: 14,
+    mDef: 7,
+    speed: 2,
+    hpBonus: 40,
+    setId: "set.stormwall",
+  },
+  "shoes.obsidian_war_greaves": {
+    id: "shoes.obsidian_war_greaves",
+    name: "Obsidian War Greaves",
+    slot: EquipSlot.SHOES,
+    levelReq: 50,
+    primaryStat: "STR",
+    baseStatBonus: 12,
+    baseAttack: 0,
+    reqStr: 140,
+    reqDex: 70,
+    wDef: 28,
+    mDef: 14,
+    speed: 3,
+    hpBonus: 80,
+    setId: "set.obsidian_rampart",
+  },
+  "shoes.aetherforged_war_greaves": {
+    id: "shoes.aetherforged_war_greaves",
+    name: "Aetherforged War Greaves",
+    slot: EquipSlot.SHOES,
+    levelReq: 60,
+    primaryStat: "STR",
+    baseStatBonus: 16,
+    baseAttack: 0,
+    reqStr: 190,
+    reqDex: 100,
+    wDef: 36,
+    mDef: 18,
+    speed: 3,
+    hpBonus: 110,
+    setId: "set.aether_bastion",
   },
 
   // ── Armor — SHOES (INT / mage) ─────────────────────────────────
@@ -6543,6 +6673,12 @@ export interface EquippedBonuses {
   dex: number;
   int: number;
   luk: number;
+  wDef: number;
+  mDef: number;
+  speed: number;
+  jump: number;
+  hp: number;
+  mp: number;
 }
 
 export function resolveEquippedBonus(
@@ -6552,7 +6688,19 @@ export function resolveEquippedBonus(
   getPotentialLines: (uid: string) => readonly PotentialLine[],
   getBonusStats?: (uid: string) => readonly BonusStatLine[],
 ): EquippedBonuses {
-  const result: EquippedBonuses = { atk: 0, str: 0, dex: 0, int: 0, luk: 0 };
+  const result: EquippedBonuses = {
+    atk: 0,
+    str: 0,
+    dex: 0,
+    int: 0,
+    luk: 0,
+    wDef: 0,
+    mDef: 0,
+    speed: 0,
+    jump: 0,
+    hp: 0,
+    mp: 0,
+  };
   if (!equipped) return result;
 
   const entries = equipped instanceof Map ? equipped.entries() : Object.entries(equipped);
@@ -6566,29 +6714,52 @@ export function resolveEquippedBonus(
     result.atk += def.baseAttack * mult;
 
     // Primary stat bonus scaled by rank.
-    const statKey = def.primaryStat.toLowerCase() as keyof Omit<EquippedBonuses, "atk">;
+    const statKey = def.primaryStat.toLowerCase() as keyof Omit<
+      EquippedBonuses,
+      "atk" | "hp" | "mp"
+    >;
     result[statKey] += def.baseStatBonus * mult;
 
-    // Potential lines add percentage bonuses.
+    // Flat defence / utility stats from item definition (not rank-scaled).
+    result.wDef += def.wDef ?? 0;
+    result.mDef += def.mDef ?? 0;
+    result.speed += def.speed ?? 0;
+    result.jump += def.jump ?? 0;
+
+    // Flat HP/MP bonuses from item definition.
+    result.hp += def.hpBonus ?? 0;
+    result.mp += def.mpBonus ?? 0;
+
+    // Potential lines add percentage bonuses (based on primaryStatBonus, so ATK + STR/DEX/INT/LUK only).
     for (const line of getPotentialLines(uid)) {
+      if (line.stat === "HP" || line.stat === "MP") continue; // HP/MP percentages use a different base — not yet supported
       const bonus = Math.floor((line.percent / 100) * def.baseStatBonus * mult);
       if (line.stat === "ATK") {
         result.atk += bonus;
       } else {
-        const key = line.stat.toLowerCase() as keyof Omit<EquippedBonuses, "atk">;
+        const key = line.stat.toLowerCase() as keyof Omit<EquippedBonuses, "atk" | "hp" | "mp">;
         if (key in result) result[key] += bonus;
       }
     }
 
     // Bonus stats (flame) add flat bonuses.
     if (getBonusStats) {
+      const FLAME_STAT_MAP: Record<string, keyof EquippedBonuses> = {
+        ATK: "atk",
+        STR: "str",
+        DEX: "dex",
+        INT: "int",
+        LUK: "luk",
+        WDEF: "wDef",
+        MDEF: "mDef",
+        SPEED: "speed",
+        JUMP: "jump",
+        HP: "hp",
+        MP: "mp",
+      };
       for (const bs of getBonusStats(uid)) {
-        if (bs.stat === "ATK") {
-          result.atk += bs.value;
-        } else {
-          const key = bs.stat.toLowerCase() as keyof Omit<EquippedBonuses, "atk">;
-          if (key in result) result[key] += bs.value;
-        }
+        const key = FLAME_STAT_MAP[bs.stat];
+        if (key) result[key] += bs.value;
       }
     }
   }

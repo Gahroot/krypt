@@ -52,6 +52,12 @@ export interface QuestRewards {
   /** Item ids — must resolve to keys in the ITEMS catalog. */
   readonly items?: readonly string[];
   /**
+   * Class-conditional item rewards keyed by ClassArchetype name.
+   * When set, the matching entry is granted in addition to the flat `items`
+   * array — so each class receives its appropriate starter weapon.
+   */
+  readonly classRewards?: readonly Record<string, readonly string[]>;
+  /**
    * When set the server should advance the player's job tier to this value.
    * Used by job-advancement quest chains so the quest system drives the
    * promotion rather than an NPC dialog action.
@@ -123,7 +129,17 @@ export const QUESTS: Record<string, QuestDef> = {
     requiredLevel: 1,
     prereqQuestId: "quest.dawn_tutorial",
     objectives: [{ kind: "kill", mobId: "mob.friendly_snail", count: 5 }],
-    rewards: { mesos: 120, exp: 80, items: ["wpn.bronze_shortsword"] },
+    rewards: {
+      mesos: 120,
+      exp: 80,
+      items: ["wpn.bronze_shortsword"],
+      classRewards: {
+        MAGE: ["wpn.apprentice_wand"],
+        ARCHER: ["wpn.shortbow"],
+        THIEF: ["wpn.rusty_dagger"],
+        PIRATE: ["wpn.driftwood_cutlass"],
+      },
+    },
   },
 
   /** Q3: Jump lesson — talk back to Iris after climbing a ladder. */
@@ -1926,4 +1942,230 @@ export function getTodayBonusMap(nowMs: number = Date.now()): string {
 /** Return the advancement quest for a given archetype and target tier. */
 export function getAdvancementQuest(archetype: string, targetTier: number): QuestDef | undefined {
   return QUESTS[`quest.${archetype.toLowerCase()}_job_${targetTier}`];
+}
+
+// ---------------------------------------------------------------------------
+// Daily Login Gift — server-authoritative once-per-day reward
+// ---------------------------------------------------------------------------
+
+/** Level-scaled reward tiers for the daily login gift. */
+export const DAILY_LOGIN_REWARD_TIERS: readonly {
+  readonly minLevel: number;
+  readonly mesos: number;
+  readonly exp: number;
+}[] = [
+  { minLevel: 1, mesos: 100, exp: 50 },
+  { minLevel: 11, mesos: 300, exp: 150 },
+  { minLevel: 26, mesos: 800, exp: 400 },
+  { minLevel: 51, mesos: 2000, exp: 1000 },
+  { minLevel: 91, mesos: 5000, exp: 2500 },
+];
+
+/** Return the mesos + EXP reward for the daily login gift at a given level. */
+export function getDailyLoginReward(level: number): { mesos: number; exp: number } {
+  let reward = DAILY_LOGIN_REWARD_TIERS[0] ?? { minLevel: 1, mesos: 100, exp: 50 };
+  for (const tier of DAILY_LOGIN_REWARD_TIERS) {
+    if (level >= tier.minLevel) reward = tier;
+  }
+  return { mesos: reward.mesos, exp: reward.exp };
+}
+
+/** Check whether the daily login gift is claimable (last claim was on a prior UTC day or never). */
+export function canClaimDailyLoginGift(lastClaimedAt: number | undefined, nowMs: number): boolean {
+  if (lastClaimedAt === undefined) return true;
+  return utcDateKey(lastClaimedAt) !== utcDateKey(nowMs);
+}
+
+// ---------------------------------------------------------------------------
+// Shipped-zone registry + quest validation
+// ---------------------------------------------------------------------------
+
+import { NPCS } from "./npcs.js";
+import { MOBS } from "./mobs.js";
+import { ITEMS } from "./items.js";
+import { MAPS } from "./world.js";
+
+/**
+ * Map IDs whose portals are `comingSoon` — players cannot reach these zones.
+ * Quests whose giver NPC lives here or whose objectives require mobs only
+ * found here are flagged as gated.
+ */
+export const UNSHIPPED_ZONES: ReadonlySet<string> = new Set([
+  "tideways",
+  "tideways_reef",
+  "tideways_abyss",
+  "drakemoor",
+  "drakemoor_jungle_floor",
+  "drakemoor_dragon_abyss",
+]);
+
+/** Returns true if the quest's giver NPC lives on a shipped (reachable) map. */
+export function isQuestOnShippedZone(questDef: QuestDef): boolean {
+  const npc = NPCS[questDef.giverNpcId];
+  if (!npc) return false;
+  return !UNSHIPPED_ZONES.has(npc.mapId);
+}
+
+export type QuestIssueKind =
+  | "giver_npc_missing"
+  | "giver_on_unshipped_zone"
+  | "kill_mob_missing"
+  | "kill_mob_no_spawn"
+  | "collect_item_missing"
+  | "talk_npc_missing"
+  | "reward_item_missing"
+  | "prereq_missing"
+  | "prereq_cycle"
+  | "prereq_level_inconsistent";
+
+export interface QuestIssue {
+  readonly questId: string;
+  readonly kind: QuestIssueKind;
+  readonly detail: string;
+}
+
+/** Build a set of mob IDs that spawn on at least one shipped map. */
+function getShippedMobIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const map of Object.values(MAPS)) {
+    if (UNSHIPPED_ZONES.has(map.id)) continue;
+    for (const s of map.spawns) ids.add(s.mobId);
+    if (map.bossSpawns) for (const s of map.bossSpawns) ids.add(s.mobId);
+  }
+  return ids;
+}
+
+/**
+ * Validate every quest in the catalog. Returns an array of issues.
+ * An empty array means all quests pass.
+ */
+export function validateAllQuests(): QuestIssue[] {
+  const issues: QuestIssue[] = [];
+  const shippedMobs = getShippedMobIds();
+  const questIds = new Set(Object.keys(QUESTS));
+
+  // --- 1. Cycle detection via DFS on prereq chains ---
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  function detectCycle(id: string): boolean {
+    if (inStack.has(id)) return true;
+    if (visited.has(id)) return false;
+    visited.add(id);
+    inStack.add(id);
+    const def = QUESTS[id];
+    if (def?.prereqQuestId && detectCycle(def.prereqQuestId)) return true;
+    inStack.delete(id);
+    return false;
+  }
+  for (const id of questIds) {
+    if (detectCycle(id)) {
+      issues.push({
+        questId: id,
+        kind: "prereq_cycle",
+        detail: `prerequisite chain contains a cycle involving ${id}`,
+      });
+    }
+  }
+
+  // --- 2. Per-quest checks ---
+  for (const def of Object.values(QUESTS)) {
+    // Giver NPC
+    const giverNpc = NPCS[def.giverNpcId];
+    if (!giverNpc) {
+      issues.push({
+        questId: def.id,
+        kind: "giver_npc_missing",
+        detail: `giver NPC ${def.giverNpcId} not in NPCS catalog`,
+      });
+    } else if (UNSHIPPED_ZONES.has(giverNpc.mapId)) {
+      issues.push({
+        questId: def.id,
+        kind: "giver_on_unshipped_zone",
+        detail: `giver NPC ${def.giverNpcId} lives on unshipped map ${giverNpc.mapId}`,
+      });
+    }
+
+    // Objectives
+    for (const obj of def.objectives) {
+      switch (obj.kind) {
+        case "kill": {
+          const mob = MOBS[obj.mobId];
+          if (!mob) {
+            issues.push({
+              questId: def.id,
+              kind: "kill_mob_missing",
+              detail: `kill target ${obj.mobId} not in MOBS catalog`,
+            });
+          } else if (!shippedMobs.has(obj.mobId)) {
+            issues.push({
+              questId: def.id,
+              kind: "kill_mob_no_spawn",
+              detail: `kill target ${obj.mobId} does not spawn on any shipped map`,
+            });
+          }
+          break;
+        }
+        case "collect": {
+          if (!ITEMS[obj.itemId]) {
+            issues.push({
+              questId: def.id,
+              kind: "collect_item_missing",
+              detail: `collect target ${obj.itemId} not in ITEMS catalog`,
+            });
+          }
+          break;
+        }
+        case "talk": {
+          if (!NPCS[obj.npcId]) {
+            issues.push({
+              questId: def.id,
+              kind: "talk_npc_missing",
+              detail: `talk target ${obj.npcId} not in NPCS catalog`,
+            });
+          }
+          break;
+        }
+        // level objectives have no external reference to check
+      }
+    }
+
+    // Reward items
+    if (def.rewards.items) {
+      for (const itemId of def.rewards.items) {
+        if (!ITEMS[itemId]) {
+          issues.push({
+            questId: def.id,
+            kind: "reward_item_missing",
+            detail: `reward item ${itemId} not in ITEMS catalog`,
+          });
+        }
+      }
+    }
+
+    // Prerequisite
+    if (def.prereqQuestId && !QUESTS[def.prereqQuestId]) {
+      issues.push({
+        questId: def.id,
+        kind: "prereq_missing",
+        detail: `prerequisite quest ${def.prereqQuestId} not in QUESTS catalog`,
+      });
+    }
+
+    // Level consistency: if this quest has a prereq, this quest's requiredLevel
+    // should be >= the prereq's requiredLevel (non-decreasing chain).
+    if (def.prereqQuestId) {
+      const prereq = QUESTS[def.prereqQuestId];
+      if (prereq?.requiredLevel !== undefined && def.requiredLevel !== undefined) {
+        if (def.requiredLevel < prereq.requiredLevel) {
+          issues.push({
+            questId: def.id,
+            kind: "prereq_level_inconsistent",
+            detail: `requiredLevel ${def.requiredLevel} < prereq ${def.prereqQuestId} requiredLevel ${prereq.requiredLevel}`,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
 }

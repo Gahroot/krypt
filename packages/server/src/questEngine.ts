@@ -11,6 +11,8 @@ import {
   QUESTS,
   getRecommendedMilestone,
   isDailyResettable,
+  canClaimDailyLoginGift,
+  getDailyLoginReward,
   getTodayBonusMap,
   BONUS_HUNT_EXP_MULT,
   BONUS_HUNT_DROP_MULT,
@@ -67,6 +69,24 @@ export function resetDailyQuests(quests: QuestState[], nowMs: number = Date.now(
   }
 
   return quests;
+}
+
+// ---------------------------------------------------------------------------
+// Daily Login Gift
+// ---------------------------------------------------------------------------
+
+/**
+ * Grant the daily login gift if eligible.
+ * Returns the reward if granted, null if already claimed today.
+ * The caller must persist lastDailyLoginGiftAt after this returns a reward.
+ */
+export function grantDailyLoginGift(
+  playerLevel: number,
+  lastClaimedAt: number | undefined,
+  nowMs: number,
+): { mesos: number; exp: number } | null {
+  if (!canClaimDailyLoginGift(lastClaimedAt, nowMs)) return null;
+  return getDailyLoginReward(playerLevel);
 }
 
 // ---------------------------------------------------------------------------
@@ -150,30 +170,62 @@ export function turnInQuest(quests: QuestState[], questId: string, player: Playe
     player.mesos += def.rewards.mesos;
     accountStore.setMesos(player.charId, player.mesos);
   }
-  if (def.rewards.items) {
-    for (const itemId of def.rewards.items) {
-      if (!getItemDef(itemId)) continue;
-      const uid = `quest_${questId}_${itemId}_${Date.now()}`;
-      // Add to both in-memory inventory (for live player) and durable store.
-      const schemaItem = new InventoryItem();
-      schemaItem.uid = uid;
-      schemaItem.defId = itemId;
-      schemaItem.baseRank = "NORMAL";
-      schemaItem.potentialTier = "COMMON";
-      schemaItem.lines = 0;
-      player.inventory.set(uid, schemaItem);
-      accountStore.addItem(player.charId, {
-        uid,
-        defId: itemId,
-        baseRank: "NORMAL",
-        potentialTier: "COMMON",
-        lines: 0,
-        minted: false,
-      });
-    }
+
+  // Collect all item ids to grant: flat items + class-conditional items.
+  const itemsToGrant: string[] = [...(def.rewards.items ?? [])];
+  if (def.rewards.classRewards) {
+    const classItems = def.rewards.classRewards[player.archetype];
+    if (classItems) itemsToGrant.push(...classItems);
+  }
+
+  for (const itemId of itemsToGrant) {
+    if (!getItemDef(itemId)) continue;
+    const uid = `quest_${questId}_${itemId}_${Date.now()}`;
+    // Add to both in-memory inventory (for live player) and durable store.
+    const schemaItem = new InventoryItem();
+    schemaItem.uid = uid;
+    schemaItem.defId = itemId;
+    schemaItem.baseRank = "NORMAL";
+    schemaItem.potentialTier = "COMMON";
+    schemaItem.lines = 0;
+    player.inventory.set(uid, schemaItem);
+    accountStore.addItem(player.charId, {
+      uid,
+      defId: itemId,
+      baseRank: "NORMAL",
+      potentialTier: "COMMON",
+      lines: 0,
+      minted: false,
+    });
   }
 
   return "";
+}
+
+// ---------------------------------------------------------------------------
+// Abandon
+// ---------------------------------------------------------------------------
+
+/**
+ * Abandon an active quest, resetting it to available.
+ * Returns the updated state or an error string.
+ */
+export function abandonQuest(quests: QuestState[], questId: string): QuestState[] | string {
+  const def = QUESTS[questId];
+  if (!def) return "Unknown quest.";
+
+  const idx = quests.findIndex((q) => q.questId === questId);
+  if (idx === -1) return "Quest not found.";
+
+  const qs = quests[idx];
+  if (qs.status !== "active") return "Can only abandon active quests.";
+
+  quests[idx] = {
+    questId,
+    status: "available",
+    objectiveProgress: [],
+  };
+  return quests;
 }
 
 // ---------------------------------------------------------------------------
