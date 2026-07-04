@@ -16,6 +16,10 @@ import {
   getTodayBonusMap,
   BONUS_HUNT_EXP_MULT,
   BONUS_HUNT_DROP_MULT,
+  ClassArchetype,
+  getClass,
+  maxHpForLevel,
+  maxMpForLevel,
   type QuestState,
   type QuestStatus,
   type ObjectiveProgress,
@@ -169,6 +173,12 @@ export function turnInQuest(quests: QuestState[], questId: string, player: Playe
   if (def.rewards.mesos) {
     player.mesos += def.rewards.mesos;
     accountStore.setMesos(player.charId, player.mesos);
+  }
+
+  // ── Job advancement via quest reward ────────────────────────────────────
+  const targetTier = def.rewards.jobAdvanceToTier;
+  if (targetTier !== undefined) {
+    applyJobAdvancementFromQuest(player, questId, targetTier);
   }
 
   // Collect all item ids to grant: flat items + class-conditional items.
@@ -464,5 +474,98 @@ function describeObjective(kind: string, questId: string, op: ObjectiveProgress)
     }
     default:
       return `${kind} objective`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Job advancement from quest rewards
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the class archetype from a job-advancement quest id.
+ * Quest ids follow the pattern `quest.<archetype>_job_<tier>`.
+ * Returns undefined if the id doesn't match.
+ */
+function parseArchetypeFromQuestId(questId: string): ClassArchetype | undefined {
+  const parts = questId.split(".");
+  const slug = parts[1]; // e.g. "warrior_job_1"
+  if (!slug) return undefined;
+  const archetypeStr = slug.split("_")[0]?.toUpperCase(); // "warrior" → "WARRIOR"
+  if (!archetypeStr) return undefined;
+  return ClassArchetype[archetypeStr as keyof typeof ClassArchetype];
+}
+
+/**
+ * Apply job advancement when a quest with `jobAdvanceToTier` is turned in.
+ *
+ * Tier 1: Beginner → class archetype (mirrors executeAdvanceJob's 1st-job path).
+ * Tier 2+: Bump jobTier and recompute HP/MP (skill granting requires branch
+ *          selection, which is handled by the NPC dialog system).
+ */
+function applyJobAdvancementFromQuest(player: Player, questId: string, targetTier: number): void {
+  const archetype = parseArchetypeFromQuestId(questId);
+  if (!archetype || archetype === ClassArchetype.BEGINNER) return;
+
+  // ── Tier 1: Beginner → class ──
+  if (targetTier === 1 && player.archetype === ClassArchetype.BEGINNER) {
+    player.archetype = archetype;
+    player.jobTier = 1;
+
+    // Recompute maxHp/maxMp for the new class at the current level.
+    player.maxHp = maxHpForLevel(archetype, player.level);
+    player.hp = player.maxHp;
+    player.maxMp = maxMpForLevel(archetype, player.level);
+    player.mp = player.maxMp;
+
+    // Grant the new class's tier-1 skills.
+    const newClass = getClass(archetype);
+    const tier1 = newClass.jobTiers.find((t) => t.tier === 1);
+    if (tier1) {
+      const existing = new Set(player.learnedSkills);
+      for (const skill of tier1.skills) {
+        if (!existing.has(skill.id)) player.learnedSkills.push(skill.id);
+      }
+    }
+
+    accountStore.updateCharacter(player.charId, {
+      archetype,
+      jobTier: 1,
+      maxHp: player.maxHp,
+      maxMp: player.maxMp,
+      stats: {
+        STR: player.str,
+        DEX: player.dex,
+        INT: player.intel,
+        LUK: player.luk,
+        HP: player.hp,
+        MP: player.mp,
+      },
+      learnedSkills: [...player.learnedSkills],
+    });
+    return;
+  }
+
+  // ── Tier 2+: Bump jobTier, recompute HP/MP ──
+  // Skill granting for tier 2+ requires branch selection (handled by NPC dialog).
+  if (targetTier > player.jobTier && player.archetype === archetype) {
+    player.jobTier = targetTier;
+    player.maxHp = maxHpForLevel(archetype, player.level);
+    player.hp = player.maxHp;
+    player.maxMp = maxMpForLevel(archetype, player.level);
+    player.mp = player.maxMp;
+
+    accountStore.updateCharacter(player.charId, {
+      jobTier: targetTier,
+      maxHp: player.maxHp,
+      maxMp: player.maxMp,
+      stats: {
+        STR: player.str,
+        DEX: player.dex,
+        INT: player.intel,
+        LUK: player.luk,
+        HP: player.hp,
+        MP: player.mp,
+      },
+    });
   }
 }

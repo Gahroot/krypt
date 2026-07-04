@@ -135,6 +135,7 @@ import {
   isFamiliarCard,
   familiarCardId,
   deriveFamiliarStats,
+  FAMILIAR_ENABLED,
   FAMILIAR_MAX_SUMMONED,
   FAMILIAR_DAMAGE_FRACTION,
   FAMILIAR_ATTACK_COOLDOWN_MS,
@@ -146,9 +147,14 @@ import {
   type FamiliarCollection,
   EMPTY_FAMILIAR_COLLECTION,
   isCombatMap,
+  deathExpLoss,
+  getDeathReturnMapId,
   ELITE_SCALING,
   createEliteMob,
   getEffectiveMobDef,
+  utcDateKey,
+  TUTORIAL_QUEST_CHAIN,
+  getDailyLoginReward,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -177,6 +183,7 @@ import {
   type SessionGenerationPayload,
   type ForceLogoutPayload,
   type FerryBlockedPayload,
+  type TransportStatusPayload,
   type TalkNpcPayload,
   type DialogLinePayload,
   type DialogChoicePayload,
@@ -229,6 +236,7 @@ import {
   type SkillCastResultPayload,
   type UseConsumablePayload,
   type UseConsumableResultPayload,
+  type InventorySortPayload,
   type QuickSlotLayoutPayload,
   type SettingsPayload,
   type QuestOfferPayload,
@@ -237,6 +245,7 @@ import {
   type QuestTurninOfferPayload,
   type QuestTurninAcceptPayload,
   type QuestTurninDeclinePayload,
+  type QuestAbandonPayload,
   type FeedbackSubmitPayload,
   type FeedbackResultPayload,
   type PlayerReportPayload,
@@ -248,6 +257,8 @@ import {
   type ModActionResultPayload,
   type GuideTravelPayload,
   type MapTravelPayload,
+  type DailyLoginGiftSyncPayload,
+  type UnstuckResultPayload,
   MessageType,
 } from "../types";
 import {
@@ -255,6 +266,7 @@ import {
   treasuryStore,
   feedbackStore,
   moderationStore,
+  persistGuildsAndFriends,
   type CharacterRecord,
   STORAGE_CAPACITY,
 } from "../persistence/store";
@@ -262,18 +274,24 @@ import {
   ensureQuestStates,
   acceptQuest,
   turnInQuest,
+  abandonQuest,
   progressObjectives,
   sendQuestUpdate,
   sendGuidanceSync,
   resetDailyQuests,
+  grantDailyLoginGift,
   sendBonusHuntSync,
+  getExpMultiplierForMap,
+  getDropMultiplierForMap,
 } from "../questEngine";
 import { grantExp } from "../applyExp";
+import { getActiveEvents } from "../events";
+import type { EventsSyncPayload } from "@maple/shared";
 import { partyManager } from "../partyManager";
 import { track } from "../analytics";
 import { AnalyticsEventType } from "../analyticsEvents";
 import { guildManager, GUILD_CREATE_COST } from "../guildManager";
-import { handleGmCommand, isGmInvincible } from "../gmCommands";
+import { handleGmCommand, isGmInvincible, isNoclipping } from "../gmCommands";
 import { friendManager } from "../friendManager";
 import {
   type PartyInvitePayload,
@@ -378,6 +396,12 @@ const COMBO_WINDOW_MS = 1500;
 const PICKUP_RANGE = 60;
 const LOOT_DESPAWN_MS = 30_000;
 
+/** How long (ms) a drop is exclusively reserved for the killer (and their party). */
+const LOOT_OWNERSHIP_MS = 5_000;
+
+/** Maximum simultaneous ground drops per map — prevents clutter and bandwidth blowup. */
+const MAX_LOOT_PER_MAP = 200;
+
 /**
  * Autosave cadence. Every live player's full state is flushed to SQLite on this
  * interval so an unexpected server kill loses at most this window of progress.
@@ -421,6 +445,9 @@ const CHAT_MAX_LEN = 120;
 const CHAT_RATE_LIMIT_MS = 300;
 /** Max recent chat lines to buffer per session for player report context. */
 const CHAT_HISTORY_LEN = 20;
+
+/** Cooldown (ms) between unstuck / return-to-town actions to prevent abuse. */
+const UNSTUCK_COOLDOWN_MS = 60_000;
 
 // ─── Trade constants ─────────────────────────────────────────────────────
 /** Max horizontal distance (px) for a trade invite. */
@@ -554,6 +581,8 @@ export class MapRoom extends AuthedRoom<TownState> {
   private lastChatAt = new Map<string, number>();
   /** Throttle map for loot-all requests: sessionId → timestamp. */
   private lastLootAllAt = new Map<string, number>();
+  /** Throttle map for unstuck / return-to-town: sessionId → timestamp. */
+  private lastUnstuckAt = new Map<string, number>();
 
   // ─── Rate limiters (per-client, token-bucket) ──────────────────────────────
   /** High-frequency game input: 120/sec (matches 60fps with headroom). */
@@ -564,6 +593,8 @@ export class MapRoom extends AuthedRoom<TownState> {
   private pickupLimiter = new RateLimiter(20, 0.02);
   /** Macro casts: 5/sec. */
   private macroCastLimiter = new RateLimiter(5, 0.005);
+  /** NPC interactions: 5/sec (quest chains can cascade quickly). */
+  private talkNpcLimiter = new RateLimiter(5, 0.005);
 
   /** sessionId → persistent accountId (set in onJoin, used by create/delete handlers). */
   private sessionAccount = new Map<string, string>();
@@ -653,6 +684,13 @@ export class MapRoom extends AuthedRoom<TownState> {
       text = filterProfanity(text);
       if (text.length === 0) return;
 
+      // ── Chat command interception (/town, /stuck) ──────────────────────
+      const lowerText = text.toLowerCase();
+      if (lowerText === "/town" || lowerText === "/stuck") {
+        this.handleUnstuckAction(client);
+        return;
+      }
+
       // Record in chat history ring buffer for player reports.
       const hist = this.chatHistory.get(client.sessionId);
       if (hist) {
@@ -676,6 +714,11 @@ export class MapRoom extends AuthedRoom<TownState> {
     },
 
     [MessageType.TALK_NPC]: (client: Client, msg: TalkNpcPayload) => {
+      if (!this.talkNpcLimiter.consume(client.sessionId)) {
+        logAnomaly(client.sessionId, "rate_limit", "talk_npc");
+        client.send("npc_error", { reason: "Rate limit exceeded" });
+        return;
+      }
       this.handleTalkNpc(client, msg);
     },
 
@@ -808,6 +851,9 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
       this.handleUseConsumable(client, { defId });
     },
+    [MessageType.INVENTORY_SORT]: (client: Client, msg: InventorySortPayload) => {
+      this.handleInventorySort(client, msg);
+    },
     [MessageType.QUICKSLOT_LAYOUT]: (client: Client, msg: QuickSlotLayoutPayload) => {
       this.handleQuickslotLayout(client, msg);
     },
@@ -916,6 +962,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     [MessageType.QUEST_TURNIN_DECLINE]: (client: Client, msg: QuestTurninDeclinePayload) => {
       this.handleQuestTurninDecline(client, msg);
     },
+    [MessageType.QUEST_ABANDON]: (client: Client, msg: QuestAbandonPayload) => {
+      this.handleQuestAbandon(client, msg);
+    },
 
     // ─── Runes (map buff spawns) ──────────────────────────────────────────────
     [MessageType.RUNE_ACTIVATE]: (client: Client) => {
@@ -948,6 +997,18 @@ export class MapRoom extends AuthedRoom<TownState> {
           success: false,
           targetFame: 0,
           message: "Target player not found in this map.",
+        } satisfies FameResultPayload);
+        return;
+      }
+
+      // Proximity check — fame requires both players to be nearby.
+      const fameDx = Math.abs(player.x - targetPlayer.x);
+      const fameDy = Math.abs(player.y - targetPlayer.y);
+      if (fameDx > TRADE_RANGE_X || fameDy > TRADE_RANGE_Y) {
+        client.send(MessageType.FAME_RESULT, {
+          success: false,
+          targetFame: targetPlayer.fame.fame,
+          message: "Too far away to give fame.",
         } satisfies FameResultPayload);
         return;
       }
@@ -1100,6 +1161,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         category: s.category,
         completed: s.completed,
         progress: s.progress,
+        rewards: s.rewards,
       }));
       client.send(MessageType.ACHIEVEMENT_SYNC, {
         achievements: snaps,
@@ -1159,7 +1221,10 @@ export class MapRoom extends AuthedRoom<TownState> {
         player.name,
         msg.category,
         msg.message,
-        msg.context,
+        {
+          ...msg.context,
+          serverVersion: msg.context.serverVersion || "dev",
+        },
       );
 
       client.send(MessageType.FEEDBACK_SUBMIT, {
@@ -1274,7 +1339,23 @@ export class MapRoom extends AuthedRoom<TownState> {
     // ─── World map quick-travel (click a node on the world map) ──────────────
     [MessageType.MAP_TRAVEL]: (client: Client, msg: MapTravelPayload) => {
       const player = this.state.players.get(client.sessionId);
-      if (!player || player.dead) return;
+      if (!player) return;
+
+      if (player.dead) {
+        client.send(MessageType.USE_PORTAL, {
+          message: "You are dead.",
+        } satisfies FerryBlockedPayload);
+        return;
+      }
+
+      // Rate-limit rapid world-map travel (1.5 s cooldown).
+      const now = Date.now();
+      if (now - player.lastMapTravelAt < 1_500) {
+        client.send(MessageType.USE_PORTAL, {
+          message: "Traveling too fast, please wait.",
+        } satisfies FerryBlockedPayload);
+        return;
+      }
 
       const targetMapId = msg?.targetMapId;
       if (!targetMapId || !getMap(targetMapId)) {
@@ -1299,6 +1380,14 @@ export class MapRoom extends AuthedRoom<TownState> {
       if (!portal) {
         client.send(MessageType.USE_PORTAL, {
           message: "There is no route to that map from here.",
+        } satisfies FerryBlockedPayload);
+        return;
+      }
+
+      // Coming-soon gate (mirrors checkPortalProximity).
+      if (portal.comingSoon) {
+        client.send(MessageType.USE_PORTAL, {
+          message: `🚧 ${targetDef?.name ?? targetMapId} — Coming Soon! This zone is not yet available in the alpha.`,
         } satisfies FerryBlockedPayload);
         return;
       }
@@ -1339,6 +1428,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         accountStore.setMesos(player.charId, player.mesos);
       }
 
+      player.lastMapTravelAt = Date.now();
       this.persistPlayer(player);
       client.send(MessageType.TRAVEL, {
         mapId: targetMapId,
@@ -1348,9 +1438,11 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     // ─── Familiar system ────────────────────────────────────────────────
     [MessageType.FAMILIAR_SUMMON]: (client: Client, msg: FamiliarSummonPayload) => {
+      if (!FAMILIAR_ENABLED) return;
       this.handleFamiliarSummon(client, msg);
     },
     [MessageType.FAMILIAR_DISMISS]: (client: Client, msg: FamiliarDismissPayload) => {
+      if (!FAMILIAR_ENABLED) return;
       this.handleFamiliarDismiss(client, msg);
     },
 
@@ -1364,10 +1456,10 @@ export class MapRoom extends AuthedRoom<TownState> {
       // Server-authoritative role check: always read from the DB, never trust the client.
       const accountId = this.sessionAccount.get(client.sessionId) ?? client.sessionId;
       const acc = accountStore.getAccount(accountId);
-      if (!acc || acc.role !== "admin") {
+      if (!acc || (acc.role !== "admin" && acc.role !== "gm")) {
         client.send(MessageType.GM_RESULT, {
           success: false,
-          message: "Access denied. Admin role required.",
+          message: "Access denied. GM or Admin role required.",
         } satisfies import("@maple/shared").GmResultPayload);
         return;
       }
@@ -1384,6 +1476,11 @@ export class MapRoom extends AuthedRoom<TownState> {
       client.send(MessageType.GM_RESULT, result);
       // Persist state mutations after GM commands (e.g. /level, /give mesos).
       this.persistPlayer(player);
+    },
+
+    // ─── Unstuck / Return to Town (self-recovery, any player) ───────────────
+    [MessageType.UNSTUCK_ACTION]: (client: Client) => {
+      this.handleUnstuckAction(client);
     },
   };
 
@@ -1474,8 +1571,38 @@ export class MapRoom extends AuthedRoom<TownState> {
     Math.round(AUTOSAVE_INTERVAL_MS / (1000 / 60)),
   );
 
+  /** Boss HP broadcast throttle: fire every N ticks instead of every tick (60→4 Hz). */
+  private bossHpSyncTick = 0;
+  private static readonly BOSS_HP_SYNC_INTERVAL = 15; // ≈4 Hz at 60 fps
+
+  /** Per-tick reverse map: Mob instance → MapSchema key. Rebuilt once per tick for O(1) lookups. */
+  private mobKeyByRef = new Map<Mob, string>();
+
   // ─── Main loop ──────────────────────────────────────────────────────────────
+  //
+  // Per-tick complexity at 50 CCU / 30 mobs / 5 familiars:
+  //   Player physics + input drain  : O(players × queue_depth)      ≈ trivial
+  //   Mob AI (findNearestPlayer)    : O(mobs × players)              ≈ 1,500 checks
+  //   Familiar aggro scan           : O(familiars × mobs)            ≈ 150 checks
+  //   Attack proximity (tryAttack)  : O(attacks × mobs)              ≈ 60 checks
+  //   Foothold snap (nearestAt)     : O(players × footholds)         ≈ 1,000 checks
+  //   ─────────────────────────────────────────────────────────────
+  //   Total proximity work per tick ≈ 2,700 × ~5 ns ≈ 14 µs  (0.08% of 16.67 ms budget)
+  //
+  // At 200 CCU / 100 mobs: ~23,000 checks ≈ 115 µs (0.7%). Spatial partitioning
+  // is NOT needed — the O(a×b) cross-type scans scale linearly in both counts.
+  //
+  // Schema sync: Colyseus delta-encodes only fields whose encoded value changed
+  // since the last flush. Writing the same value (e.g. mob.x = mob.x for idle mobs)
+  // does NOT mark the field dirty. No churny per-tick writes to synced fields.
   fixedTick(timeStep: number): void {
+    // ── Build per-tick reverse lookup: Mob instance → MapSchema key ──
+    // O(mobs) single pass; turns findMobKey from O(mobs) to O(1) in combat path.
+    this.mobKeyByRef.clear();
+    for (const [key, mob] of this.state.mobs.entries()) {
+      this.mobKeyByRef.set(mob, key);
+    }
+
     this.state.players.forEach((player) => {
       this.processPlayerInput(player);
       this.tickPlayerTimers(player, timeStep);
@@ -1484,17 +1611,34 @@ export class MapRoom extends AuthedRoom<TownState> {
     this.state.mobs.forEach((mob) => this.tickMob(mob, timeStep));
 
     // Familiar AI tick (follow owner, chase mobs, attack).
-    this.state.familiars.forEach((fam) => this.tickFamiliar(fam, timeStep));
+    if (FAMILIAR_ENABLED) {
+      this.state.familiars.forEach((fam) => this.tickFamiliar(fam, timeStep));
+    }
 
     // Boss encounter tick (timed spawns, multi-phase attacks, add summoning).
-    this.bossManager.tick(timeStep, this.state, this.map, () => ++this.idCounter);
+    this.bossManager.tick(
+      timeStep,
+      this.state,
+      this.map,
+      () => ++this.idCounter,
+      (instanceId, bossDefId) => {
+        this.broadcast("boss_spawn", {
+          instanceId,
+          mobId: bossDefId,
+          name: getMobDef(bossDefId)?.name ?? bossDefId,
+        });
+      },
+    );
 
     // Rune + treasure box tick (combat maps only).
     this.runeManager?.tick(timeStep);
     this.treasureBoxManager?.tick(timeStep);
 
-    // Broadcast boss HP to all clients.
-    this.broadcastBossHp();
+    // Broadcast boss HP to all clients — throttled to ~4 Hz to save bandwidth.
+    if (++this.bossHpSyncTick >= MapRoom.BOSS_HP_SYNC_INTERVAL) {
+      this.bossHpSyncTick = 0;
+      this.broadcastBossHp();
+    }
 
     // ─── Scheduled transport departure loop (~1 s cadence) ──────────────────
     if (++this.departureTick >= 60) {
@@ -1502,10 +1646,18 @@ export class MapRoom extends AuthedRoom<TownState> {
       this.processScheduledDepartures();
     }
 
-    // Snapshot loot values so despawn deletions don't mutate the map mid-iteration.
-    for (const drop of Array.from(this.state.loot.values())) {
+    // Despawn expired loot drops. Collect UIDs to delete after iteration to avoid
+    // mutating the MapSchema while iterating (no Array.from allocation).
+    let lootToDelete: string[] | undefined;
+    for (const [uid, drop] of this.state.loot) {
       drop.despawnTimer -= timeStep;
-      if (drop.despawnTimer <= 0) this.state.loot.delete(drop.uid);
+      if (drop.despawnTimer <= 0) {
+        if (!lootToDelete) lootToDelete = [];
+        lootToDelete.push(uid);
+      }
+    }
+    if (lootToDelete) {
+      for (const uid of lootToDelete) this.state.loot.delete(uid);
     }
 
     // Process mob respawns (zone-capped, staggered, per-mob-type delays).
@@ -1519,9 +1671,15 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     // Periodic autosave — flush every player's full state so a crash loses at most
     // AUTOSAVE_INTERVAL_MS of progress (in addition to event-driven persists).
+    // Also flush guild + friend state which is only written on explicit persist.
     if (++this.autosaveTick >= this.autosaveIntervalTicks) {
       this.autosaveTick = 0;
       this.persistAllPlayers();
+      try {
+        persistGuildsAndFriends();
+      } catch (err) {
+        console.error("[MapRoom] guild/friend autosave failed:", err);
+      }
     }
   }
 
@@ -1586,6 +1744,34 @@ export class MapRoom extends AuthedRoom<TownState> {
     if (player.climbing) {
       this.tickClimbing(player, latest);
       return; // skip gravity, horizontal movement, etc.
+    }
+
+    // ── GM No-clip: bypass all terrain collision and gravity ──
+    const sessId = this.findSessionByPlayer(player);
+    if (sessId && isNoclipping(sessId)) {
+      const speed = PLAYER_SPEED * 1.5;
+      if (latest.left) {
+        player.vx = -speed;
+        player.facing = -1;
+      } else if (latest.right) {
+        player.vx = speed;
+        player.facing = 1;
+      } else {
+        player.vx = 0;
+      }
+      if (latest.up) {
+        player.vy = -speed;
+      } else if (latest.down) {
+        player.vy = speed;
+      } else {
+        player.vy = 0;
+      }
+      player.grounded = false;
+      player.x += player.vx;
+      player.y += player.vy;
+      player.x = clamp(player.x, 0, this.map.width);
+      player.y = clamp(player.y, 0, this.map.height);
+      return;
     }
 
     // ── Grab ladder (up near bottom, or down at top edge) ──
@@ -1926,6 +2112,16 @@ export class MapRoom extends AuthedRoom<TownState> {
       player.activeEffects = result.active;
       if (result.hpDelta !== 0) {
         player.hp = Math.max(1, Math.min(player.maxHp, player.hp + result.hpDelta));
+        // Broadcast DoT/HoT combat number so the client shows a floating damage/heal number.
+        const sess = this.findSessionByPlayer(player);
+        if (sess) {
+          this.broadcast("effect_tick", {
+            sessionId: sess,
+            delta: result.hpDelta,
+            hp: player.hp,
+            dead: player.dead,
+          });
+        }
       }
       // Sync to client when effects change (applied or expired).
       if (player.activeEffects.length !== prevLen) {
@@ -1948,6 +2144,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     const attackerStats = this.buildAttackerStats(attacker);
     let hitCount = 0;
     let anyHit = false; // track whether at least one mob was hit this swing
+
+    // Hoist session lookup out of the mob loop — constant for this attacker.
+    const attackerSession = this.findSessionByPlayer(attacker);
 
     // Check treasure box hit first (before mob loop).
     if (this.treasureBoxManager?.onAttack(attacker)) {
@@ -1994,18 +2193,16 @@ export class MapRoom extends AuthedRoom<TownState> {
 
         // Track boss damage ownership and phase transitions.
         const bossEnc = this.bossManager.getEncounter(mob.instanceId);
-        if (bossEnc) {
-          const attackerSession = this.findSessionByPlayer(attacker);
-          if (attackerSession) {
-            const bossMobDef = getMobDef(mob.mobId);
-            this.bossManager.onBossHit(
-              mob.instanceId,
-              attackerSession,
-              mob.hp,
-              mob.maxHp,
-              bossMobDef?.phases ?? [0.5],
-            );
-          }
+        if (bossEnc && attackerSession) {
+          const bossMobDef = getMobDef(mob.mobId);
+          this.bossManager.onBossHit(
+            mob.instanceId,
+            attackerSession,
+            mob.hp,
+            mob.maxHp,
+            bossMobDef?.phases ?? [0.5],
+            this.state,
+          );
         }
 
         if (mob.hp <= 0) this.killMob(mob, attacker);
@@ -2013,8 +2210,8 @@ export class MapRoom extends AuthedRoom<TownState> {
 
       // Broadcast combat result so the client can show floating numbers.
       this.broadcast(MessageType.COMBAT_HIT, {
-        targetKey: this.findMobKey(mob),
-        attackerSession: this.findSessionByPlayer(attacker),
+        targetKey: this.mobKeyByRef.get(mob) ?? "",
+        attackerSession,
         damage: result.total,
         crit: result.crit,
         hit: result.hit,
@@ -2057,28 +2254,28 @@ export class MapRoom extends AuthedRoom<TownState> {
           return [];
         }
       },
+      (uid) => {
+        const item = player.inventory.get(uid);
+        if (!item?.bonusStats) return [];
+        try {
+          const parsed = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      },
     );
 
     const equipBonus: Record<string, number> = {
       atk: 0,
       mAtk: 0,
-      wDef: 0,
-      mDef: 0,
+      wDef: bonus.wDef,
+      mDef: bonus.mDef,
       critRate: 0,
-      speed: 0,
-      jump: 0,
+      speed: bonus.speed,
+      jump: bonus.jump,
       accuracy: 0,
     };
-    for (const uid of Object.values(equippedRec)) {
-      const item = player.inventory.get(uid);
-      const def = item ? getItemDef(item.defId) : undefined;
-      if (def) {
-        equipBonus.wDef += def.wDef ?? 0;
-        equipBonus.mDef += def.mDef ?? 0;
-        equipBonus.speed += def.speed ?? 0;
-        equipBonus.jump += def.jump ?? 0;
-      }
-    }
 
     const equippedDefIds = Object.values(equippedRec)
       .map((uid) => {
@@ -2087,7 +2284,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       })
       .filter((id): id is string => id !== undefined);
     const setBonus = computeSetBonuses(equippedDefIds);
-    equipBonus.atk += setBonus.atk;
+    equipBonus.atk += bonus.atk + setBonus.atk;
     equipBonus.mAtk += setBonus.mAtk;
     equipBonus.wDef += setBonus.wDef;
     equipBonus.mDef += setBonus.mDef;
@@ -2101,8 +2298,8 @@ export class MapRoom extends AuthedRoom<TownState> {
       DEX: player.dex + bonus.dex + setBonus.DEX,
       INT: player.intel + bonus.int + setBonus.INT,
       LUK: player.luk + bonus.luk + setBonus.LUK,
-      HP: player.hp + setBonus.HP,
-      MP: player.mp + setBonus.MP,
+      HP: player.hp + bonus.hp + setBonus.HP,
+      MP: player.mp + bonus.mp + setBonus.MP,
     };
     // Compute passive + active effect bonuses.
     const passive = passiveEffectBonus(
@@ -2155,7 +2352,7 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     const equippedRec = Object.fromEntries(player.equipped.entries());
 
-    // Resolve ATK + primary stat bonuses (rank-multiplied + potential lines).
+    // Resolve ATK + primary stat bonuses (rank-multiplied + potential lines + flame stats).
     const bonus = resolveEquippedBonus(
       equippedRec,
       (uid) => {
@@ -2175,29 +2372,29 @@ export class MapRoom extends AuthedRoom<TownState> {
           return [];
         }
       },
+      (uid) => {
+        const item = player.inventory.get(uid);
+        if (!item?.bonusStats) return [];
+        try {
+          const parsed = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      },
     );
 
-    // Secondary stats (wDef/mDef/speed/jump) from each equipped item def.
+    // Secondary stats (wDef/mDef/speed/jump) from resolveEquippedBonus.
     const equipBonus: Record<string, number> = {
       atk: 0,
       mAtk: 0,
-      wDef: 0,
-      mDef: 0,
+      wDef: bonus.wDef,
+      mDef: bonus.mDef,
       critRate: 0,
-      speed: 0,
-      jump: 0,
+      speed: bonus.speed,
+      jump: bonus.jump,
       accuracy: 0,
     };
-    for (const uid of Object.values(equippedRec)) {
-      const item = player.inventory.get(uid);
-      const def = item ? getItemDef(item.defId) : undefined;
-      if (def) {
-        equipBonus.wDef += def.wDef ?? 0;
-        equipBonus.mDef += def.mDef ?? 0;
-        equipBonus.speed += def.speed ?? 0;
-        equipBonus.jump += def.jump ?? 0;
-      }
-    }
 
     // Set bonuses (wDef, mDef, ATK, STR, HP, etc.) from matching gear.
     const equippedDefIds = Object.values(equippedRec)
@@ -2207,7 +2404,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       })
       .filter((id): id is string => id !== undefined);
     const setBonus = computeSetBonuses(equippedDefIds);
-    equipBonus.atk += setBonus.atk;
+    equipBonus.atk += bonus.atk + setBonus.atk;
     equipBonus.mAtk += setBonus.mAtk;
     equipBonus.wDef += setBonus.wDef;
     equipBonus.mDef += setBonus.mDef;
@@ -2222,8 +2419,8 @@ export class MapRoom extends AuthedRoom<TownState> {
       DEX: player.dex + bonus.dex + setBonus.DEX,
       INT: player.intel + bonus.int + setBonus.INT,
       LUK: player.luk + bonus.luk + setBonus.LUK,
-      HP: player.hp + setBonus.HP,
-      MP: player.mp + setBonus.MP,
+      HP: player.hp + bonus.hp + setBonus.HP,
+      MP: player.mp + bonus.mp + setBonus.MP,
     };
     // Compute passive + active effect bonuses.
     const passive = passiveEffectBonus(
@@ -2278,7 +2475,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       return;
     }
 
-    // Mesos always go to the killer.
+    // Mesos go to the killer (boss kills: shared among all damage owners below).
     const eliteDef = mob.isElite ? createEliteMob(def) : def;
     const mesosDrop = rollMesos(eliteDef);
     killer.mesos += mesosDrop;
@@ -2286,13 +2483,16 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Track lifetime mesos earned for achievements.
     killer.totalMesosEarned += mesosDrop;
     accountStore.incrementLifetimeCounter(killer.charId, "totalMesosEarned", mesosDrop);
+    // Boss mesos: also grant a share to each damage owner (not just the killer).
+    const bossMesosShare = isBossKill ? Math.max(1, Math.floor(mesosDrop * 0.5)) : 0;
 
     // EXP may be shared among nearby same-map party members.
     // Apply rune EXP multiplier if the killer has an active EXP rune buff.
     const killerSessionId = this.findSessionByPlayer(killer);
     const runeExpMul = this.runeManager?.getExpMultiplier(killerSessionId ?? "") ?? 1;
     const eliteExpMul = mob.isElite ? ELITE_SCALING.eliteKillExpMultiplier : 1;
-    const baseExp = Math.floor(def.exp * runeExpMul * eliteExpMul);
+    const bonusHuntExpMul = getExpMultiplierForMap(this.state.mapId);
+    const baseExp = Math.floor(def.exp * runeExpMul * eliteExpMul * bonusHuntExpMul);
     const killerCharId = killer.charId;
     const expShares = partyManager.computePartyExp(
       { level: killer.level, dead: killer.dead, x: killer.x, y: killer.y },
@@ -2334,6 +2534,21 @@ export class MapRoom extends AuthedRoom<TownState> {
           const lc = this.findClientByPlayer(sharePlayer);
           if (lc) sendQuestUpdate(lc, sharePlayer.questState);
         }
+        // Re-sync the guide panel so level-banded milestones update immediately
+        // after a mob-grind level-up (the most common way to cross a boundary).
+        {
+          const lc = this.findClientByPlayer(sharePlayer);
+          if (lc) sendGuidanceSync(lc, sharePlayer.questState, sharePlayer.level);
+        }
+        // ── Achievements: level_reached ─────────────────────────────────
+        this.processAchievementUnlocks(
+          sharePlayer,
+          updateAchievementProgress(
+            sharePlayer.achievements,
+            "level_reached",
+            expResult.levelsGained,
+          ),
+        );
       }
     }
 
@@ -2343,9 +2558,62 @@ export class MapRoom extends AuthedRoom<TownState> {
       if (party) partyManager.syncPartyToAllMembers(party);
     }
 
+    // Boss loot fairness: grant base EXP + mesos share to all damage contributors
+    // who weren't already covered by the killer's party EXP distribution.
+    if (isBossKill) {
+      const partyRecipientCharIds = new Set(expShares.map((s) => s.charId));
+      const lootOwners = this.bossManager.getLootOwners(mob.instanceId);
+      for (const sessId of lootOwners) {
+        const dmgPlayer = this.state.players.get(sessId);
+        if (!dmgPlayer || dmgPlayer.charId === killerCharId) continue;
+        if (partyRecipientCharIds.has(dmgPlayer.charId)) continue;
+        // Mesos share for non-killer participants.
+        if (bossMesosShare > 0) {
+          dmgPlayer.mesos += bossMesosShare;
+          accountStore.setMesos(dmgPlayer.charId, dmgPlayer.mesos);
+          dmgPlayer.totalMesosEarned += bossMesosShare;
+          accountStore.incrementLifetimeCounter(
+            dmgPlayer.charId,
+            "totalMesosEarned",
+            bossMesosShare,
+          );
+        }
+        // EXP share for non-killer participants.
+        const expResult = grantExp(dmgPlayer, baseExp);
+        this.persistPlayer(dmgPlayer);
+        if (expResult.leveledUp) {
+          const lc = this.findClientByPlayer(dmgPlayer);
+          if (lc) {
+            lc.send(MessageType.LEVEL_UP, {
+              level: dmgPlayer.level,
+              levelsGained: expResult.levelsGained,
+              ap: dmgPlayer.ap,
+              sp: dmgPlayer.sp,
+              maxHp: dmgPlayer.maxHp,
+              maxMp: dmgPlayer.maxMp,
+            } satisfies LevelUpPayload);
+          }
+        }
+      }
+    }
+
     // Roll item drops → each rolls a Potential tier from the public, tested table.
+    // Boss drops: FFA to all damage owners (not restricted to the last-hitter).
+    // Regular drops: owned by the killer (and their party via canLoot).
+    const killerSession = this.findSessionByPlayer(killer);
+    const dropMult = getDropMultiplierForMap(this.state.mapId);
     for (const itemId of rollItemDrops(eliteDef)) {
-      this.spawnLoot(itemId, rollPotential(), mob.x, mob.y);
+      this.spawnLoot(itemId, rollPotential(), mob.x, mob.y, isBossKill ? undefined : killerSession);
+      // Bonus hunting: fractional multiplier → chance of an extra drop.
+      if (dropMult > 1 && Math.random() < dropMult - 1) {
+        this.spawnLoot(
+          itemId,
+          rollPotential(),
+          mob.x,
+          mob.y,
+          isBossKill ? undefined : killerSession,
+        );
+      }
     }
 
     // Progress kill objectives for active quests (killer only).
@@ -2385,57 +2653,15 @@ export class MapRoom extends AuthedRoom<TownState> {
       );
       killCompleted.push(...bossCompleted);
     }
-    for (const achId of killCompleted) {
-      const achDef = ACHIEVEMENTS[achId];
-      if (!achDef) continue;
-      // Grant rewards
-      if (achDef.rewards.mesos) {
-        killer.mesos += achDef.rewards.mesos;
-        accountStore.setMesos(killer.charId, killer.mesos);
-      }
-      if (achDef.rewards.exp) {
-        grantExp(killer, achDef.rewards.exp);
-      }
-      // Grant title if the achievement awards one.
-      if (achDef.rewards.title && !killer.ownedTitles.includes(achDef.rewards.title)) {
-        killer.ownedTitles.push(achDef.rewards.title);
-        // Auto-equip first title if none equipped.
-        if (!killer.equippedTitle) {
-          killer.equippedTitle = achDef.rewards.title;
-        }
-        accountStore.updateCharacter(killer.charId, {
-          ownedTitles: killer.ownedTitles,
-          equippedTitle: killer.equippedTitle,
-        });
-      }
-      accountStore.setAchievements(killer.charId, killer.achievements);
-      const ac = this.findClientByPlayer(killer);
-      if (ac) {
-        ac.send(MessageType.ACHIEVEMENT_UNLOCK, {
-          achievementId: achId,
-          name: achDef.name,
-          description: achDef.description,
-          rewards: {
-            mesos: achDef.rewards.mesos,
-            exp: achDef.rewards.exp,
-            title: achDef.rewards.title,
-          },
-        } satisfies AchievementUnlockPayload);
-        // Send updated title list after granting.
-        if (achDef.rewards.title) {
-          ac.send(MessageType.TITLE_SYNC, {
-            ownedTitles: killer.ownedTitles,
-            equippedTitle: killer.equippedTitle,
-          } satisfies TitleSyncPayload);
-        }
-      }
-    }
-    if (killCompleted.length > 0) {
-      accountStore.setAchievements(killer.charId, killer.achievements);
-    }
+    this.processAchievementUnlocks(killer, killCompleted);
+
+    // ── Achievements: track mesos earned from mob drops ────────────────────
+    this.processAchievementUnlocks(killer, [
+      ...updateAchievementProgress(killer.achievements, "mesos_earned", mesosDrop),
+    ]);
 
     // Familiar card drop: 2% chance on non-boss kills.
-    if (!def.isBoss && Math.random() < FAMILIAR_CARD_DROP_CHANCE) {
+    if (FAMILIAR_ENABLED && !def.isBoss && Math.random() < FAMILIAR_CARD_DROP_CHANCE) {
       const killerSess = this.findSessionByPlayer(killer);
       if (killerSess) {
         const coll = this.familiarCollections.get(killerSess);
@@ -2480,6 +2706,13 @@ export class MapRoom extends AuthedRoom<TownState> {
       player.dead = true;
       player.attacking = false;
       player.respawnTimer = PLAYER_RESPAWN_MS;
+
+      // ── Death penalty: EXP loss (skip in non-combat / town maps) ──────
+      if (isCombatMap(this.map)) {
+        const loss = deathExpLoss(player.level, player.exp);
+        if (loss > 0) player.exp = Math.max(0, player.exp - loss);
+      }
+
       const sess = this.findSessionByPlayer(player);
       const acct = sess ? this.sessionAccount.get(sess) : undefined;
       if (acct) {
@@ -2495,8 +2728,6 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.dead = false;
     player.hp = player.maxHp;
     player.mp = player.maxMp;
-    player.x = this.map.playerSpawn.x;
-    player.y = this.map.playerSpawn.y;
     player.vy = 0;
     player.vx = 0;
     player.grounded = true;
@@ -2508,6 +2739,25 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.comboCount = 0;
     player.comboLastHitAt = 0;
     player.knockbackVx = 0;
+
+    // ── Resolve return map (town or self) ──
+    const returnMapId = getDeathReturnMapId(this.state.mapId);
+
+    if (returnMapId !== this.state.mapId) {
+      // Cross-map respawn: persist and send the client a travel message.
+      this.persistPlayer(player);
+      const client = this.findClientByPlayer(player);
+      if (client) {
+        client.send(MessageType.TRAVEL, {
+          mapId: returnMapId,
+          spawnId: "playerSpawn",
+        } satisfies TravelPayload);
+      }
+    } else {
+      // Same-map respawn: just reposition.
+      player.x = this.map.playerSpawn.x;
+      player.y = this.map.playerSpawn.y;
+    }
   }
 
   // ─── Loot ─────────────────────────────────────────────────────────────────
@@ -2516,7 +2766,21 @@ export class MapRoom extends AuthedRoom<TownState> {
     tier: ReturnType<typeof rollPotential>,
     x: number,
     y: number,
+    killerSessionId?: string,
   ): void {
+    // ── Ground drop cap: evict the oldest drop if we've hit the limit ──
+    if (this.state.loot.size >= MAX_LOOT_PER_MAP) {
+      let oldestUid = "";
+      let lowestTimer = Infinity;
+      for (const [uid, d] of this.state.loot) {
+        if (d.despawnTimer < lowestTimer) {
+          lowestTimer = d.despawnTimer;
+          oldestUid = uid;
+        }
+      }
+      if (oldestUid) this.state.loot.delete(oldestUid);
+    }
+
     const uid = `loot_${++this.idCounter}`;
     const drop = new LootDrop();
     drop.uid = uid;
@@ -2527,11 +2791,30 @@ export class MapRoom extends AuthedRoom<TownState> {
     drop.y = y;
     drop.legendary = isMintWorthy(tier);
     drop.despawnTimer = LOOT_DESPAWN_MS;
+
+    // Ownership window: killer (and their party) get exclusive pickup rights.
+    if (killerSessionId) {
+      drop.ownerSessionId = killerSessionId;
+      drop.ownershipExpiresAt = Date.now() + LOOT_OWNERSHIP_MS;
+    }
+
     this.state.loot.set(uid, drop);
 
     if (drop.legendary) {
       console.log(`[MapRoom] ✨ LEGENDARY drop: ${defId} (${tier})`);
     }
+  }
+
+  /** Check whether a player may pick up a specific drop (ownership + party). */
+  private canLoot(sessionId: string, charId: string, drop: LootDrop): boolean {
+    // Ownership window expired (or never set) — FFA.
+    if (!drop.ownerSessionId || Date.now() >= drop.ownershipExpiresAt) return true;
+    // Direct owner.
+    if (sessionId === drop.ownerSessionId) return true;
+    // Party member of the owner.
+    const ownerPlayer = this.state.players.get(drop.ownerSessionId);
+    if (!ownerPlayer) return true; // Owner gone — FFA.
+    return partyManager.areInSameParty(charId, ownerPlayer.charId);
   }
 
   private handlePickup(client: Client, msg: { uid: string }): void {
@@ -2541,6 +2824,16 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     const dist = Math.hypot(drop.x - player.x, drop.y - player.y);
     if (dist > PICKUP_RANGE) return;
+
+    // Ownership window check: killer (and their party) get exclusive rights.
+    if (!this.canLoot(client.sessionId, player.charId, drop)) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "Not your drop yet.",
+      });
+      return;
+    }
 
     // Party loot rule check.
     if (!partyManager.canPickup(player.charId)) {
@@ -2552,6 +2845,76 @@ export class MapRoom extends AuthedRoom<TownState> {
       return;
     }
 
+    // ── Capacity check (server-authoritative) ─────────────────────────────
+    const targetTab = tabForItem(drop.defId);
+    const maxStack = MAX_STACK[targetTab];
+    if (maxStack === 1) {
+      // Non-stackable: needs an empty slot
+      const used = this.countTabEntries(player, targetTab);
+      if (used >= TAB_CAPACITY[targetTab]) {
+        client.send(MessageType.CHAT, {
+          sessionId: "",
+          name: "System",
+          text: `${targetTab} inventory is full. Drop remains on the ground.`,
+        });
+        return;
+      }
+    } else {
+      // Stackable: check if any existing stack has room, or if empty slots exist
+      let spaceAvailable = 0;
+      player.inventory.forEach((item) => {
+        if (item.defId === drop.defId) spaceAvailable += maxStack - (item.count || 1);
+      });
+      const used = this.countTabEntries(player, targetTab);
+      spaceAvailable += (TAB_CAPACITY[targetTab] - used) * maxStack;
+      if (spaceAvailable < 1) {
+        client.send(MessageType.CHAT, {
+          sessionId: "",
+          name: "System",
+          text: `${targetTab} inventory is full. Drop remains on the ground.`,
+        });
+        return;
+      }
+    }
+
+    // ── Try to stack onto an existing entry (stackable items) ────────────
+    if (maxStack > 1) {
+      let stacked = false;
+      player.inventory.forEach((existing, uid) => {
+        if (stacked) return;
+        if (existing.defId === drop.defId && (existing.count || 1) < maxStack) {
+          existing.count = (existing.count || 1) + 1;
+          // Persist updated count.
+          const rec = accountStore.getItem(player.charId, uid);
+          if (rec) {
+            rec.count = existing.count;
+            const char = accountStore.getCharacter(player.charId);
+            if (char) {
+              accountStore.updateCharacter(player.charId, {
+                inventory: { ...char.inventory },
+              });
+            }
+          }
+          stacked = true;
+        }
+      });
+      if (stacked) {
+        this.state.loot.delete(drop.uid);
+        partyManager.onPickup(player.charId);
+        if (progressObjectives(player.questState, "collect", drop.defId, 1)) {
+          sendQuestUpdate(client, player.questState);
+        }
+        player.totalItemsCollected += 1;
+        accountStore.incrementLifetimeCounter(player.charId, "totalItemsCollected", 1);
+        this.processAchievementUnlocks(
+          player,
+          updateAchievementProgress(player.achievements, "items_collected", 1),
+        );
+        return;
+      }
+    }
+
+    // ── Create new inventory entry ──────────────────────────────────────
     const item = new InventoryItem();
     item.uid = `item_${++this.idCounter}`;
     item.defId = drop.defId;
@@ -2563,6 +2926,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       drop.potentialTier as import("@maple/shared").PotentialTier,
     );
     item.potentialLines = JSON.stringify(potentials);
+    item.count = 1;
     player.inventory.set(item.uid, item);
 
     // Write the item through to the durable character so it can be sold on the Free Market.
@@ -2598,6 +2962,13 @@ export class MapRoom extends AuthedRoom<TownState> {
     if (progressObjectives(player.questState, "collect", item.defId, 1)) {
       sendQuestUpdate(client, player.questState);
     }
+    // ── Achievements: items_collected ────────────────────────────────────
+    player.totalItemsCollected += 1;
+    accountStore.incrementLifetimeCounter(player.charId, "totalItemsCollected", 1);
+    this.processAchievementUnlocks(
+      player,
+      updateAchievementProgress(player.achievements, "items_collected", 1),
+    );
   }
 
   // ─── Mobs ─────────────────────────────────────────────────────────────────
@@ -2624,6 +2995,11 @@ export class MapRoom extends AuthedRoom<TownState> {
       mob.activeEffects = result.active;
       if (result.hpDelta !== 0 && !mob.dead) {
         mob.hp = Math.max(0, mob.hp + result.hpDelta);
+        // Flash a combat number for DoT damage so clients see it.
+        if (result.hpDelta < 0) {
+          mob.hit = true;
+          mob.hitTimer = 120;
+        }
         if (mob.hp <= 0) {
           // DoT killed the mob — find the last source player to credit the kill.
           const killer = this.findPlayerByEffectSource(mob);
@@ -2638,6 +3014,8 @@ export class MapRoom extends AuthedRoom<TownState> {
         }
       }
     }
+    // Sync the stun flag so the client can render a stun visual on the mob sprite.
+    mob.stunned = isStunned(mob.activeEffects);
 
     // Stun: mob cannot act (skip AI, movement, and gravity).
     if (isStunned(mob.activeEffects)) return;
@@ -2854,9 +3232,19 @@ export class MapRoom extends AuthedRoom<TownState> {
       hp: player.hp,
       dead: player.dead,
     });
+
+    // Apply mob debuff (stun/slow/poison) to the player on hit.
+    if (def.debuffEffect) {
+      const debuffs = skillDebuffToStatusEffects(def.id, def.debuffEffect, def.name);
+      for (const debuff of debuffs) {
+        player.activeEffects = applyEffect(player.activeEffects, debuff);
+        player.effectElapsed.set(debuff.id, 0);
+      }
+      this.syncPlayerEffects(player);
+    }
   }
 
-  /** Compute the player's effective physical defence from equipped gear + set bonuses. */
+  /** Compute the player's effective physical defence from equipped gear + set bonuses + flame stats. */
   private playerEffectiveWDef(player: Player): number {
     const equippedRec = Object.fromEntries(player.equipped.entries());
     let wDef = 0;
@@ -2864,6 +3252,17 @@ export class MapRoom extends AuthedRoom<TownState> {
       const item = player.inventory.get(uid);
       const def = item ? getItemDef(item.defId) : undefined;
       if (def) wDef += def.wDef ?? 0;
+      // Flame bonus stats can roll WDEF.
+      if (item?.bonusStats) {
+        try {
+          const flames = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+          for (const bs of flames) {
+            if (bs.stat === "WDEF") wDef += bs.value;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     }
     const equippedDefIds = Object.values(equippedRec)
       .map((uid) => {
@@ -2875,7 +3274,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     return wDef;
   }
 
-  /** Compute the player's effective magical defence from equipped gear + set bonuses. */
+  /** Compute the player's effective magical defence from equipped gear + set bonuses + flame stats. */
   private playerEffectiveMDef(player: Player): number {
     const equippedRec = Object.fromEntries(player.equipped.entries());
     let mDef = 0;
@@ -2883,6 +3282,17 @@ export class MapRoom extends AuthedRoom<TownState> {
       const item = player.inventory.get(uid);
       const def = item ? getItemDef(item.defId) : undefined;
       if (def) mDef += def.mDef ?? 0;
+      // Flame bonus stats can roll MDEF.
+      if (item?.bonusStats) {
+        try {
+          const flames = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+          for (const bs of flames) {
+            if (bs.stat === "MDEF") mDef += bs.value;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
     }
     const equippedDefIds = Object.values(equippedRec)
       .map((uid) => {
@@ -2904,6 +3314,7 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   /** Broadcast boss HP bar updates to all clients every tick. */
   private broadcastBossHp(): void {
+    if (!this.bossManager.hasActiveEncounters()) return;
     for (const [instanceId, mob] of this.state.mobs.entries()) {
       if (mob.dead) continue;
       const enc = this.bossManager.getEncounter(instanceId);
@@ -2942,8 +3353,12 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   // ─── Scheduled transport departure loop ─────────────────────────────────────
   /**
-   * Check every second whether any scheduled-portal boarding window has just closed.
-   * When it has, teleport all boarded players to the destination simultaneously.
+   * Runs every ~1 s (60 ticks at 60 fps).
+   *
+   * 1. Broadcasts a TRANSPORT_STATUS countdown to every boarded player so the
+   *    client can show a live "wait at the dock" timer.
+   * 2. Detects the boarding→departing boundary crossing and teleports all
+   *    boarded players simultaneously (the iconic ferry departure ritual).
    */
   private processScheduledDepartures(): void {
     const now = Date.now();
@@ -2954,9 +3369,26 @@ export class MapRoom extends AuthedRoom<TownState> {
       const prev = this.prevPhase.get(portal.id) ?? phase;
       this.prevPhase.set(portal.id, phase);
 
-      // Detect boundary crossing: was inside the boarding window, now outside.
-      if (prev < portal.schedule.windowMs && phase >= portal.schedule.windowMs) {
-        const boarded = this.boardingByPortal.get(portal.id);
+      const boarded = this.boardingByPortal.get(portal.id);
+      const inWindow = phase < portal.schedule.windowMs;
+
+      // ── Live countdown broadcast while boarding window is open ──
+      if (inWindow && boarded && boarded.length > 0) {
+        const departInMs = portal.schedule.windowMs - phase;
+        const statusPayload: TransportStatusPayload = {
+          portalLabel: portal.label,
+          departInMs,
+          boardedCount: boarded.length,
+          portalId: portal.id,
+        };
+        for (const sid of boarded) {
+          const c = this.clients.find((cl) => cl.sessionId === sid);
+          if (c) c.send(MessageType.TRANSPORT_STATUS, statusPayload);
+        }
+      }
+
+      // ── Detect boundary crossing: was inside boarding window, now outside ──
+      if (prev < portal.schedule.windowMs && !inWindow) {
         if (boarded && boarded.length > 0) {
           console.log(`[MapRoom] 🚢 ${portal.label} departing with ${boarded.length} passenger(s)`);
           for (const sid of boarded) {
@@ -2965,6 +3397,11 @@ export class MapRoom extends AuthedRoom<TownState> {
               const p = this.state.players.get(sid);
               if (p && !p.dead) {
                 this.persistPlayer(p);
+                // Signal departure before teleporting (client shows departure toast).
+                c.send(MessageType.TRANSPORT_DEPARTED, {
+                  portalLabel: portal.label,
+                  mapId: portal.toMapId,
+                });
                 c.send(MessageType.TRAVEL, {
                   mapId: portal.toMapId,
                   spawnId: portal.toSpawnId ?? "playerSpawn",
@@ -3013,6 +3450,58 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
   }
 
+  // ─── Unstuck / Return to Town ─────────────────────────────────────────────
+  /**
+   * Teleport the player to their current map's playerSpawn — the guaranteed safe
+   * entry point. Handles bad footholds, out-of-bounds, dead-ends, and any other
+   * stuck state. Cooldown-gated to prevent abuse.
+   *
+   * Works on every shipped map because every GameMap defines a playerSpawn.
+   */
+  private handleUnstuckAction(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    // Cooldown check.
+    const now = Date.now();
+    const last = this.lastUnstuckAt.get(client.sessionId) ?? 0;
+    const elapsed = now - last;
+    if (elapsed < UNSTUCK_COOLDOWN_MS) {
+      const remainingSec = Math.ceil((UNSTUCK_COOLDOWN_MS - elapsed) / 1000);
+      client.send(MessageType.UNSTUCK_ACTION, {
+        success: false,
+        message: `Please wait ${remainingSec}s before using unstuck again.`,
+        cooldownRemaining: remainingSec,
+      } satisfies UnstuckResultPayload);
+      return;
+    }
+
+    // Resolve the safe spawn from the current map geometry.
+    const spawn = this.map.playerSpawn;
+
+    // Reset velocity so the player doesn't continue falling after teleport.
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.vx = 0;
+    player.vy = 0;
+    player.grounded = true;
+    player.knockbackVx = 0;
+    player.climbing = false;
+    player.ladderId = -1;
+
+    // Record cooldown.
+    this.lastUnstuckAt.set(client.sessionId, now);
+
+    // Persist so the safe position survives a crash.
+    this.persistPlayer(player);
+
+    client.send(MessageType.UNSTUCK_ACTION, {
+      success: true,
+      message: "Teleported to town. Stay safe out there!",
+      cooldownRemaining: 0,
+    } satisfies UnstuckResultPayload);
+  }
+
   // ─── Portals ──────────────────────────────────────────────────────────────
   /**
    * When a player presses interact near a portal, fire the USE_PORTAL flow.
@@ -3044,6 +3533,17 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
     if (!nearest) return;
 
+    // Coming-soon gate: block if the destination zone is not yet available.
+    if (nearest.comingSoon) {
+      const c = client ?? this.findClientByPlayer(player);
+      if (c) {
+        c.send(MessageType.USE_PORTAL, {
+          message: `🚧 ${nearest.label} — Coming Soon! This zone is not yet available in the alpha.`,
+        } satisfies FerryBlockedPayload);
+      }
+      return;
+    }
+
     // Level gate: block if below required level.
     if (nearest.requiresLevel && player.level < nearest.requiresLevel) {
       // Find the client for this player if not provided.
@@ -3074,21 +3574,31 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
 
       // Board the player — they will be teleported when the window closes.
+      const boardingClient = client ?? this.findClientByPlayer(player);
+      if (!boardingClient) return;
+
       let list = this.boardingByPortal.get(nearest.id);
       if (!list) {
         list = [];
         this.boardingByPortal.set(nearest.id, list);
       }
-      if (!list.includes(client.sessionId)) list.push(client.sessionId);
+      if (!list.includes(boardingClient.sessionId)) list.push(boardingClient.sessionId);
 
       const remainingMs = nearest.schedule.windowMs - phase;
       const remainingSec = Math.ceil(remainingMs / 1000);
-      const c3 = client ?? this.findClientByPlayer(player);
-      if (c3) {
-        c3.send(MessageType.USE_PORTAL, {
-          message: `Boarding ${nearest.label}… The ship departs in ${remainingSec} seconds.`,
-        } satisfies FerryBlockedPayload);
-      }
+
+      // Send boarding confirmation via USE_PORTAL (legacy float text).
+      boardingClient.send(MessageType.USE_PORTAL, {
+        message: `Boarding ${nearest.label}… The ship departs in ${remainingSec} seconds.`,
+      } satisfies FerryBlockedPayload);
+
+      // Also send the structured transport countdown so the client can show a banner.
+      boardingClient.send(MessageType.TRANSPORT_STATUS, {
+        portalLabel: nearest.label,
+        departInMs: remainingMs,
+        boardedCount: list.length,
+        portalId: nearest.id,
+      } satisfies TransportStatusPayload);
       return;
     }
 
@@ -3110,6 +3620,61 @@ export class MapRoom extends AuthedRoom<TownState> {
       if (p && p.charId === player.charId) return c;
     }
     return undefined;
+  }
+
+  /**
+   * Process newly completed achievements: grant rewards, persist, and notify the client.
+   * Deduplicates by achievement id so a single trigger batch never double-grants.
+   */
+  private processAchievementUnlocks(player: Player, completedIds: string[]): void {
+    if (completedIds.length === 0) return;
+    const unique = [...new Set(completedIds)];
+    for (const achId of unique) {
+      const achDef = ACHIEVEMENTS[achId];
+      if (!achDef) continue;
+      // Grant mesos reward.
+      if (achDef.rewards.mesos) {
+        player.mesos += achDef.rewards.mesos;
+        accountStore.setMesos(player.charId, player.mesos);
+      }
+      // Grant EXP reward.
+      if (achDef.rewards.exp) {
+        grantExp(player, achDef.rewards.exp);
+      }
+      // Grant title if the achievement awards one and not already owned.
+      if (achDef.rewards.title && !player.ownedTitles.includes(achDef.rewards.title)) {
+        player.ownedTitles.push(achDef.rewards.title);
+        if (!player.equippedTitle) {
+          player.equippedTitle = achDef.rewards.title;
+        }
+        accountStore.updateCharacter(player.charId, {
+          ownedTitles: player.ownedTitles,
+          equippedTitle: player.equippedTitle,
+        });
+      }
+      // Persist achievement progress.
+      accountStore.setAchievements(player.charId, player.achievements);
+      // Notify the client.
+      const client = this.findClientByPlayer(player);
+      if (client) {
+        client.send(MessageType.ACHIEVEMENT_UNLOCK, {
+          achievementId: achId,
+          name: achDef.name,
+          description: achDef.description,
+          rewards: {
+            mesos: achDef.rewards.mesos,
+            exp: achDef.rewards.exp,
+            title: achDef.rewards.title,
+          },
+        } satisfies AchievementUnlockPayload);
+        if (achDef.rewards.title) {
+          client.send(MessageType.TITLE_SYNC, {
+            ownedTitles: player.ownedTitles,
+            equippedTitle: player.equippedTitle,
+          } satisfies TitleSyncPayload);
+        }
+      }
+    }
   }
 
   /** Find a charId by player name (case-insensitive) from the local room state. */
@@ -3142,14 +3707,6 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
     });
     return best;
-  }
-
-  /** Find the map key for a mob (for broadcast messages). */
-  private findMobKey(mob: Mob): string {
-    for (const [key, m] of this.state.mobs.entries()) {
-      if (m === mob) return key;
-    }
-    return "";
   }
 
   /** Find the session id for a player (for broadcast messages). */
@@ -3192,22 +3749,44 @@ export class MapRoom extends AuthedRoom<TownState> {
   // ─── NPC Dialog ────────────────────────────────────────────────────────────
   private handleTalkNpc(client: Client, msg: TalkNpcPayload): void {
     const player = this.state.players.get(client.sessionId);
-    if (!player || player.dead) return;
+    if (!player || player.dead) {
+      client.send("npc_error", { reason: "You are dead" });
+      return;
+    }
     const npcId = msg?.npcId;
-    if (!npcId) return;
+    if (!npcId) {
+      client.send("npc_error", { reason: "Invalid NPC" });
+      return;
+    }
 
     const npc = NPCS[npcId] as NpcDef | undefined;
-    if (!npc) return;
+    if (!npc) {
+      client.send("npc_error", { reason: "NPC not found" });
+      return;
+    }
 
     // Must be on the same map.
-    if (npc.mapId !== this.state.mapId) return;
+    if (npc.mapId !== this.state.mapId) {
+      client.send("npc_error", { reason: "NPC not on this map" });
+      return;
+    }
 
     // Range check.
     const dist = Math.hypot(npc.x - player.x, npc.y - player.y);
-    if (dist > NPC_INTERACT_RANGE) return;
+    if (dist > NPC_INTERACT_RANGE) {
+      client.send("npc_error", {
+        reason: "Too far away",
+        distance: dist,
+        range: NPC_INTERACT_RANGE,
+      });
+      return;
+    }
 
     // Already in a conversation? Ignore (must finish first).
-    if (player.dialogNpcId) return;
+    if (player.dialogNpcId) {
+      client.send("npc_error", { reason: "Already in conversation" });
+      return;
+    }
 
     // Progress talk objectives for active quests targeting this NPC.
     if (progressObjectives(player.questState, "talk", npcId, 1)) {
@@ -3337,7 +3916,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
   }
 
-  /** Execute a dialog action (openShop, giveQuest, advanceJob, travel, end). */
+  /** Execute a dialog action (openShop, giveQuest, advanceJob, travel, openStorage, enterPQ, end). */
   private executeDialogAction(
     client: Client,
     player: Player,
@@ -3435,6 +4014,14 @@ export class MapRoom extends AuthedRoom<TownState> {
           mapId,
           spawnId: "playerSpawn",
         } satisfies TravelPayload);
+        break;
+      }
+      case "openStorage": {
+        client.send("storage_open");
+        break;
+      }
+      case "enterPQ": {
+        client.send("pq_enter", { pqId: action.payload });
         break;
       }
       case "end":
@@ -3611,6 +4198,22 @@ export class MapRoom extends AuthedRoom<TownState> {
       lastDailyResetAt: nowMs,
     });
 
+    // Claim the daily login gift (server-authoritative, once per UTC day).
+    const loginGiftReward = grantDailyLoginGift(
+      player.level,
+      character.lastDailyLoginGiftAt,
+      nowMs,
+    );
+    if (loginGiftReward) {
+      player.mesos += loginGiftReward.mesos;
+      player.exp += loginGiftReward.exp;
+      accountStore.updateCharacter(player.charId, {
+        mesos: player.mesos,
+        exp: player.exp,
+        lastDailyLoginGiftAt: nowMs,
+      });
+    }
+
     // Restore learned skills from the durable character.
     player.learnedSkills = character.learnedSkills ?? [];
     player.skillBook = character.skillBook ?? {};
@@ -3626,6 +4229,56 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.totalQuestsCompleted = character.totalQuestsCompleted ?? 0;
     player.totalItemsCollected = character.totalItemsCollected ?? 0;
     player.quickslots = character.quickslots ?? [];
+
+    // ── Backfill achievement progress on join (catches pre-system characters) ─
+    // Level backfill: ensure level_reached progress reflects current level.
+    const currentLevelProgress = player.achievements["level_10"]?.[0] ?? 0;
+    if (currentLevelProgress < player.level) {
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(
+          player.achievements,
+          "level_reached",
+          player.level - currentLevelProgress,
+        ),
+      );
+    }
+    // Mesos backfill.
+    const currentMesosProgress = player.achievements["mesos_mogul"]?.[0] ?? 0;
+    if (player.totalMesosEarned > currentMesosProgress) {
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(
+          player.achievements,
+          "mesos_earned",
+          player.totalMesosEarned - currentMesosProgress,
+        ),
+      );
+    }
+    // Quests backfill.
+    const currentQuestProgress = player.achievements["quest_beginner"]?.[0] ?? 0;
+    if (player.totalQuestsCompleted > currentQuestProgress) {
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(
+          player.achievements,
+          "quests_completed",
+          player.totalQuestsCompleted - currentQuestProgress,
+        ),
+      );
+    }
+    // Items backfill.
+    const currentItemsProgress = player.achievements["collector"]?.[0] ?? 0;
+    if (player.totalItemsCollected > currentItemsProgress) {
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(
+          player.achievements,
+          "items_collected",
+          player.totalItemsCollected - currentItemsProgress,
+        ),
+      );
+    }
     player.settings = character.settings ?? structuredClone(DEFAULT_SETTINGS);
     player.autoPot = character.autoPot ?? {
       hpEnabled: false,
@@ -3643,31 +4296,33 @@ export class MapRoom extends AuthedRoom<TownState> {
     this.state.players.set(client.sessionId, player);
 
     // Restore familiar collection from durable character.
-    const famColl = character.familiars ?? structuredClone(EMPTY_FAMILIAR_COLLECTION);
-    this.familiarCollections.set(client.sessionId, famColl);
-    // Re-summon previously summoned familiars at the player's position.
-    for (const mobId of famColl.summoned.slice(0, FAMILIAR_MAX_SUMMONED)) {
-      const mobDef = getMobDef(mobId);
-      if (!mobDef) continue;
-      const stats = deriveFamiliarStats(mobDef);
-      const fam = new Familiar();
-      fam.mobId = mobId;
-      fam.ownerSession = client.sessionId;
-      fam.x = player.x + (Math.random() - 0.5) * 40;
-      fam.y = player.y - 20;
-      fam.hp = stats.hp;
-      fam.maxHp = stats.hp;
-      fam.speed = stats.speed;
-      fam.facing = 1;
-      fam.instanceId = `fam_${++this.idCounter}`;
-      fam.familiarKey = mobId;
-      this.state.familiars.set(mobId, fam);
+    if (FAMILIAR_ENABLED) {
+      const famColl = character.familiars ?? structuredClone(EMPTY_FAMILIAR_COLLECTION);
+      this.familiarCollections.set(client.sessionId, famColl);
+      // Re-summon previously summoned familiars at the player's position.
+      for (const mobId of famColl.summoned.slice(0, FAMILIAR_MAX_SUMMONED)) {
+        const mobDef = getMobDef(mobId);
+        if (!mobDef) continue;
+        const stats = deriveFamiliarStats(mobDef);
+        const fam = new Familiar();
+        fam.mobId = mobId;
+        fam.ownerSession = client.sessionId;
+        fam.x = player.x + (Math.random() - 0.5) * 40;
+        fam.y = player.y - 20;
+        fam.hp = stats.hp;
+        fam.maxHp = stats.hp;
+        fam.speed = stats.speed;
+        fam.facing = 1;
+        fam.instanceId = `fam_${++this.idCounter}`;
+        fam.familiarKey = mobId;
+        this.state.familiars.set(mobId, fam);
+      }
+      // Send familiar sync to client.
+      client.send(MessageType.FAMILIAR_SYNC, {
+        registered: famColl.registered,
+        summoned: famColl.summoned,
+      } satisfies FamiliarSyncPayload);
     }
-    // Send familiar sync to client.
-    client.send(MessageType.FAMILIAR_SYNC, {
-      registered: famColl.registered,
-      summoned: famColl.summoned,
-    } satisfies FamiliarSyncPayload);
 
     // Send the quickslot layout to the client.
     client.send(MessageType.QUICKSLOT_LAYOUT, {
@@ -3696,6 +4351,14 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     // Send initial quest log to the client.
     sendQuestUpdate(client, player.questState);
+
+    // Send daily login gift status to the client (auto-claimed above if eligible).
+    client.send(MessageType.DAILY_LOGIN_GIFT_SYNC, {
+      claimable: false,
+      reward: getDailyLoginReward(player.level),
+      dateKey: utcDateKey(nowMs),
+      claimed: !!loginGiftReward,
+    } satisfies DailyLoginGiftSyncPayload);
 
     // Send initial guidance milestone.
     sendGuidanceSync(client, player.questState, player.level);
@@ -3726,6 +4389,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       category: s.category,
       completed: s.completed,
       progress: s.progress,
+      rewards: s.rewards,
     }));
     client.send(MessageType.ACHIEVEMENT_SYNC, {
       achievements: achievementSnaps,
@@ -3736,6 +4400,11 @@ export class MapRoom extends AuthedRoom<TownState> {
       ownedTitles: player.ownedTitles,
       equippedTitle: player.equippedTitle,
     } satisfies TitleSyncPayload);
+
+    // Send active live-ops events to the client.
+    client.send(MessageType.EVENTS_SYNC, {
+      events: getActiveEvents(),
+    } satisfies EventsSyncPayload);
 
     // Register online with the guild manager for cross-room chat relay.
     guildManager.registerOnline(
@@ -3987,10 +4656,33 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     // Unregister from the global party manager.
     // Party membership persists across map changes (only online tracking is removed).
-    // True disconnects are handled by sweepOfflineMembers() in the singleton.
     partyManager.unregisterOnline(client.sessionId);
 
     const player = this.state.players.get(client.sessionId);
+
+    // ─── Party cleanup on true disconnect ──────────────────────────────────
+    // During a map transfer the new room's onJoin already registered a fresh session
+    // for this charId *before* the old room's onLeave fires, so getOnlineByChar will
+    // find the new session. For a real disconnect no other session exists and we can
+    // safely remove the player from their party (reassigning leader if needed).
+    if (player && !partyManager.getOnlineByChar(player.charId)) {
+      const leaveResult = partyManager.leave(player.charId);
+      if (leaveResult && leaveResult.party.members.size > 0) {
+        partyManager.syncPartyToAllMembers(leaveResult.party);
+        const chatText = `${player.name} disconnected.${leaveResult.wasLeader ? " Leader reassigned." : ""}`;
+        for (const cid of leaveResult.party.members.keys()) {
+          const om = partyManager.getOnlineByChar(cid);
+          if (om) {
+            om.send(MessageType.CHAT, {
+              sessionId: "",
+              name: "Party",
+              text: chatText,
+            });
+          }
+        }
+      }
+    }
+
     const accountId = this.sessionAccount.get(client.sessionId);
     if (player && accountId) {
       const startMs = this.sessionStartMs.get(client.sessionId) ?? Date.now();
@@ -4100,6 +4792,17 @@ export class MapRoom extends AuthedRoom<TownState> {
       client.send(MessageType.GUILD_RESULT, {
         success: false,
         message: "Player not found.",
+      } satisfies GuildResultPayload);
+      return;
+    }
+
+    // Proximity check — guild invites require both players to be nearby on the same map.
+    const dx = Math.abs(player.x - target.x);
+    const dy = Math.abs(player.y - target.y);
+    if (dx > TRADE_RANGE_X || dy > TRADE_RANGE_Y) {
+      client.send(MessageType.GUILD_RESULT, {
+        success: false,
+        message: "Too far away to invite.",
       } satisfies GuildResultPayload);
       return;
     }
@@ -4697,8 +5400,13 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.pendingQuestTurnin = undefined;
     const def = QUESTS[questId];
     const questExp = def?.rewards.exp ?? 0;
+    const jobTierBefore = player.jobTier;
+    const archetypeBefore = player.archetype;
     const err = turnInQuest(player.questState, questId, player);
     if (!err) {
+      // Track lifetime quest completions.
+      player.totalQuestsCompleted += 1;
+      accountStore.incrementLifetimeCounter(player.charId, "totalQuestsCompleted", 1);
       client.send("quest_turnin", {
         questId,
         questName: def?.name ?? questId,
@@ -4714,6 +5422,17 @@ export class MapRoom extends AuthedRoom<TownState> {
           mesos: def?.rewards.mesos ?? 0,
           level: player.level,
         });
+        // ── Tutorial step funnel ──────────────────────────────────────────
+        const tutorialIdx = TUTORIAL_QUEST_CHAIN.indexOf(questId);
+        if (tutorialIdx !== -1) {
+          track(AnalyticsEventType.TUTORIAL_STEP, qcAcct, player.charId, {
+            questId,
+            stepIndex: tutorialIdx,
+            totalSteps: TUTORIAL_QUEST_CHAIN.length,
+            level: player.level,
+            completed: tutorialIdx === TUTORIAL_QUEST_CHAIN.length - 1,
+          });
+        }
       }
       const expResult = grantExp(player, questExp);
       this.persistPlayer(player);
@@ -4738,6 +5457,37 @@ export class MapRoom extends AuthedRoom<TownState> {
           sendQuestUpdate(client, player.questState);
         }
         sendGuidanceSync(client, player.questState, player.level);
+        // ── Achievements: level_reached from quest EXP ──────────────────
+        this.processAchievementUnlocks(
+          player,
+          updateAchievementProgress(player.achievements, "level_reached", expResult.levelsGained),
+        );
+      }
+      // ── Achievements: quests_completed ───────────────────────────────
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(player.achievements, "quests_completed", 1),
+      );
+      // ── Job advancement notification ──────────────────────────────────
+      const jobAdvanced =
+        def?.rewards.jobAdvanceToTier !== undefined &&
+        (player.jobTier !== jobTierBefore || player.archetype !== archetypeBefore);
+      if (jobAdvanced) {
+        client.send(MessageType.JOB_ADVANCE, {
+          success: true,
+          archetype: player.archetype,
+          jobTier: player.jobTier,
+          branchId: player.branchId || undefined,
+          message: `You are now a ${getClass(player.archetype as ClassArchetype).name}!`,
+        });
+        const jaAcct = this.sessionAccount.get(client.sessionId);
+        if (jaAcct) {
+          track(AnalyticsEventType.JOB_ADVANCE, jaAcct, player.charId, {
+            jobTier: player.jobTier,
+            class: player.archetype,
+            level: player.level,
+          });
+        }
       }
       sendQuestUpdate(client, player.questState);
       sendGuidanceSync(client, player.questState, player.level);
@@ -4765,10 +5515,30 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
   }
 
+  private handleQuestAbandon(client: Client, msg: QuestAbandonPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.dead) return;
+    const questId = msg?.questId;
+    if (!questId) return;
+    const result = abandonQuest(player.questState, questId);
+    if (typeof result === "string") {
+      client.send("quest_error", { questId, reason: result });
+    } else {
+      sendQuestUpdate(client, player.questState);
+      sendGuidanceSync(client, player.questState, player.level);
+      this.persistPlayer(player);
+    }
+  }
+
   onDispose(): void {
     // Final flush so a graceful shutdown (room close / server restart) loses nothing,
     // then checkpoint the WAL into the main DB file.
     this.persistAllPlayers();
+    try {
+      persistGuildsAndFriends();
+    } catch (err) {
+      this.roomLog.error("guild/friend persist on dispose failed", { err });
+    }
     try {
       accountStore.checkpoint();
     } catch (err) {
@@ -5440,14 +6210,29 @@ export class MapRoom extends AuthedRoom<TownState> {
       });
       return;
     }
+
+    // ── Resolve class archetype from the payload ──────────────────────────
+    const rawClass = (msg?.class ?? "").trim().toUpperCase();
+    if (rawClass !== "" && !MapRoom.ADVANCEABLE.has(rawClass)) {
+      client.send("character_error", {
+        reason: `Invalid class '${msg?.class}'. Valid classes: WARRIOR, MAGE, ARCHER, THIEF, PIRATE.`,
+      });
+      return;
+    }
+    const requestedArchetype =
+      rawClass !== "" ? (rawClass as ClassArchetype) : ClassArchetype.BEGINNER;
+
     const appearance = msg?.appearance ?? randomizeAppearance();
     const rec = accountStore.createCharacter(accountId, {
       name: name.trim(),
-      archetype: ClassArchetype.BEGINNER,
+      archetype: requestedArchetype,
       appearance,
     });
-    client.send("character_created", { charId: rec.charId, name: rec.name });
-    console.log(`[MapRoom] character created ${rec.charId} (${rec.name}) for ${accountId}`);
+    const className = getClass(requestedArchetype).name;
+    client.send("character_created", { charId: rec.charId, name: rec.name, className });
+    console.log(
+      `[MapRoom] character created ${rec.charId} (${rec.name}) class=${className} for ${accountId}`,
+    );
   }
 
   // ─── Cash Shop ─────────────────────────────────────────────────────────────
@@ -6051,6 +6836,12 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.mesos += totalSell;
     accountStore.setMesos(player.charId, player.mesos);
 
+    // ── Achievements: mesos_earned from selling ──────────────────────────
+    this.processAchievementUnlocks(
+      player,
+      updateAchievementProgress(player.achievements, "mesos_earned", totalSell),
+    );
+
     client.send(MessageType.SELL_TO_SHOP, {
       success: true,
       uid,
@@ -6422,7 +7213,15 @@ export class MapRoom extends AuthedRoom<TownState> {
     invItem.potentialLines = JSON.stringify(rerolled.potentialLines);
     invItem.lines = rerolled.potentialLines.length;
 
-    // ── 6. Persist to store ───────────────────────────────────────────────────
+    // ── 6. Flag legendary mints (Phase 2 hook) ──────────────────────────────
+    const mintPending = isMintWorthy(rerolled.potentialTier);
+    if (mintPending) {
+      console.log(
+        `[MapRoom] ★ LEGENDARY REROLL ★ ${player.name} rolled ${rerolled.potentialTier} on ${invItem.defId} (uid=${uid}) — mintPending`,
+      );
+    }
+
+    // ── 7. Persist to store ───────────────────────────────────────────────────
     accountStore.addItem(player.charId, {
       uid,
       defId: invItem.defId,
@@ -6431,12 +7230,13 @@ export class MapRoom extends AuthedRoom<TownState> {
       lines: rerolled.potentialLines.length,
       minted: invItem.minted,
       potentialLines: [...rerolled.potentialLines],
+      ...(mintPending ? { mintPending: true } : {}),
     });
 
-    // ── 7. Build verifiable-roll shape ────────────────────────────────────────
+    // ── 8. Build verifiable-roll shape ────────────────────────────────────────
     const verifiable = createVerifiableRoll(rollSeed, rerolled.potentialTier);
 
-    // ── 8. Broadcast before/after to the client ───────────────────────────────
+    // ── 9. Broadcast before/after to the client ───────────────────────────────
     client.send(MessageType.CUBE_REROLL, {
       success: true,
       uid,
@@ -6447,15 +7247,9 @@ export class MapRoom extends AuthedRoom<TownState> {
       mesos: player.mesos,
       rollSeed: verifiable.seed,
       rollCommitment: verifiable.commitment,
-      message: `Rerolled ${prevTier} → ${rerolled.potentialTier} for ${CUBE_REROLL_COST} mesos.`,
+      ...(mintPending ? { mintPending: true } : {}),
+      message: `Rerolled ${prevTier} → ${rerolled.potentialTier} for ${CUBE_REROLL_COST} mesos.${mintPending ? " ★ Legendary — mint pending!" : ""}`,
     } satisfies CubeRerollResultPayload);
-
-    // ── 9. Flag legendary mints (Phase 2 hook) ────────────────────────────────
-    if (isMintWorthy(rerolled.potentialTier)) {
-      console.log(
-        `[MapRoom] ★ LEGENDARY REROLL ★ ${player.name} rolled ${rerolled.potentialTier} on ${invItem.defId} (uid=${uid})`,
-      );
-    }
 
     console.log(
       `[MapRoom] cube ${player.name}: ${prevTier} → ${rerolled.potentialTier} (${rerolled.potentialLines.length} lines, ${CUBE_REROLL_COST} mesos burned)`,
@@ -6544,6 +7338,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     invItem.bonusStats = JSON.stringify(newBonus);
 
     // ── 6. Persist to store ───────────────────────────────────────────────────
+    // Carry forward stars so flame reroll doesn't erase star-force progress.
     accountStore.addItem(player.charId, {
       uid,
       defId: invItem.defId,
@@ -6553,6 +7348,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       minted: invItem.minted,
       potentialLines: invItem.potentialLines ? JSON.parse(invItem.potentialLines) : [],
       bonusStats: [...newBonus],
+      ...(invItem.stars !== undefined ? { stars: invItem.stars } : {}),
     });
 
     // ── 7. Broadcast before/after to the client ───────────────────────────────
@@ -6721,7 +7517,8 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Update Colyseus state
     invItem.baseRank = newRank;
 
-    // Persist
+    // Persist — carry forward bonusStats and stars so rank-up
+    // doesn't erase existing flame / star-force data.
     accountStore.addItem(player.charId, {
       uid,
       defId: invItem.defId,
@@ -6730,6 +7527,8 @@ export class MapRoom extends AuthedRoom<TownState> {
       lines: invItem.lines,
       minted: invItem.minted,
       potentialLines: invItem.potentialLines ? JSON.parse(invItem.potentialLines) : [],
+      ...(invItem.bonusStats ? { bonusStats: JSON.parse(invItem.bonusStats) } : {}),
+      ...(invItem.stars !== undefined ? { stars: invItem.stars } : {}),
     });
 
     // ── 10. Broadcast ────────────────────────────────────────────────────────
@@ -6934,7 +7733,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
     // On fail, stars stay the same (newStars === currentStars).
 
-    // Persist
+    // Persist — carry forward bonusStats so star-force doesn't erase flame data.
     accountStore.addItem(player.charId, {
       uid,
       defId: invItem.defId,
@@ -6944,6 +7743,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       minted: invItem.minted,
       stars: outcome === "success" ? newStars : currentStars,
       potentialLines: invItem.potentialLines ? JSON.parse(invItem.potentialLines) : [],
+      ...(invItem.bonusStats ? { bonusStats: JSON.parse(invItem.bonusStats) } : {}),
     });
 
     // ── 11. Broadcast ───────────────────────────────────────────────────────
@@ -7074,12 +7874,13 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
 
     // Delegate to the shared pure validator — checks job tier, levelReq,
-    // prerequisites, max level, and total SP budget.
+    // prerequisites, max level, and total SP budget, and branch-choice gate.
     const result = learnSkill(
       player.skillBook,
       player.archetype as ClassArchetype,
       player.level,
       skillId,
+      player.branchId || undefined,
     );
 
     if (!result.ok) {
@@ -7115,7 +7916,7 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   private handleSkillCast(client: Client, msg: SkillCastPayload): void {
     const player = this.state.players.get(client.sessionId);
-    if (!player) return;
+    if (!player || player.dead) return;
     const skillId = msg?.skillId;
     if (!skillId || typeof skillId !== "string") {
       client.send(MessageType.SKILL_CAST, {
@@ -7208,6 +8009,8 @@ export class MapRoom extends AuthedRoom<TownState> {
 
       const targetCount = stats.targetCount;
       let hitCount = 0;
+      // Hoist session lookup out of the mob loop — constant for this caster.
+      const casterSession = this.findSessionByPlayer(player);
       this.state.mobs.forEach((mob) => {
         if (mob.dead) return;
         if (hitCount >= targetCount) return;
@@ -7234,8 +8037,8 @@ export class MapRoom extends AuthedRoom<TownState> {
           if (mob.hp <= 0) this.killMob(mob, player);
         }
         this.broadcast(MessageType.COMBAT_HIT, {
-          targetKey: this.findMobKey(mob),
-          attackerSession: this.findSessionByPlayer(player),
+          targetKey: this.mobKeyByRef.get(mob) ?? "",
+          attackerSession: casterSession,
           damage: result.total,
           crit: result.crit,
           hit: result.hit,
@@ -7450,6 +8253,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       if (dist <= PICKUP_RANGE) toPickup.push(uid);
     });
 
+    let actuallyPicked = 0;
     for (const uid of toPickup) {
       // Re-validate each drop — it may have been picked up or despawned.
       const drop = this.state.loot.get(uid);
@@ -7457,6 +8261,59 @@ export class MapRoom extends AuthedRoom<TownState> {
       const dist = Math.hypot(drop.x - player.x, drop.y - player.y);
       if (dist > PICKUP_RANGE) continue;
 
+      // Ownership window check (same as handlePickup).
+      if (!this.canLoot(client.sessionId, player.charId, drop)) continue;
+
+      // Party loot rule check (same as handlePickup).
+      if (!partyManager.canPickup(player.charId)) continue;
+
+      // ── Capacity check per drop (same as handlePickup) ─────────────────
+      const targetTab = tabForItem(drop.defId);
+      const maxStack = MAX_STACK[targetTab];
+      if (maxStack === 1) {
+        const used = this.countTabEntries(player, targetTab);
+        if (used >= TAB_CAPACITY[targetTab]) continue; // tab full, skip this drop
+      } else {
+        let spaceAvailable = 0;
+        player.inventory.forEach((item) => {
+          if (item.defId === drop.defId) spaceAvailable += maxStack - (item.count || 1);
+        });
+        const used = this.countTabEntries(player, targetTab);
+        spaceAvailable += (TAB_CAPACITY[targetTab] - used) * maxStack;
+        if (spaceAvailable < 1) continue; // no room, skip this drop
+      }
+
+      // ── Try stacking first ─────────────────────────────────────────────
+      if (maxStack > 1) {
+        let stacked = false;
+        player.inventory.forEach((existing, existingUid) => {
+          if (stacked) return;
+          if (existing.defId === drop.defId && (existing.count || 1) < maxStack) {
+            existing.count = (existing.count || 1) + 1;
+            const rec = accountStore.getItem(player.charId, existingUid);
+            if (rec) {
+              rec.count = existing.count;
+              const char = accountStore.getCharacter(player.charId);
+              if (char) {
+                accountStore.updateCharacter(player.charId, {
+                  inventory: { ...char.inventory },
+                });
+              }
+            }
+            stacked = true;
+          }
+        });
+        if (stacked) {
+          actuallyPicked++;
+          this.state.loot.delete(drop.uid);
+          if (progressObjectives(player.questState, "collect", drop.defId, 1)) {
+            sendQuestUpdate(client, player.questState);
+          }
+          continue;
+        }
+      }
+
+      // ── Create new inventory entry ─────────────────────────────────────
       const item = new InventoryItem();
       item.uid = `item_${++this.idCounter}`;
       item.defId = drop.defId;
@@ -7467,6 +8324,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         drop.potentialTier as import("@maple/shared").PotentialTier,
       );
       item.potentialLines = JSON.stringify(potentials);
+      item.count = 1;
       player.inventory.set(item.uid, item);
 
       accountStore.addItem(player.charId, {
@@ -7489,11 +8347,58 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
 
       this.state.loot.delete(drop.uid);
+      actuallyPicked++;
 
       if (progressObjectives(player.questState, "collect", item.defId, 1)) {
         sendQuestUpdate(client, player.questState);
       }
     }
+    // ── Achievements: items_collected from loot-all ──────────────────────
+    if (actuallyPicked > 0) {
+      player.totalItemsCollected += actuallyPicked;
+      accountStore.incrementLifetimeCounter(player.charId, "totalItemsCollected", actuallyPicked);
+      this.processAchievementUnlocks(
+        player,
+        updateAchievementProgress(player.achievements, "items_collected", actuallyPicked),
+      );
+    }
+  }
+
+  // ─── Inventory Sort (server-authoritative) ─────────────────────────────────
+
+  private handleInventorySort(client: Client, msg: InventorySortPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.charId) return;
+    const tab = msg?.tab;
+    if (tab !== "EQUIP" && tab !== "USE" && tab !== "ETC" && tab !== "CASH") return;
+
+    // Collect all non-equipped items in this tab.
+    const equippedUids = new Set<string>();
+    player.equipped.forEach((uid) => equippedUids.add(uid));
+
+    const tabItems: { uid: string; item: InventoryItem }[] = [];
+    const otherItems: { uid: string; item: InventoryItem }[] = [];
+    player.inventory.forEach((item, uid) => {
+      if (equippedUids.has(uid)) return;
+      if (tabForItem(item.defId) === tab) {
+        tabItems.push({ uid, item });
+      } else {
+        otherItems.push({ uid, item });
+      }
+    });
+
+    // Sort: by defId ascending, then count descending.
+    tabItems.sort((a, b) => {
+      const defCmp = a.item.defId.localeCompare(b.item.defId);
+      if (defCmp !== 0) return defCmp;
+      return (b.item.count || 1) - (a.item.count || 1);
+    });
+
+    // Re-insert in sorted order: delete all tab items, then re-set in order.
+    for (const { uid } of tabItems) player.inventory.delete(uid);
+    for (const { uid, item } of tabItems) player.inventory.set(uid, item);
+    // Re-insert non-tab items (preserving their original order).
+    for (const { uid, item } of otherItems) player.inventory.set(uid, item);
   }
 
   // ─── Combat QoL: Skill Macros ───────────────────────────────────────────
@@ -7668,7 +8573,17 @@ export class MapRoom extends AuthedRoom<TownState> {
     if (!targetSid) return;
 
     // Cannot invite yourself.
-    if (targetSid === client.sessionId) return;
+    if (targetSid === client.sessionId) {
+      client.send(MessageType.TRADE_RESULT, {
+        success: false,
+        itemsReceived: [],
+        itemsSent: [],
+        mesosReceived: 0,
+        mesosSent: 0,
+        message: "Cannot trade with yourself.",
+      } satisfies TradeResultPayload);
+      return;
+    }
 
     // Target must exist.
     const target = this.state.players.get(targetSid);
@@ -7703,6 +8618,19 @@ export class MapRoom extends AuthedRoom<TownState> {
         mesosReceived: 0,
         mesosSent: 0,
         message: "Cannot trade with this player.",
+      } satisfies TradeResultPayload);
+      return;
+    }
+
+    // Same-account check: prevent self-trading between alts.
+    if (targetAccId && senderAccId === targetAccId) {
+      client.send(MessageType.TRADE_RESULT, {
+        success: false,
+        itemsReceived: [],
+        itemsSent: [],
+        mesosReceived: 0,
+        mesosSent: 0,
+        message: "Cannot trade with your own account.",
       } satisfies TradeResultPayload);
       return;
     }
@@ -8006,6 +8934,14 @@ export class MapRoom extends AuthedRoom<TownState> {
     // This is the critical anti-dupe gate: re-check inventory state, equipped items,
     // mesos, and lock-time snapshots before transferring anything.
 
+    // 0. Proximity re-check: players must still be near each other.
+    const execDx = Math.abs(playerA.x - playerB.x);
+    const execDy = Math.abs(playerA.y - playerB.y);
+    if (execDx > TRADE_RANGE_X * 2 || execDy > TRADE_RANGE_Y * 2) {
+      this.cancelTrade(trade, "Trade failed: players moved too far apart.");
+      return;
+    }
+
     // 1. Both players must still be alive and in the room.
     if (!this.state.players.has(trade.a.sessionId) || !this.state.players.has(trade.b.sessionId)) {
       this.cancelTrade(trade, "A player left during trade.");
@@ -8158,6 +9094,28 @@ export class MapRoom extends AuthedRoom<TownState> {
       `[MapRoom] trade completed: ${playerA.name} ↔ ${playerB.name} ` +
         `(${itemsSentA.length}+${itemsSentB.length} items, ${mesosSentA}+${mesosSentB} mesos)`,
     );
+
+    // ── Analytics: trade completion ─────────────────────────────────────
+    const tradeAcctA = this.sessionAccount.get(trade.a.sessionId);
+    const tradeAcctB = this.sessionAccount.get(trade.b.sessionId);
+    if (tradeAcctA) {
+      track(AnalyticsEventType.TRADE_COMPLETE, tradeAcctA, trade.a.charId, {
+        itemCountA: itemsSentA.length,
+        itemCountB: itemsSentB.length,
+        mesosA: mesosSentA,
+        mesosB: mesosSentB,
+        level: playerA.level,
+      });
+    }
+    if (tradeAcctB) {
+      track(AnalyticsEventType.TRADE_COMPLETE, tradeAcctB, trade.b.charId, {
+        itemCountA: itemsSentA.length,
+        itemCountB: itemsSentB.length,
+        mesosA: mesosSentA,
+        mesosB: mesosSentB,
+        level: playerB.level,
+      });
+    }
   }
 
   /** Remove an item from a player's inventory (schema + durable store). */
@@ -8360,7 +9318,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         // Check for aggro.
         if (nearestMob) {
           fam.aiState = "chase";
-          fam.targetMobKey = this.findMobKey(nearestMob);
+          fam.targetMobKey = this.mobKeyByRef.get(nearestMob) ?? "";
         }
         break;
       }
@@ -8420,32 +9378,44 @@ export class MapRoom extends AuthedRoom<TownState> {
               return [];
             }
           },
+          (uid) => {
+            const item = owner.inventory.get(uid);
+            if (!item?.bonusStats) return [];
+            try {
+              const parsed = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+              return Array.isArray(parsed) ? parsed : [];
+            } catch {
+              return [];
+            }
+          },
         );
+
+        // Set bonuses from matching gear.
+        const equippedDefIds = Object.values(equippedRec)
+          .map((uid) => {
+            const item = owner.inventory.get(uid);
+            return item ? getItemDef(item.defId)?.id : undefined;
+          })
+          .filter((id): id is string => id !== undefined);
+        const setBonus = computeSetBonuses(equippedDefIds);
+
         const equipBonus: Record<string, number> = {
-          atk: 0,
+          atk: bonus.atk + setBonus.atk,
           mAtk: 0,
-          wDef: 0,
-          mDef: 0,
+          wDef: bonus.wDef + setBonus.wDef,
+          mDef: bonus.mDef + setBonus.mDef,
           critRate: 0,
-          speed: 0,
-          jump: 0,
+          speed: bonus.speed + setBonus.speed,
+          jump: bonus.jump + setBonus.jump,
           accuracy: 0,
         };
-        for (const uid of Object.values(equippedRec)) {
-          const item = owner.inventory.get(uid);
-          const def = item ? getItemDef(item.defId) : undefined;
-          if (def) {
-            equipBonus.wDef += def.wDef ?? 0;
-            equipBonus.mDef += def.mDef ?? 0;
-          }
-        }
         const stats = {
-          STR: owner.str + bonus.str,
-          DEX: owner.dex + bonus.dex,
-          INT: owner.intel + bonus.int,
-          LUK: owner.luk + bonus.luk,
-          HP: owner.hp,
-          MP: owner.mp,
+          STR: owner.str + bonus.str + setBonus.STR,
+          DEX: owner.dex + bonus.dex + setBonus.DEX,
+          INT: owner.intel + bonus.int + setBonus.INT,
+          LUK: owner.luk + bonus.luk + setBonus.LUK,
+          HP: owner.hp + bonus.hp + setBonus.HP,
+          MP: owner.mp + bonus.mp + setBonus.MP,
         };
         const passive = passiveEffectBonus(owner.archetype as ClassArchetype, owner.skillBook);
         const activeBuff = aggregateSecondary(owner.activeEffects);
@@ -8459,7 +9429,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         if (target.hp <= 0) this.killMob(target, owner);
 
         this.broadcast(MessageType.COMBAT_HIT, {
-          targetKey: this.findMobKey(target),
+          targetKey: this.mobKeyByRef.get(target) ?? "",
           attackerSession: fam.ownerSession,
           damage,
           crit: false,
