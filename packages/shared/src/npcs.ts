@@ -207,7 +207,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is STR. At level 10, you can advance to a Squire in Craghold and learn Crushing Blow, Iron Hide, and Rally.",
+        text: "Your primary stat is STR. At level 10, you can advance to a Squire in Craghold and learn Crushing Blow, Iron Hide, Rally, and Battle Cry.",
         next: 3,
       },
       {
@@ -238,7 +238,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is INT. At level 10, you can advance to an Adept in Sylvanreach and learn Arcane Bolt and Arcane Mastery.",
+        text: "Your primary stat is INT. At level 10, you can advance to an Adept in Sylvanreach and learn Arcane Bolt, Arcane Mastery, Mana Surge, and Mending Light.",
         next: 3,
       },
       {
@@ -269,7 +269,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is DEX. At level 10, you can advance to a Scout in Meadowfield and learn Twin Shot and Keen Eye.",
+        text: "Your primary stat is DEX. At level 10, you can advance to a Scout in Meadowfield and learn Twin Shot, Keen Eye, Piercing Arrow, Fleet Foot, and Barbed Arrow.",
         next: 3,
       },
       {
@@ -300,7 +300,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is LUK. At level 10, you can advance to a Cutpurse in Dusk-Ward and learn Shadow Rush and Shadow Instinct.",
+        text: "Your primary stat is LUK. At level 10, you can advance to a Cutpurse in Dusk-Ward and learn Shadow Rush, Shadow Instinct, Keen Reflexes, and Noxious Wound.",
         next: 3,
       },
       {
@@ -331,7 +331,7 @@ export const NPCS: Record<string, NpcDef> = {
       },
       {
         kind: "line",
-        text: "Your primary stat is STR. At level 10, you can advance to a Deckhand in Tidewatch Harbor and learn Gut Punch and Sea Fortitude.",
+        text: "Your primary stat is STR. At level 10, you can advance to a Deckhand in Tidewatch Harbor and learn Gut Punch, Sea Fortitude, Tidewalker Dash, Buccaneer's Bellow, and Riptide Sweep.",
         next: 3,
       },
       {
