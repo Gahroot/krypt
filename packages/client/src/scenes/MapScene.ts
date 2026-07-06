@@ -98,6 +98,13 @@ import { uiStore } from "../ui/store";
 // ─── Tunables (mirror of packages/server/src/rooms/MapRoom.ts — keep in sync) ──────────────────
 /** Server moves a player this many px per fixed tick. We reuse it for client prediction. */
 const PLAYER_SPEED = 2.4;
+/** Per-tick horizontal acceleration (px/tick²). Snappy 2-tick ramp to full speed. */
+const PLAYER_ACCEL = 1.2;
+/** Per-tick horizontal deceleration when no key is held (px/tick²). ~5-tick skid-to-stop. */
+const PLAYER_FRICTION = 0.5;
+/** Reduced traction on icy/slippery footholds (harder to start, longer skid). */
+const PLAYER_SLIPPERY_ACCEL = 0.4;
+const PLAYER_SLIPPERY_FRICTION = 0.1;
 /** Server's fixed timestep; prediction scales physics by `delta / FIXED_TIMESTEP`. */
 const FIXED_TIMESTEP = 1000 / 60;
 // ── Platformer physics (mirror of TownRoom.ts — keep in sync) ──────────────────
@@ -230,6 +237,7 @@ export class MapScene extends Phaser.Scene {
   private currentTick = 0;
 
   // ── Local prediction state (platformer physics) ────────────────────────────
+  private localVx = 0;
   private localVy = 0;
   private localGrounded = true;
   private localClimbing = false;
@@ -534,6 +542,7 @@ export class MapScene extends Phaser.Scene {
         const serverLadderId = player.getData("serverLadderId") as number | undefined;
         this.localClimbing = true;
         this.localLadderId = serverLadderId ?? -1;
+        this.localVx = 0;
         this.localVy = 0;
         this.localGrounded = false;
         this.lastJumpHeld = false;
@@ -569,14 +578,35 @@ export class MapScene extends Phaser.Scene {
         }
 
         if (!this.localClimbing) {
-          // ── Horizontal velocity (set from latest input, not accumulated) ──
+          // ── Horizontal velocity (acceleration / friction for gliding Maple feel) ──
+          const currentFh = this.localGrounded
+            ? this.nearestFootholdAt(player.x, player.y)
+            : undefined;
+          const isSlippery = currentFh?.slippery === true;
+          const a = isSlippery ? PLAYER_SLIPPERY_ACCEL : PLAYER_ACCEL;
+          const f = isSlippery ? PLAYER_SLIPPERY_FRICTION : PLAYER_FRICTION;
+
           if (left) {
-            player.x -= PLAYER_SPEED * dt;
+            const target = -PLAYER_SPEED;
+            if (this.localVx > target) {
+              this.localVx = Math.max(target, this.localVx - a * dt);
+            }
             player.setFlipX(true);
           } else if (right) {
-            player.x += PLAYER_SPEED * dt;
+            const target = PLAYER_SPEED;
+            if (this.localVx < target) {
+              this.localVx = Math.min(target, this.localVx + a * dt);
+            }
             player.setFlipX(false);
+          } else {
+            // No input: friction decelerates toward 0.
+            if (this.localVx > 0) {
+              this.localVx = Math.max(0, this.localVx - f * dt);
+            } else if (this.localVx < 0) {
+              this.localVx = Math.min(0, this.localVx + f * dt);
+            }
           }
+          player.x += this.localVx * dt;
           player.x = Phaser.Math.Clamp(player.x, 0, this.map.width);
 
           // ── Grounded re-check after horizontal movement (slope follow + walk-off-edge) ──
@@ -1174,6 +1204,7 @@ export class MapScene extends Phaser.Scene {
         }
 
         // Seed prediction state from the authoritative server snapshot.
+        this.localVx = 0;
         this.localVy = player.vy;
         this.localGrounded = player.grounded;
         this.localClimbing = player.climbing;

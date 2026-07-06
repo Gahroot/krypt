@@ -361,6 +361,13 @@ import {
 
 /** Pixels per fixed tick when walking. ~2.4 feels responsive at 60 fps. */
 const PLAYER_SPEED = 2.4;
+/** Per-tick horizontal acceleration (px/tick²). Snappy 2-tick ramp to full speed. */
+const PLAYER_ACCEL = 1.2;
+/** Per-tick horizontal deceleration when no key is held (px/tick²). ~5-tick skid-to-stop. */
+const PLAYER_FRICTION = 0.5;
+/** Reduced traction on icy/slippery footholds (harder to start, longer skid). */
+const PLAYER_SLIPPERY_ACCEL = 0.4;
+const PLAYER_SLIPPERY_FRICTION = 0.1;
 
 /** Downward acceleration applied every tick while airborne (px/tick²). */
 const GRAVITY = 0.45;
@@ -1837,17 +1844,38 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
     }
 
-    // ── Horizontal velocity (set from latest input, not accumulated) ──
+    // ── Horizontal velocity (acceleration / friction for gliding Maple feel) ──
     // Slow debuffs reduce movement speed.
     const playerSpeedMult = getSlowMultiplier(player.activeEffects);
+    const maxSpeed = PLAYER_SPEED * playerSpeedMult;
+
+    // Detect current foothold for slippery (ice) check.
+    const currentFh = player.grounded ? this.nearestFootholdAt(player.x, player.y) : undefined;
+    const isSlippery = currentFh?.slippery === true;
+    const accel = isSlippery ? PLAYER_SLIPPERY_ACCEL : PLAYER_ACCEL;
+    const friction = isSlippery ? PLAYER_SLIPPERY_FRICTION : PLAYER_FRICTION;
+
     if (latest.left) {
-      player.vx = -PLAYER_SPEED * playerSpeedMult;
+      // Accelerate toward target left speed.
+      const target = -maxSpeed;
+      if (player.vx > target) {
+        player.vx = Math.max(target, player.vx - accel);
+      }
       player.facing = -1;
     } else if (latest.right) {
-      player.vx = PLAYER_SPEED * playerSpeedMult;
+      // Accelerate toward target right speed.
+      const target = maxSpeed;
+      if (player.vx < target) {
+        player.vx = Math.min(target, player.vx + accel);
+      }
       player.facing = 1;
     } else {
-      player.vx = 0;
+      // No input: friction decelerates toward 0.
+      if (player.vx > 0) {
+        player.vx = Math.max(0, player.vx - friction);
+      } else if (player.vx < 0) {
+        player.vx = Math.min(0, player.vx + friction);
+      }
     }
 
     // ── Jump / Drop-through (edge-triggered: fire only on the rising edge) ──
