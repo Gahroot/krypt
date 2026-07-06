@@ -79,6 +79,7 @@ import {
   isConsumable,
   tabForItem,
   TAB_CAPACITY,
+  MAX_STACK,
   type InventoryTab,
   type CashCategory,
   type PotentialLine,
@@ -160,6 +161,7 @@ import {
 import { TownState } from "./schema/TownState";
 import { Player } from "./schema/Player";
 import { Mob } from "./schema/Mob";
+import { Projectile } from "./schema/Projectile";
 import { LootDrop } from "./schema/LootDrop";
 import { Familiar } from "./schema/Familiar";
 import { InventoryItem } from "./schema/InventoryItem";
@@ -169,6 +171,7 @@ import { RuneManager } from "../runeManager";
 import { TreasureBoxManager } from "../treasureBoxManager";
 import { channelRegistry } from "../channelRegistry";
 import { CHANNELS_PER_MAP } from "../app.config";
+import type { MobBehavior } from "@maple/shared";
 import {
   type InputData,
   type ChatPayload,
@@ -380,6 +383,14 @@ const MOB_AI_VERT_TOLERANCE = 150; // px — max vertical gap for aggro/LoS
 const MOB_AI_DEFAULT_ATTACK_DAMAGE = 5; // base damage for non-boss mobs
 const MOB_AI_DEFAULT_ATTACK_COOLDOWN_MS = 1200; // ms between attacks
 const PLAYER_RESPAWN_MS = 4000;
+
+// ─── Projectile / behavior-specific constants ─────────────────────────────
+const PROJECTILE_SPEED = 3; // px/tick
+const PROJECTILE_LIFETIME_MS = 2000;
+const PROJECTILE_HIT_RADIUS = 16; // px — collision sphere for projectile→player
+const CASTER_AOE_RADIUS = 80; // px — AoE radius for caster mobs
+const EXPLODER_AOE_RADIUS = 100; // px — AoE radius for exploder self-destruct
+const EXPLODER_RUSH_SPEED_MULT = 2.2;
 
 // ─── Action-combat tunables ──────────────────────────────────────────────
 /** Per-tick multiplier applied to knockback velocity (decays toward 0). */
@@ -1387,7 +1398,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       // Coming-soon gate (mirrors checkPortalProximity).
       if (portal.comingSoon) {
         client.send(MessageType.USE_PORTAL, {
-          message: `🚧 ${targetDef?.name ?? targetMapId} — Coming Soon! This zone is not yet available in the alpha.`,
+          message: `🚧 ${getMap(targetMapId)?.name ?? targetMapId} — Coming Soon! This zone is not yet available in the alpha.`,
         } satisfies FerryBlockedPayload);
         return;
       }
@@ -1609,6 +1620,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     });
 
     this.state.mobs.forEach((mob) => this.tickMob(mob, timeStep));
+
+    // Projectile tick (ranged/caster mob projectiles).
+    this.tickProjectiles(timeStep);
 
     // Familiar AI tick (follow owner, chase mobs, attack).
     if (FAMILIAR_ENABLED) {
@@ -2448,6 +2462,14 @@ export class MapRoom extends AuthedRoom<TownState> {
     mob.hp = 0;
     mob.hit = false;
 
+    // Clean up any projectiles owned by this mob.
+    for (const [key, proj] of this.state.projectiles.entries()) {
+      if (proj.ownerId === mob.instanceId) {
+        proj.dead = true;
+        this.state.projectiles.delete(key);
+      }
+    }
+
     // Boss death handling — clean up encounter and broadcast.
     const isBossKill = this.bossManager.isBoss(mob.instanceId);
     if (isBossKill) {
@@ -3048,15 +3070,20 @@ export class MapRoom extends AuthedRoom<TownState> {
         break;
     }
 
-    // Gravity — snap to foothold surface.
-    if (!mob.grounded) {
-      mob.vy = Math.min(mob.vy + MOB_MOB_GRAVITY, MOB_MAX_FALL);
-      mob.y += mob.vy;
-    }
-    const surfaceY = groundYAt(fh, mob.x);
-    if (mob.y >= surfaceY) {
-      mob.y = surfaceY;
-      mob.vy = 0;
+    // Gravity — snap to foothold surface (flyers skip this).
+    if (def.behavior !== "flyer") {
+      if (!mob.grounded) {
+        mob.vy = Math.min(mob.vy + MOB_MOB_GRAVITY, MOB_MAX_FALL);
+        mob.y += mob.vy;
+      }
+      const surfaceY = groundYAt(fh, mob.x);
+      if (mob.y >= surfaceY) {
+        mob.y = surfaceY;
+        mob.vy = 0;
+        mob.grounded = true;
+      }
+    } else {
+      // Flyers always stay "grounded" so they don't fall, but don't snap to surface.
       mob.grounded = true;
     }
 
@@ -3121,6 +3148,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     speedMult: number,
   ): void {
     const target = mob.targetSessionId ? this.state.players.get(mob.targetSessionId) : undefined;
+    const behavior: MobBehavior = def.behavior ?? "melee";
 
     // De-aggro: target gone, dead, or out of range.
     if (!target || target.dead) {
@@ -3129,10 +3157,14 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
 
     const dx = target.x - mob.x;
-    const dy = Math.abs(target.y - mob.y);
+    const dy = target.y - mob.y;
     const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
 
-    if (absDx > mob.deaggroRange || dy > MOB_AI_VERT_TOLERANCE) {
+    // Flyers use a larger vertical tolerance (they move in 2D).
+    const vertTolerance = behavior === "flyer" ? 400 : MOB_AI_VERT_TOLERANCE;
+
+    if (absDx > mob.deaggroRange || absDy > vertTolerance) {
       this.mobReturnToIdle(mob);
       return;
     }
@@ -3140,8 +3172,68 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Face the target.
     mob.facing = dx >= 0 ? 1 : -1;
 
+    // ── Behavior-specific chase logic ──
+
+    if (behavior === "flyer") {
+      // Flyers move freely in 2D toward the player (ignore foothold bounds).
+      const chaseSpeed = def.speed * MOB_AI_CHASE_SPEED_MULT * speedMult;
+      const dist = Math.hypot(dx, dy);
+      if (dist > mob.attackRange) {
+        mob.x += (dx / dist) * chaseSpeed;
+        mob.y += (dy / dist) * chaseSpeed;
+      } else {
+        mob.aiState = "attack";
+        mob.wanderDir = 0;
+      }
+      return;
+    }
+
+    if (behavior === "ranged") {
+      // Ranged mobs try to stay at attack range; if too close, back up; if too far, approach.
+      if (absDx <= mob.attackRange && absDy <= MOB_AI_VERT_TOLERANCE) {
+        mob.aiState = "attack";
+        mob.wanderDir = 0;
+        return;
+      }
+      const chaseSpeed = def.speed * MOB_AI_CHASE_SPEED_MULT * speedMult;
+      mob.wanderDir = dx >= 0 ? 1 : -1;
+      mob.x += mob.wanderDir * chaseSpeed;
+      // Don't walk off the platform edge.
+      mob.x = clamp(mob.x, minX, maxX);
+      return;
+    }
+
+    if (behavior === "exploder") {
+      // Exploders rush toward the player at high speed.
+      if (absDx <= mob.attackRange && absDy <= MOB_AI_VERT_TOLERANCE) {
+        mob.aiState = "attack";
+        mob.wanderDir = 0;
+        return;
+      }
+      const chaseSpeed = def.speed * EXPLODER_RUSH_SPEED_MULT * speedMult;
+      mob.wanderDir = dx >= 0 ? 1 : -1;
+      mob.x += mob.wanderDir * chaseSpeed;
+      mob.x = clamp(mob.x, minX, maxX);
+      return;
+    }
+
+    if (behavior === "caster") {
+      // Casters keep distance and attack when within range.
+      if (absDx <= mob.attackRange && absDy <= MOB_AI_VERT_TOLERANCE) {
+        mob.aiState = "attack";
+        mob.wanderDir = 0;
+        return;
+      }
+      const chaseSpeed = def.speed * MOB_AI_CHASE_SPEED_MULT * speedMult;
+      mob.wanderDir = dx >= 0 ? 1 : -1;
+      mob.x += mob.wanderDir * chaseSpeed;
+      mob.x = clamp(mob.x, minX, maxX);
+      return;
+    }
+
+    // Default melee chase (unchanged).
     // Within attack range? Transition to attack.
-    if (absDx <= mob.attackRange && dy <= MOB_AI_VERT_TOLERANCE) {
+    if (absDx <= mob.attackRange && absDy <= MOB_AI_VERT_TOLERANCE) {
       mob.aiState = "attack";
       mob.wanderDir = 0;
       return;
@@ -3159,8 +3251,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
   }
 
-  /** Attack: deal damage to the target when on cooldown. */
-  private tickMobAttack(mob: Mob, def: MobDef, _dt: number): void {
+  /** Attack: deal damage to the target when on cooldown. Behavior-specific. */
+  private tickMobAttack(mob: Mob, def: MobDef, dt: number): void {
+    const behavior: MobBehavior = def.behavior ?? "melee";
     // Apply elite scaling to attack damage only (wander/chase use speed which is unchanged).
     const effectiveDef = mob.isElite ? (getEffectiveMobDef(def, true) ?? def) : def;
     const target = mob.targetSessionId ? this.state.players.get(mob.targetSessionId) : undefined;
@@ -3171,22 +3264,71 @@ export class MapRoom extends AuthedRoom<TownState> {
       return;
     }
 
-    const absDx = Math.abs(target.x - mob.x);
+    const dx = target.x - mob.x;
+    const absDx = Math.abs(dx);
     const dy = Math.abs(target.y - mob.y);
+    const vertTolerance = behavior === "flyer" ? 400 : MOB_AI_VERT_TOLERANCE;
 
-    // If target moved out of attack range, chase again.
-    if (absDx > mob.attackRange * 1.5 || dy > MOB_AI_VERT_TOLERANCE) {
+    // If target moved out of chase range, chase again.
+    if (absDx > mob.attackRange * 1.8 || dy > vertTolerance) {
       mob.aiState = "chase";
       return;
     }
 
     // De-aggro if out of deaggro range.
-    if (absDx > mob.deaggroRange || dy > MOB_AI_VERT_TOLERANCE) {
+    if (absDx > mob.deaggroRange || dy > vertTolerance) {
       this.mobReturnToIdle(mob);
       return;
     }
 
-    // Attack on cooldown.
+    // ── Ranged: fire a projectile ──
+    if (behavior === "ranged") {
+      if (mob.attackCooldown <= 0) {
+        this.spawnMobProjectile(mob, effectiveDef, target, "ranged");
+        mob.attackCooldown = effectiveDef.projectileCooldownMs ?? 1500;
+      }
+      return;
+    }
+
+    // ── Caster: telegraph then AoE ──
+    if (behavior === "caster") {
+      // If currently telegraphing, count down and fire when ready.
+      if (mob.bossTelegraph !== "") {
+        mob._casterTelegraphTimer = (mob._casterTelegraphTimer ?? 0) - dt;
+        if (mob._casterTelegraphTimer <= 0) {
+          mob.bossTelegraph = "";
+          mob._casterTelegraphTimer = 0;
+          this.mobCasterAoE(mob, effectiveDef);
+          mob.attackCooldown = effectiveDef.casterCooldownMs ?? 2000;
+        }
+        return;
+      }
+      // Start telegraph on cooldown.
+      if (mob.attackCooldown <= 0) {
+        const telegraphMs = effectiveDef.casterTelegraphMs ?? 800;
+        mob.bossTelegraph = "caster_aoe";
+        mob._casterTelegraphTimer = telegraphMs;
+        mob.attackCooldown = telegraphMs + (effectiveDef.casterCooldownMs ?? 2000);
+      }
+      return;
+    }
+
+    // ── Exploder: rush + self-destruct AoE ──
+    if (behavior === "exploder") {
+      if (mob.attackCooldown <= 0) {
+        const detRange = effectiveDef.exploderDetonateRange ?? 30;
+        if (absDx <= detRange && dy <= vertTolerance) {
+          // Detonate!
+          this.mobExploderDetonate(mob, effectiveDef);
+          return;
+        }
+      }
+      // Player moved out of detonation range — chase again.
+      mob.aiState = "chase";
+      return;
+    }
+
+    // Default melee attack on cooldown.
     if (mob.attackCooldown <= 0) {
       this.mobAttackPlayer(mob, effectiveDef, target);
       mob.attackCooldown = effectiveDef.attackCooldownMs ?? MOB_AI_DEFAULT_ATTACK_COOLDOWN_MS;
@@ -3310,6 +3452,229 @@ export class MapRoom extends AuthedRoom<TownState> {
     mob.targetSessionId = "";
     mob.wanderDir = 0;
     mob.wanderTimer = Math.random() * 500;
+  }
+
+  // ─── Behavior: Projectile / Caster AoE / Exploder ────────────────────────
+
+  /** Spawn a mob-fired projectile aimed at a target player. */
+  private spawnMobProjectile(mob: Mob, def: MobDef, target: Player, kind: string): void {
+    const dx = target.x - mob.x;
+    const dy = target.y - mob.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const speed = PROJECTILE_SPEED;
+
+    const proj = new Projectile();
+    proj.id = `proj_${++this.idCounter}`;
+    proj.ownerId = mob.instanceId;
+    proj.ownerMobId = mob.mobId;
+    proj.x = mob.x;
+    proj.y = mob.y - 10; // fire from chest height
+    proj.vx = (dx / dist) * speed;
+    proj.vy = (dy / dist) * speed;
+    proj.facing = mob.facing;
+    proj.damage = def.projectileDamage ?? MOB_AI_DEFAULT_ATTACK_DAMAGE;
+    proj.kind = kind;
+    proj.dead = false;
+    proj.lifetime = PROJECTILE_LIFETIME_MS;
+
+    this.state.projectiles.set(proj.id, proj);
+  }
+
+  /** Caster AoE: deal damage to all players within range. */
+  private mobCasterAoE(mob: Mob, def: MobDef): void {
+    const dmg = def.casterDamage ?? MOB_AI_DEFAULT_ATTACK_DAMAGE;
+    this.state.players.forEach((player, sessionId) => {
+      if (player.dead) return;
+      const dist = Math.hypot(mob.x - player.x, mob.y - player.y);
+      if (dist > CASTER_AOE_RADIUS) return;
+
+      const attacker: AttackerCombatStats = {
+        atk: dmg,
+        mAtk: dmg,
+        primaryStat: def.level * 2,
+        skillDamagePercent: 100,
+        hitCount: 1,
+        accuracy: def.level * 5 + 10,
+        critRate: 0.1,
+        level: def.level,
+      };
+      const defender: DefenderCombatStats = {
+        wDef: this.playerEffectiveWDef(player),
+        mDef: this.playerEffectiveMDef(player),
+        avoid: player.dex + player.luk,
+        level: player.level,
+      };
+      const result = computeDamage(attacker, defender);
+      if (!result.hit || result.total <= 0) return;
+
+      this.damagePlayer(player, result.total);
+      this.broadcast("mob_hit_player", {
+        mobId: mob.mobId,
+        sessionId,
+        damage: result.total,
+        crit: result.crit,
+        hp: player.hp,
+        dead: player.dead,
+      });
+
+      // Apply caster debuff.
+      if (def.casterDebuffEffect) {
+        const debuffs = skillDebuffToStatusEffects(def.id, def.casterDebuffEffect, def.name);
+        for (const debuff of debuffs) {
+          player.activeEffects = applyEffect(player.activeEffects, debuff);
+          player.effectElapsed.set(debuff.id, 0);
+        }
+        this.syncPlayerEffects(player);
+      }
+    });
+  }
+
+  /** Exploder self-destruct: deal AoE damage to all nearby players, then die. */
+  private mobExploderDetonate(mob: Mob, def: MobDef): void {
+    const dmg = def.exploderDamage ?? 15;
+    this.state.players.forEach((player, sessionId) => {
+      if (player.dead) return;
+      const dist = Math.hypot(mob.x - player.x, mob.y - player.y);
+      if (dist > EXPLODER_AOE_RADIUS) return;
+
+      const attacker: AttackerCombatStats = {
+        atk: dmg,
+        mAtk: 0,
+        primaryStat: def.level * 2,
+        skillDamagePercent: 100,
+        hitCount: 1,
+        accuracy: def.level * 5 + 10,
+        critRate: 0.05,
+        level: def.level,
+      };
+      const defender: DefenderCombatStats = {
+        wDef: this.playerEffectiveWDef(player),
+        mDef: this.playerEffectiveMDef(player),
+        avoid: player.dex + player.luk,
+        level: player.level,
+      };
+      const result = computeDamage(attacker, defender);
+      if (!result.hit || result.total <= 0) return;
+
+      this.damagePlayer(player, result.total);
+      this.broadcast("mob_hit_player", {
+        mobId: mob.mobId,
+        sessionId,
+        damage: result.total,
+        crit: result.crit,
+        hp: player.hp,
+        dead: player.dead,
+      });
+    });
+
+    // Self-destruct: kill the mob.
+    mob.hp = 0;
+    mob.dead = true;
+    mob.hit = true;
+    mob.hitTimer = 120;
+    // Broadcast explosion event for client VFX.
+    this.broadcast("mob_explode", {
+      mobId: mob.mobId,
+      x: mob.x,
+      y: mob.y,
+      radius: EXPLODER_AOE_RADIUS,
+    });
+    // Credit kill to the targeted player (or just remove).
+    if (mob.targetSessionId) {
+      const killer = this.state.players.get(mob.targetSessionId);
+      if (killer && !killer.dead) {
+        this.killMob(mob, killer);
+      } else {
+        this.spawnManager.onMobDeath(mob.instanceId);
+        this.spawnManager.removeDeadMob(mob.instanceId);
+      }
+    } else {
+      this.spawnManager.onMobDeath(mob.instanceId);
+      this.spawnManager.removeDeadMob(mob.instanceId);
+    }
+  }
+
+  // ─── Projectile tick ─────────────────────────────────────────────────────
+
+  /** Move all active projectiles, check player collisions, expire stale ones. */
+  private tickProjectiles(dt: number): void {
+    const toRemove: string[] = [];
+    for (const [key, proj] of this.state.projectiles.entries()) {
+      if (proj.dead) {
+        toRemove.push(key);
+        continue;
+      }
+
+      // Move.
+      proj.x += proj.vx;
+      proj.y += proj.vy;
+
+      // Lifetime expiry.
+      proj.lifetime -= dt;
+      if (proj.lifetime <= 0) {
+        proj.dead = true;
+        toRemove.push(key);
+        continue;
+      }
+
+      // Collision check: hit the first alive player within radius.
+      let hitSomeone = false;
+      this.state.players.forEach((player, sessionId) => {
+        if (hitSomeone || player.dead) return;
+        if (proj.hitSessionIds.has(sessionId)) return;
+        const dist = Math.hypot(proj.x - player.x, proj.y - player.y);
+        if (dist > PROJECTILE_HIT_RADIUS) return;
+
+        // Apply damage through the combat engine.
+        const mobDef = getMobDef(proj.ownerMobId);
+        const attacker: AttackerCombatStats = {
+          atk: proj.damage,
+          mAtk: proj.kind === "caster" ? proj.damage : 0,
+          primaryStat: (mobDef?.level ?? 1) * 2,
+          skillDamagePercent: 100,
+          hitCount: 1,
+          accuracy: (mobDef?.level ?? 1) * 5 + 10,
+          critRate: 0.08,
+          level: mobDef?.level ?? 1,
+        };
+        const defender: DefenderCombatStats = {
+          wDef: this.playerEffectiveWDef(player),
+          mDef: this.playerEffectiveMDef(player),
+          avoid: player.dex + player.luk,
+          level: player.level,
+        };
+        const result = computeDamage(attacker, defender);
+        if (!result.hit || result.total <= 0) return;
+
+        this.damagePlayer(player, result.total);
+        this.broadcast("mob_hit_player", {
+          mobId: proj.ownerMobId,
+          sessionId,
+          damage: result.total,
+          crit: result.crit,
+          hp: player.hp,
+          dead: player.dead,
+        });
+        proj.hitSessionIds.add(sessionId);
+        hitSomeone = true;
+        proj.dead = true;
+        toRemove.push(key);
+      });
+
+      // Remove if out of map bounds.
+      if (
+        proj.x < -50 ||
+        proj.x > this.map.width + 50 ||
+        proj.y < -200 ||
+        proj.y > this.map.height + 200
+      ) {
+        proj.dead = true;
+        toRemove.push(key);
+      }
+    }
+    for (const key of toRemove) {
+      this.state.projectiles.delete(key);
+    }
   }
 
   /** Broadcast boss HP bar updates to all clients every tick. */
@@ -4345,8 +4710,16 @@ export class MapRoom extends AuthedRoom<TownState> {
     } satisfies MacroLayoutPayload);
     this.sessionAccount.set(client.sessionId, accountId);
 
-    // Send the player's role so the client can gate GM-only UI.
+    // Expose the player's role so the client can gate GM-only UI.
+    //
+    // The authoritative channel is the synced schema field `player.role` (set below):
+    // state sync is delivery-guaranteed and order-independent, whereas a one-shot
+    // message sent from onJoin can arrive BEFORE the client has registered its
+    // onMessage handlers (the join promise resolves after onJoin returns) and be
+    // silently dropped — which previously disabled the GM console for admins. We
+    // also still send the legacy `playerRole` message as a belt-and-suspenders hint.
     const role = acc?.role ?? "player";
+    player.role = role;
     client.send("playerRole" as string, { role });
 
     // Send initial quest log to the client.

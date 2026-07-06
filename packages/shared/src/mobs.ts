@@ -60,6 +60,9 @@ export interface DropTableEntry {
   readonly legendaryEligible?: boolean;
 }
 
+/** Mob AI behavior type — drives the server state-machine branch per mob. */
+export type MobBehavior = "melee" | "flyer" | "ranged" | "caster" | "exploder";
+
 export interface MobDef {
   readonly id: string;
   readonly name: string;
@@ -73,6 +76,38 @@ export interface MobDef {
   /** Movement speed in px/tick for server wander. */
   readonly speed: number;
   readonly dropTable: readonly DropTableEntry[];
+
+  // ── AI behavior (data-driven) ─────────────────────────────────────────
+  /** AI behavior type. Defaults to "melee" if omitted. */
+  readonly behavior?: MobBehavior;
+  /** Detection radius for aggro (px). Default 200. */
+  readonly aggroRange?: number;
+  /** Attack range (px). Default 50 for melee; ranged/caster mobs use larger values. */
+  readonly attackRange?: number;
+  /** Range at which mob gives up chase (px). Default 280. */
+  readonly deaggroRange?: number;
+
+  // ── Ranged behavior tuning ────────────────────────────────────────────
+  /** Damage dealt by ranged projectiles. Default 5. */
+  readonly projectileDamage?: number;
+  /** Cooldown between ranged projectile attacks (ms). Default 1500. */
+  readonly projectileCooldownMs?: number;
+
+  // ── Caster behavior tuning ────────────────────────────────────────────
+  /** Telegraph duration before AoE fires (ms). Default 800. */
+  readonly casterTelegraphMs?: number;
+  /** Damage dealt by caster AoE. Default 8. */
+  readonly casterDamage?: number;
+  /** Cooldown between caster attacks (ms). Default 2000. */
+  readonly casterCooldownMs?: number;
+  /** Debuff applied by caster on AoE hit. */
+  readonly casterDebuffEffect?: import("./classes.js").DebuffEffect;
+
+  // ── Exploder behavior tuning ──────────────────────────────────────────
+  /** Damage dealt by self-destruct AoE. Default 15. */
+  readonly exploderDamage?: number;
+  /** Range at which exploder detonates (px). Default 30. */
+  readonly exploderDetonateRange?: number;
 
   /** Physical defence — mitigates physical attack damage. */
   readonly wDef: number;
@@ -240,6 +275,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 8,
     mesosMax: 22,
     speed: 1.0,
+    behavior: "flyer",
+    aggroRange: 230,
+    attackRange: 50,
     element: "PHYSICAL",
     wDef: 4,
     mDef: 4,
@@ -258,6 +296,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 10,
     mesosMax: 28,
     speed: 0.7,
+    behavior: "ranged",
+    aggroRange: 240,
+    attackRange: 180,
+    deaggroRange: 300,
+    projectileDamage: 6,
+    projectileCooldownMs: 1600,
     element: "DARK",
     wDef: 6,
     mDef: 8,
@@ -336,6 +380,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 28,
     mesosMax: 70,
     speed: 0.9,
+    behavior: "exploder",
+    aggroRange: 280,
+    attackRange: 30,
+    deaggroRange: 340,
+    exploderDamage: 18,
+    exploderDetonateRange: 35,
     element: "PHYSICAL",
     wDef: 16,
     mDef: 14,
@@ -392,6 +442,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 15,
     mesosMax: 40,
     speed: 1.0,
+    behavior: "flyer",
+    aggroRange: 250,
+    attackRange: 50,
     element: "DARK",
     wDef: 8,
     mDef: 6,
@@ -450,6 +503,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 14,
     mesosMax: 38,
     speed: 0.6,
+    behavior: "exploder",
+    aggroRange: 260,
+    attackRange: 30,
+    deaggroRange: 320,
+    exploderDamage: 12,
+    exploderDetonateRange: 30,
     element: "PHYSICAL",
     wDef: 18,
     mDef: 10,
@@ -470,6 +529,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 18,
     mesosMax: 45,
     speed: 1.1,
+    behavior: "flyer",
+    aggroRange: 260,
+    attackRange: 50,
     element: "PHYSICAL",
     wDef: 10,
     mDef: 8,
@@ -529,6 +591,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 8,
     mesosMax: 25,
     speed: 0.8,
+    behavior: "flyer",
+    aggroRange: 220,
+    attackRange: 50,
     element: "ICE",
     wDef: 6,
     mDef: 14,
@@ -548,6 +613,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 12,
     mesosMax: 32,
     speed: 1.0,
+    behavior: "flyer",
+    aggroRange: 240,
+    attackRange: 50,
     element: "PHYSICAL",
     wDef: 8,
     mDef: 8,
@@ -606,6 +674,14 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 22,
     mesosMax: 55,
     speed: 0.9,
+    behavior: "caster",
+    aggroRange: 240,
+    attackRange: 180,
+    deaggroRange: 300,
+    casterTelegraphMs: 900,
+    casterDamage: 10,
+    casterCooldownMs: 2200,
+    casterDebuffEffect: { slowPercent: 25, slowMs: 2500 },
     element: "ICE",
     wDef: 8,
     mDef: 18,
@@ -645,6 +721,9 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 10,
     mesosMax: 28,
     speed: 1.2,
+    behavior: "flyer",
+    aggroRange: 240,
+    attackRange: 50,
     element: "DARK",
     wDef: 6,
     mDef: 8,
@@ -664,6 +743,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 14,
     mesosMax: 36,
     speed: 0.8,
+    behavior: "ranged",
+    aggroRange: 260,
+    attackRange: 200,
+    deaggroRange: 320,
+    projectileDamage: 8,
+    projectileCooldownMs: 1500,
     element: "LIGHTNING",
     wDef: 12,
     mDef: 14,
@@ -720,6 +805,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 24,
     mesosMax: 58,
     speed: 0.9,
+    behavior: "ranged",
+    aggroRange: 250,
+    attackRange: 200,
+    deaggroRange: 310,
+    projectileDamage: 10,
+    projectileCooldownMs: 1400,
     element: "POISON",
     wDef: 14,
     mDef: 18,
@@ -739,6 +830,14 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 28,
     mesosMax: 70,
     speed: 0.8,
+    behavior: "caster",
+    aggroRange: 250,
+    attackRange: 180,
+    deaggroRange: 310,
+    casterTelegraphMs: 800,
+    casterDamage: 12,
+    casterCooldownMs: 2000,
+    casterDebuffEffect: { slowPercent: 20, slowMs: 2000 },
     element: "DARK",
     wDef: 10,
     mDef: 22,
@@ -775,6 +874,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 35,
     mesosMax: 88,
     speed: 0.7,
+    behavior: "ranged",
+    aggroRange: 260,
+    attackRange: 200,
+    deaggroRange: 320,
+    projectileDamage: 12,
+    projectileCooldownMs: 1400,
     element: "DARK",
     wDef: 20,
     mDef: 20,
@@ -861,6 +966,12 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 35,
     mesosMax: 90,
     speed: 0.6,
+    behavior: "exploder",
+    aggroRange: 270,
+    attackRange: 30,
+    deaggroRange: 330,
+    exploderDamage: 15,
+    exploderDetonateRange: 35,
     element: "POISON",
     wDef: 22,
     mDef: 18,
@@ -900,6 +1011,13 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 50,
     mesosMax: 130,
     speed: 0.7,
+    behavior: "caster",
+    aggroRange: 250,
+    attackRange: 180,
+    deaggroRange: 310,
+    casterTelegraphMs: 850,
+    casterDamage: 13,
+    casterCooldownMs: 2000,
     element: "DARK",
     wDef: 32,
     mDef: 24,
@@ -920,6 +1038,14 @@ export const MOBS: Record<string, MobDef> = {
     mesosMin: 55,
     mesosMax: 140,
     speed: 0.8,
+    behavior: "caster",
+    aggroRange: 260,
+    attackRange: 190,
+    deaggroRange: 320,
+    casterTelegraphMs: 700,
+    casterDamage: 14,
+    casterCooldownMs: 1800,
+    casterDebuffEffect: { poisonTickDamage: 3, poisonTickMs: 500, poisonMs: 2500 },
     element: "POISON",
     wDef: 24,
     mDef: 30,

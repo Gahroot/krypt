@@ -230,9 +230,18 @@ export class SpawnManager {
     mob.grounded = true;
     mob.wanderTimer = Math.random() * 1500;
     mob.aiState = "idle";
-    mob.aggroRange = 200;
-    mob.attackRange = 50;
-    mob.deaggroRange = 280;
+    // Data-driven AI tuning from MobDef (replaces hardcoded uniform values).
+    mob.aggroRange = def.aggroRange ?? 200;
+    mob.attackRange =
+      def.attackRange ??
+      (def.behavior === "ranged"
+        ? 200
+        : def.behavior === "caster"
+          ? 180
+          : def.behavior === "exploder"
+            ? 30
+            : 50);
+    mob.deaggroRange = def.deaggroRange ?? 280;
 
     const id = `mob_${this.nextId()}`;
     mob.instanceId = id;

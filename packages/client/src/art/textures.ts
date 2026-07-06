@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import type { BiomeVisualSet, Element } from "@maple/shared";
 
 /**
  * Art registry for CryptoMaple.
@@ -208,6 +209,15 @@ export function queueTextureLoads(scene: Phaser.Scene): void {
       }
     }
   }
+  // Per-family mob frames (distinct silhouettes per mob family).
+  for (const [family, frameCount] of Object.entries(MOB_FAMILY_FRAMES)) {
+    for (let i = 0; i < frameCount; i++) {
+      const key = mobFrameKey(family, i);
+      if (!scene.textures.exists(key)) {
+        scene.load.image(key, assetUrl(`mobs/fam_${family}_${i}.png`));
+      }
+    }
+  }
 }
 
 // ─── Warrior animation definitions ───────────────────────────────────────────
@@ -264,7 +274,54 @@ export interface MobAnimDef {
   repeat: number;
 }
 
+// ── Per-family mob sprites ────────────────────────────────────────────────
+// Each mob family has a distinct silhouette (blob, beetle, bat, beast, golem,
+// serpent, jelly, fish, elemental, wraith, humanoid, shroom, snail, crab, …).
+// Frames live at `src/assets/mobs/fam_<family>_<i>.png`; the count per family:
+const MOB_FAMILY_FRAMES: Record<string, number> = {
+  blob: 3,
+  beetle: 3,
+  beetle_blue: 2,
+  bat: 3,
+  beast: 2,
+  elemental: 3,
+  shroom: 2,
+  golem: 1,
+  wraith: 1,
+  serpent: 1,
+  jelly: 1,
+  fish: 1,
+  humanoid: 1,
+  eyeball: 1,
+  crab: 1,
+  wisp: 1,
+  snail: 1,
+  knight: 1,
+  plant: 1,
+} as const;
+
+/** Texture key for a family frame. */
+function mobFrameKey(family: string, i: number): string {
+  return `fam_${family}_${i}`;
+}
+
+/** Animation key for a family idle loop. */
+function mobFamilyAnimKey(family: string): string {
+  return `mob_${family}_idle`;
+}
+
+/** Idle-loop anim def for every family (single-frame families become a 1-frame anim). */
+const FAMILY_ANIM_DEFS: readonly MobAnimDef[] = Object.entries(MOB_FAMILY_FRAMES).map(
+  ([family, count]) => ({
+    key: mobFamilyAnimKey(family),
+    frames: Array.from({ length: count }, (_, i) => mobFrameKey(family, i)),
+    frameRate: count > 2 ? 4 : 3,
+    repeat: -1,
+  }),
+);
+
 export const MobAnimDefs: readonly MobAnimDef[] = [
+  // Legacy slime/hopper (kept as ultimate fallbacks).
   {
     key: "mob_slime_idle",
     frames: [
@@ -287,18 +344,256 @@ export const MobAnimDefs: readonly MobAnimDef[] = [
     frameRate: 5,
     repeat: -1,
   },
+  ...FAMILY_ANIM_DEFS,
 ];
 
-/** Map from server mobId → mob animation key. Falls back to `mob_slime_idle` for unknowns. */
+/**
+ * Explicit mobId → family overrides where keyword inference would pick wrong,
+ * or to add variety (e.g. neon insects → the blue beetle variant).
+ */
+const MOB_FAMILY_OVERRIDE: Record<string, string> = {
+  "mob.neon_spider": "beetle_blue",
+  "mob.fang_beetle": "beetle_blue",
+  "mob.tempest_lord": "elemental",
+  "mob.pyroclasm": "elemental",
+  "mob.kraken": "serpent",
+  "mob.thornback_hopper": "beetle",
+};
+
+/** Resolve a server mobId to its sprite family via overrides → keyword → blob. */
+export function mobFamily(mobId: string): string {
+  const override = MOB_FAMILY_OVERRIDE[mobId];
+  if (override) return override;
+  const id = mobId.replace(/^mob\./, "");
+  const has = (...ks: string[]) => ks.some((k) => id.includes(k));
+  if (has("snail")) return "snail";
+  if (has("crab")) return "crab";
+  if (has("jelly")) return "jelly";
+  if (has("eye")) return "eyeball";
+  if (has("fish", "shark", "angler", "puffer", "urchin")) return "fish";
+  if (has("bat", "moth", "gull", "hawk", "crow")) return "bat";
+  if (has("serpent", "wyrm", "drake", "viper", "dragon")) return "serpent";
+  if (has("sentinel")) return "knight";
+  if (has("wraith", "banshee", "ghost", "specter", "revenant", "horror")) return "wraith";
+  if (has("golem", "guardian", "boulder", "turtle", "shard", "crystal")) return "golem";
+  if (has("wisp", "sprite", "elemental", "drone", "spark")) return "elemental";
+  if (has("beetle", "spider", "bug")) return "beetle";
+  if (has("shroom", "mushroom", "root", "vine", "bark", "lasher", "plant")) return "shroom";
+  if (has("thug", "stalker", "overseer", "skeleton", "knight")) return "humanoid";
+  if (has("rat", "wolf", "lizard", "bunny", "crawler")) return "beast";
+  return "blob";
+}
+
+/** True when a mob resolves to a distinct, pre-coloured family sprite. */
+function hasFamilySprite(mobId: string): boolean {
+  return MOB_FAMILY_FRAMES[mobFamily(mobId)] !== undefined;
+}
+
+/** Map from server mobId → mob animation key. */
 export function mobAnimKey(mobId: string): string {
-  if (mobId === "mob.thornback_hopper") return "mob_hopper_idle";
-  return "mob_slime_idle";
+  return mobFamilyAnimKey(mobFamily(mobId));
 }
 
 /** Map from server mobId → first-frame texture key for the sprite constructor. */
-export function mobTextureKey(mobId: string): TextureKey {
-  if (mobId === "mob.thornback_hopper") return TextureKeys.MobHopper0;
-  return TextureKeys.MobSlime0;
+export function mobTextureKey(mobId: string): string {
+  return mobFrameKey(mobFamily(mobId), 0);
+}
+
+// ─── Per-mob tint + scale (zone-based visual differentiation) ─────────────────
+
+/**
+ * Per-zone base tints so mobs in different regions are visually distinct.
+ * Mobs within a zone share a color family; elemental variants shift the hue.
+ * Boss mobs get unique dramatic tints via MOB_BOSS_TINTS.
+ */
+const ZONE_TINT: Record<BiomeVisualSet, number> = {
+  pastoral: 0xb8e080, // soft green (Dawn Isle / Harbor / Meadowfield)
+  forest: 0x408840, // deep forest green (Sylvanreach)
+  rocky: 0xc4a070, // stone brown (Craghold)
+  urban: 0x9070b0, // neon purple (Dusk Ward)
+  swamp: 0x708050, // murky green (Mirefen)
+  sky: 0x80b8e0, // sky blue (Skyhaven)
+  snow: 0xb0d0e8, // ice blue (Frosthold)
+  underground: 0x605080, // deep purple (subway / icecave)
+  underwater: 0x5080a0, // ocean teal (Tideways)
+  jungle: 0xc06030, // fire orange (Drakemoor)
+  market: 0xb89a5a, // golden sand (Free Market)
+};
+
+/** Elemental hue-shifts applied on top of the zone base tint. */
+const ELEMENT_TINT: Partial<Record<Element, number>> = {
+  FIRE: 0xff6040,
+  ICE: 0x80c8f0,
+  LIGHTNING: 0xf0d040,
+  POISON: 0x80cc44,
+  HOLY: 0xfff0c0,
+  DARK: 0x8060a0,
+};
+
+/** Explicit per-mob tint overrides for key mobs that need special treatment. */
+const MOB_TINT_OVERRIDES: Partial<Record<string, number>> = {
+  // Dawn Isle — keep snails/puffs naturally green
+  "mob.friendly_snail": 0xa8d878,
+  "mob.green_puff": 0x88cc44,
+  "mob.dawn_shroom": 0xd4a040,
+  // Harbor — sandy/brown tones
+  "mob.dock_rat": 0xb89070,
+  "mob.barnacle_crab": 0xc8a080,
+  "mob.harbor_gull": 0xd0c8b8,
+  "mob.deckhand_specter": 0x8878a0,
+  "mob.bilge_rat": 0xa08060,
+  // Meadowfield — meadow greens + autumn tones
+  "mob.meadow_slime": 0x90cc60,
+  "mob.green_mushroom": 0x60a840,
+  "mob.meadow_beetle": 0xb09840,
+  "mob.crow": 0x505060,
+  "mob.feral_bunny": 0xc8a888,
+  "mob.mushroom": 0xc88840,
+  // Craghold — stone/earth
+  "mob.rock_lizard": 0xb89060,
+  "mob.fossil_beetle": 0xa89878,
+  "mob.cliff_hawk": 0xc8b898,
+  "mob.quarry_crab": 0xb09060,
+  "mob.boulder_golem": 0x907858,
+  // Sylvanreach — forest greens
+  "mob.forest_wisp": 0x70c890,
+  "mob.canopy_moth": 0x80a060,
+  "mob.bark_spider": 0x607040,
+  "mob.root_crawler": 0x705830,
+  "mob.sylvan_sprite": 0x88d0a0,
+  // Dusk Ward — neon/cyber
+  "mob.neon_rat": 0xb060c0,
+  "mob.tunnel_bat": 0x7060a0,
+  "mob.spark_drone": 0xe0c040,
+  "mob.rail_sentinel": 0x808090,
+  "mob.shadow_thug": 0x604880,
+  "mob.neon_spider": 0xc040a0,
+  "mob.arc_wraith": 0x9070d0,
+  // Subway PQ — deep underground
+  "mob.subway_horror": 0x704878,
+  "mob.subway_stalker": 0x605070,
+  "mob.subway_overseer": 0x8060a0,
+  // Mirefen — swamp murk
+  "mob.bog_lurker": 0x607840,
+  "mob.mire_toad": 0x708050,
+  "mob.ruins_sentinel": 0x887860,
+  "mob.moss_wraith": 0x508030,
+  "mob.ruins_horror": 0x605848,
+  "mob.deep_swamp_thing": 0x506830,
+  // Skyhaven — sky/air
+  "mob.wind_sprite": 0xa0d0f0,
+  "mob.sky_serpent": 0x70b0d8,
+  "mob.thunder_hawk": 0xc8b870,
+  // Frosthold Slopes — ice/snow
+  "mob.frost_wolf": 0xa0c8e0,
+  "mob.ice_elemental": 0x88b8d8,
+  "mob.snow_wraith": 0xc0d8f0,
+  // Frosthold Icecave — deep ice
+  "mob.frost_crawler": 0x7098b8,
+  "mob.crystal_guardian": 0x90b0d0,
+  "mob.glacial_shard": 0xb0d0e8,
+  "mob.permafrost_revenant": 0x8098b0,
+  "mob.frost_banshee": 0xa0c0e0,
+  // Tideways — underwater
+  "mob.reef_jellyfish": 0x60a0c0,
+  "mob.sea_urchin": 0x507888,
+  "mob.pufferfish": 0x80b8a0,
+  "mob.anglerfish": 0x406878,
+  "mob.tiger_shark": 0x608898,
+  "mob.sea_serpent": 0x4878a0,
+  // Drakemoor — fire/jungle
+  "mob.jungle_viper": 0x80a030,
+  "mob.fang_beetle": 0xa08830,
+  "mob.dragon_skeleton": 0xd04020,
+  "mob.vine_wraith": 0x608830,
+  "mob.crimson_drake": 0xe03020,
+  "mob.ember_turtle": 0xc05020,
+  "mob.shadow_wyrm": 0x604080,
+  "mob.firedrake_broodling": 0xd04820,
+};
+
+/** Boss-specific tints — dramatic and unmistakable. */
+const MOB_BOSS_TINTS: Partial<Record<string, number>> = {
+  "mob.subway_curse_eye": 0xa040c0,
+  "mob.bogmaw": 0x608030,
+  "mob.tempest_lord": 0xe0d060,
+  "mob.glacius_prime": 0xd0e8ff,
+  "mob.glacial_abomination": 0x90b8d8,
+  "mob.kraken": 0x4070a0,
+  "mob.pyroclasm": 0xe03010,
+};
+
+/** Per-mob scale overrides. Bosses are larger; wisps/drones are smaller. */
+const MOB_SCALE_OVERRIDES: Partial<Record<string, number>> = {
+  // Bosses — dramatic scale
+  "mob.subway_curse_eye": 1.6,
+  "mob.bogmaw": 1.6,
+  "mob.tempest_lord": 1.8,
+  "mob.glacius_prime": 1.8,
+  "mob.glacial_abomination": 1.8,
+  "mob.kraken": 1.8,
+  "mob.pyroclasm": 2.0,
+  // Large mobs
+  "mob.boulder_golem": 1.3,
+  "mob.quarry_crab": 1.2,
+  "mob.ruins_sentinel": 1.2,
+  "mob.subway_overseer": 1.2,
+  "mob.deep_swamp_thing": 1.3,
+  "mob.glacial_shard": 1.2,
+  "mob.crystal_guardian": 1.3,
+  "mob.permafrost_revenant": 1.2,
+  "mob.tiger_shark": 1.3,
+  "mob.sea_serpent": 1.4,
+  "mob.fang_beetle": 1.2,
+  "mob.crimson_drake": 1.4,
+  "mob.ember_turtle": 1.3,
+  "mob.shadow_wyrm": 1.4,
+  // Small mobs
+  "mob.forest_wisp": 0.85,
+  "mob.sylvan_sprite": 0.85,
+  "mob.wind_sprite": 0.85,
+  "mob.spark_drone": 0.85,
+  "mob.friendly_snail": 0.8,
+  "mob.green_puff": 0.85,
+};
+
+/** No-op tint (Phaser multiply identity) — lets a sprite's own colours show through. */
+const NO_TINT = 0xffffff;
+
+/** Resolve the tint colour for a mob based on its zone + element + overrides. */
+export function mobTint(mobId: string, biome?: BiomeVisualSet, element?: Element): number {
+  // Boss override takes priority — dramatic recolour is intentional for bosses.
+  if (MOB_BOSS_TINTS[mobId] !== undefined) return MOB_BOSS_TINTS[mobId]!;
+  // Distinct family sprites are already coloured; don't multiply-tint them into mud.
+  if (hasFamilySprite(mobId)) return NO_TINT;
+  // Explicit mob override takes priority over zone/element.
+  if (MOB_TINT_OVERRIDES[mobId] !== undefined) return MOB_TINT_OVERRIDES[mobId]!;
+  // Zone base tint + element shift.
+  const base = ZONE_TINT[biome ?? "pastoral"];
+  if (element && ELEMENT_TINT[element] !== undefined) {
+    // Blend 60% zone base + 40% element tint for recognisable zone colour.
+    return blendTints(base, ELEMENT_TINT[element]!, 0.6, 0.4);
+  }
+  return base;
+}
+
+/** Resolve the display scale for a mob (1.0 = default). */
+export function mobScale(mobId: string): number {
+  return MOB_SCALE_OVERRIDES[mobId] ?? 1.0;
+}
+
+/** Simple additive colour blend (no alpha — Phaser tint is opaque). */
+function blendTints(a: number, b: number, aWeight: number, bWeight: number): number {
+  const ar = (a >> 16) & 0xff;
+  const ag = (a >> 8) & 0xff;
+  const ab = a & 0xff;
+  const br = (b >> 16) & 0xff;
+  const bg = (b >> 8) & 0xff;
+  const bb = b & 0xff;
+  const r = Math.round(ar * aWeight + br * bWeight);
+  const g = Math.round(ag * aWeight + bg * bWeight);
+  const blue = Math.round(ab * aWeight + bb * bWeight);
+  return (r << 16) | (g << 8) | blue;
 }
 
 // ─── Per-appearance player animations ──────────────────────────────────────────
@@ -366,4 +661,215 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
   g.fillEllipse(w / 2, h / 2, w - 2, h - 1);
   g.generateTexture(key, w, h);
   g.destroy();
+}
+
+// ─── Biome visual palettes ──────────────────────────────────────────────────
+
+/** Per-biome color palette for parallax backgrounds and terrain rendering. */
+export interface BiomePalette {
+  skyTop: number;
+  skyBottom: number;
+  hillColor: number;
+  treeColor: number;
+  surfaceColor: number;
+  bodyColor: number;
+  bandColor: number;
+  speckleColor: number;
+  bladeColor: number;
+  outlineColor: number;
+  /** Whether to stamp the CC0 grass/dirt tile overlay on terrain. */
+  useTileOverlay: boolean;
+}
+
+const BIOME_PALETTES: Record<BiomeVisualSet, BiomePalette> = {
+  pastoral: {
+    skyTop: 0x4a90d9,
+    skyBottom: 0x87ceeb,
+    hillColor: 0x3a6b3a,
+    treeColor: 0x2d5a2d,
+    surfaceColor: 0x72b540,
+    bodyColor: 0x9b7642,
+    bandColor: 0x7a5c30,
+    speckleColor: 0x6b5230,
+    bladeColor: 0x5ea035,
+    outlineColor: 0x5a3d1e,
+    useTileOverlay: true,
+  },
+  forest: {
+    skyTop: 0x2a5a2a,
+    skyBottom: 0x3d7a3d,
+    hillColor: 0x1a3a1a,
+    treeColor: 0x0f2a0f,
+    surfaceColor: 0x4a8a2a,
+    bodyColor: 0x6b4a2a,
+    bandColor: 0x5a3a20,
+    speckleColor: 0x4a3018,
+    bladeColor: 0x3a7020,
+    outlineColor: 0x2a1a0a,
+    useTileOverlay: true,
+  },
+  rocky: {
+    skyTop: 0xc4a06a,
+    skyBottom: 0xd4b88a,
+    hillColor: 0x8a6a4a,
+    treeColor: 0x6a5040,
+    surfaceColor: 0xb89a6a,
+    bodyColor: 0x8a7050,
+    bandColor: 0x7a6040,
+    speckleColor: 0x6a5030,
+    bladeColor: 0xa88a5a,
+    outlineColor: 0x5a4028,
+    useTileOverlay: false,
+  },
+  urban: {
+    skyTop: 0x1a1a2e,
+    skyBottom: 0x2a2a3e,
+    hillColor: 0x15152a,
+    treeColor: 0x101020,
+    surfaceColor: 0x3a3a4a,
+    bodyColor: 0x2a2a3a,
+    bandColor: 0x1a1a2a,
+    speckleColor: 0x4a4a5a,
+    bladeColor: 0x00ccff,
+    outlineColor: 0x0a0a1a,
+    useTileOverlay: false,
+  },
+  swamp: {
+    skyTop: 0x3a4a2a,
+    skyBottom: 0x5a6a4a,
+    hillColor: 0x2a3a1a,
+    treeColor: 0x1a2a0f,
+    surfaceColor: 0x5a6a3a,
+    bodyColor: 0x4a3a2a,
+    bandColor: 0x3a2a1a,
+    speckleColor: 0x3a2a10,
+    bladeColor: 0x4a5a2a,
+    outlineColor: 0x2a1a0a,
+    useTileOverlay: false,
+  },
+  market: {
+    skyTop: 0x6a4a2a,
+    skyBottom: 0x8a6a4a,
+    hillColor: 0x4a3a2a,
+    treeColor: 0x3a2a1a,
+    surfaceColor: 0xb89a5a,
+    bodyColor: 0x8a7040,
+    bandColor: 0x7a6030,
+    speckleColor: 0x6a5028,
+    bladeColor: 0xa88a4a,
+    outlineColor: 0x4a3018,
+    useTileOverlay: false,
+  },
+  sky: {
+    skyTop: 0x2080d0,
+    skyBottom: 0x80c0f0,
+    hillColor: 0xb0d0e8,
+    treeColor: 0xe0e8f0,
+    surfaceColor: 0xd0dce8,
+    bodyColor: 0xa0b0c8,
+    bandColor: 0x8090a8,
+    speckleColor: 0x708090,
+    bladeColor: 0xc0d0e0,
+    outlineColor: 0x607080,
+    useTileOverlay: false,
+  },
+  snow: {
+    skyTop: 0x4070a0,
+    skyBottom: 0x80a8c8,
+    hillColor: 0xd8e4f0,
+    treeColor: 0xb0c8e0,
+    surfaceColor: 0xe8f0f8,
+    bodyColor: 0xb8c8d8,
+    bandColor: 0x98a8b8,
+    speckleColor: 0x8898a8,
+    bladeColor: 0xd0e0f0,
+    outlineColor: 0x7888a0,
+    useTileOverlay: false,
+  },
+  underground: {
+    skyTop: 0x0a0a14,
+    skyBottom: 0x1a1a28,
+    hillColor: 0x141420,
+    treeColor: 0x0e0e1a,
+    surfaceColor: 0x383848,
+    bodyColor: 0x282838,
+    bandColor: 0x181828,
+    speckleColor: 0x101020,
+    bladeColor: 0x2a2a3a,
+    outlineColor: 0x08080f,
+    useTileOverlay: false,
+  },
+  underwater: {
+    skyTop: 0x0a2040,
+    skyBottom: 0x1a4060,
+    hillColor: 0x0a3050,
+    treeColor: 0x082840,
+    surfaceColor: 0x2a6080,
+    bodyColor: 0x1a4060,
+    bandColor: 0x0a3050,
+    speckleColor: 0x082840,
+    bladeColor: 0x2a5a70,
+    outlineColor: 0x061828,
+    useTileOverlay: false,
+  },
+  jungle: {
+    skyTop: 0x1a4a1a,
+    skyBottom: 0x2a6a2a,
+    hillColor: 0x153515,
+    treeColor: 0x0a2a0a,
+    surfaceColor: 0x3a7a2a,
+    bodyColor: 0x2a3a1a,
+    bandColor: 0x1a2a10,
+    speckleColor: 0x1a2010,
+    bladeColor: 0x2a6a1a,
+    outlineColor: 0x0a1a08,
+    useTileOverlay: false,
+  },
+};
+
+/** Resolve a biome visual set to its color palette. Defaults to pastoral. */
+export function resolveBiomePalette(bgSet?: BiomeVisualSet): BiomePalette {
+  return BIOME_PALETTES[bgSet ?? "pastoral"];
+}
+
+/** Centralized map-ID → biome-visual-set lookup. Covers all shipped maps. */
+const BIOME_MAP: Record<string, BiomeVisualSet> = {
+  dawn_isle: "pastoral",
+  heartland_harbor: "pastoral",
+  harbor_docks: "pastoral",
+  crossway: "pastoral",
+  meadowfield: "pastoral",
+  sylvanreach: "forest",
+  sylvanreach_canopy: "forest",
+  sylvanreach_roots: "forest",
+  craghold: "rocky",
+  craghold_cliffs: "rocky",
+  craghold_quarry: "rocky",
+  dusk_ward: "urban",
+  dusk_ward_subway: "underground",
+  dusk_ward_backalley: "urban",
+  mirefen: "swamp",
+  mirefen_ruins: "swamp",
+  free_market: "market",
+  skyhaven: "sky",
+  skyhaven_driftpeaks: "sky",
+  frosthold: "snow",
+  frosthold_slopes: "snow",
+  frosthold_icecave: "underground",
+  dusk_subway_pq_staging: "underground",
+  dusk_subway_pq_stage1: "underground",
+  dusk_subway_pq_stage2: "underground",
+  dusk_subway_pq_stage3: "underground",
+  dusk_subway_pq_stage4: "underground",
+  tideways: "underwater",
+  tideways_reef: "underwater",
+  tideways_abyss: "underwater",
+  drakemoor: "jungle",
+  drakemoor_jungle_floor: "jungle",
+  drakemoor_dragon_abyss: "jungle",
+};
+
+/** Resolve the biome visual set for a map, checking the explicit bgSet first. */
+export function resolveBiomeSet(mapId: string, bgSet?: BiomeVisualSet): BiomeVisualSet {
+  return bgSet ?? BIOME_MAP[mapId] ?? "pastoral";
 }

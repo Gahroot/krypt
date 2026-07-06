@@ -3,6 +3,7 @@ import { Player } from "./Player";
 import { Mob } from "./Mob";
 import { LootDrop } from "./LootDrop";
 import { Familiar } from "./Familiar";
+import { Projectile } from "./Projectile";
 
 /**
  * TownState — the full synced state of a Meadowfield room: map bounds + everyone/everything in it.
@@ -15,4 +16,5 @@ export class TownState extends Schema {
   @type({ map: Mob }) mobs = new MapSchema<Mob>();
   @type({ map: LootDrop }) loot = new MapSchema<LootDrop>();
   @type({ map: Familiar }) familiars = new MapSchema<Familiar>();
+  @type({ map: Projectile }) projectiles = new MapSchema<Projectile>();
 }

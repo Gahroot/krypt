@@ -18,6 +18,7 @@ export class Mob extends Schema {
   @type("boolean") grounded = false;
   @type("number") knockbackVx = 0; // synced: horizontal knockback velocity
   @type("string") bossTelegraph = ""; // synced: current AoE telegraph pattern name (empty = none)
+  @type("boolean") stunned = false; // synced: true when a stun debuff is active
 
   // ─── Server-only (NOT synced) ───────────────────────────────────────
   /** Room-level instance id (e.g. "mob_42"), set by SpawnManager. */
@@ -50,4 +51,8 @@ export class Mob extends Schema {
   activeEffects: StatusEffect[] = [];
   /** Elapsed time per effect id — mutable, owned by tickEffects. */
   effectElapsed = new Map<string, number>();
+
+  // ─── Caster behavior (server-only) ──────────────────────────────────────
+  /** Countdown timer (ms) for caster telegraph phase. Active when bossTelegraph is non-empty. */
+  _casterTelegraphTimer = 0;
 }

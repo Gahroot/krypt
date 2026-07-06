@@ -28,6 +28,8 @@ export interface PlayerView {
   tick: number;
   name: string;
   archetype: string;
+  /** Moderation role: "player" | "gm" | "admin" (gates GM-only UI). */
+  role: string;
   level: number;
   hp: number;
   maxHp: number;
@@ -65,6 +67,8 @@ export interface PlayerView {
   ownedTitles: string[];
   // Identity
   charId: string;
+  /** Branch specialization id (e.g. "berserker"), set on 2nd-job advancement. */
+  branchId: string;
   // Fame (synced from server — field is displayFame to avoid clash with FameState)
   displayFame: number;
 }
@@ -81,6 +85,22 @@ export interface MobView {
   vy: number;
   grounded: boolean;
   isElite: boolean;
+  bossTelegraph: string;
+  stunned: boolean;
+}
+
+export interface ProjectileView {
+  id: string;
+  ownerId: string;
+  ownerMobId: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: number;
+  damage: number;
+  kind: string;
+  dead: boolean;
 }
 
 export interface LootView {
@@ -112,6 +132,7 @@ export interface TownStateView {
   mobs: MapSchema<MobView>;
   loot: MapSchema<LootView>;
   familiars: MapSchema<FamiliarView>;
+  projectiles: MapSchema<ProjectileView>;
 }
 
 // ─── Party (group play, session-scoped) ───────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   type InputData,
   type ChatMessage,
   type FerryBlockedPayload,
+  type TransportStatusPayload,
   type CombatHitPayload,
   type ChannelListPayload,
   type ChannelSwitchResultPayload,
@@ -29,10 +30,13 @@ import {
   type TreasureSpawnPayload,
   type TreasureHitPayload,
   type TreasureDestroyPayload,
+  type TreasureDespawnPayload,
   type ServerAnnouncementPayload,
   getMobDef,
+  QUESTS,
   PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CODE,
+  getItemDef,
 } from "@maple/shared";
 
 import {
@@ -41,6 +45,7 @@ import {
   authenticateForPlay,
   BannedError,
   getCharId,
+  getSeenCoachMarks,
   getCurrentChannel,
   setCurrentChannel,
   getPlayerName,
@@ -56,12 +61,18 @@ import {
   MobAnimDefs,
   mobAnimKey,
   mobTextureKey,
+  mobTint,
+  mobScale,
   ensureAppearanceTextures,
   appearancePrefix,
+  resolveBiomeSet,
+  resolveBiomePalette,
 } from "../art/textures";
-import type { AppearanceParams } from "../art/textures";
-import type { TownStateView, PlayerView, MobView, LootView } from "../state-views";
+import type { AppearanceParams, BiomePalette } from "../art/textures";
+import type { TownStateView, PlayerView, MobView, LootView, ProjectileView } from "../state-views";
 import { getAudioManager } from "../audio/AudioManager";
+import { loadScene } from "./lazyScene";
+import { uiStore } from "../ui/store";
 
 /**
  * MapScene — the core gameplay scene wired to the authoritative Colyseus map room.
@@ -103,6 +114,8 @@ const SWIM_GRAVITY = 0.12;
 const SWIM_VELOCITY = -3.5;
 const SWIM_MAX_FALL = 5;
 const SWIM_VERTICAL_SPEED = 2.0;
+/** How long (ms) the player ignores a foothold after pressing Down+Jump to drop through it. */
+const DROP_THROUGH_MS = 250;
 /** When the server position diverges this far from prediction, hard-snap instead of lerping. */
 const RECONCILE_SNAP_THRESHOLD = 8;
 /** Lerp factor for soft reconciliation toward the server's authoritative position. */
@@ -222,6 +235,10 @@ export class MapScene extends Phaser.Scene {
   private localClimbing = false;
   private localLadderId = -1;
   private lastJumpHeld = false;
+  /** Foothold id the player is currently dropping through (-1 = none). */
+  private localDropThroughFootholdId = -1;
+  /** Remaining ms of drop-through grace (prevents re-landing on the same platform). */
+  private localDropThroughTimer = 0;
 
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd?: WasdKeys;
@@ -232,8 +249,12 @@ export class MapScene extends Phaser.Scene {
   private readonly mobHpBars = new Map<string, Phaser.GameObjects.Container>();
   private readonly mobNameplates = new Map<string, Phaser.GameObjects.Container>();
   private readonly lootSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private readonly lootLabels = new Map<string, Phaser.GameObjects.Text>();
   private readonly runeSprites = new Map<string, Phaser.GameObjects.Container>();
   private readonly boxSprites = new Map<string, Phaser.GameObjects.Container>();
+  private readonly projectileGfx = new Map<string, Phaser.GameObjects.Graphics>();
+  private readonly telegraphGfx = new Map<string, Phaser.GameObjects.Graphics>();
+  private readonly explosionGfx: Phaser.GameObjects.Graphics[] = [];
 
   /** Dynamic key refs keyed by action ID — rebuilt on rebind. */
   private readonly actionKeys = new Map<ActionId, Phaser.Input.Keyboard.Key>();
@@ -250,7 +271,10 @@ export class MapScene extends Phaser.Scene {
   private readonly npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private readonly npcLabels = new Map<string, Phaser.GameObjects.Text>();
   private readonly npcPrompts = new Map<string, Phaser.GameObjects.Text>();
+  private readonly npcIndicators = new Map<string, Phaser.GameObjects.Text>();
   private readonly npcsForMap: NpcDef[] = [];
+  /** Latest quest log snapshot from the server, used for NPC indicator computation. */
+  private questLogData: { questId: string; status: string }[] = [];
   // ── Map data (set from create() data parameter) ─────────────────────────────
   private mapId = "dawn_isle";
   private map!: GameMap;
@@ -386,7 +410,9 @@ export class MapScene extends Phaser.Scene {
     this.scene.launch("ui");
     // Onboarding coach-marks overlay (runs in parallel, polls registry flags).
     if (!this.scene.isActive("coachmarks")) {
-      this.scene.launch("coachmarks");
+      loadScene(this.game, "coachmarks", () => import("./CoachMarks")).then(() => {
+        if (!this.scene.isActive("coachmarks")) this.scene.launch("coachmarks");
+      });
     }
 
     // Show "Welcome to <MapName>" banner if supplied (travel or returning character).
@@ -486,11 +512,8 @@ export class MapScene extends Phaser.Scene {
     }
     this.lastInteractHeld = interact;
 
-    // ── Onboarding: fire coach-mark flags on first input ──
-    if (!this.coachMoveFired && (left || right)) {
-      this.coachMoveFired = true;
-      this.registry.set("coachmark:move", true);
-    }
+    // ── Onboarding: move coach mark is now fired on spawn (see bindState local player).
+    // Keep the flag check so the old input-based trigger no-ops if spawn already fired. ──
     if (!this.coachAttackFired && attack) {
       this.coachAttackFired = true;
       this.registry.set("coachmark:attack", true);
@@ -558,11 +581,12 @@ export class MapScene extends Phaser.Scene {
 
           // ── Grounded re-check after horizontal movement (slope follow + walk-off-edge) ──
           if (this.localGrounded) {
-            const fh = this.nearestFootholdAt(player.x, player.y);
+            const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
+            const fh = this.nearestFootholdAt(player.x, player.y, skipId);
             if (fh) {
-              player.y = groundYAt(fh, player.x);
+              player.y = groundYAt(fh, player.x); // snap to surface (handles slopes)
             } else {
-              this.localGrounded = false;
+              this.localGrounded = false; // no platform nearby
             }
           }
 
@@ -580,9 +604,21 @@ export class MapScene extends Phaser.Scene {
               this.localVy += SWIM_VERTICAL_SPEED * 0.3 * dt;
             }
           } else {
+            // Normal land physics — Jump / Drop-through (edge-triggered, mirrors server)
             if (jump && !this.lastJumpHeld && this.localGrounded) {
-              this.localVy = JUMP_VELOCITY;
-              this.localGrounded = false;
+              if (down) {
+                // MapleStory drop-through: fall through a one-way (non-solid) platform.
+                const currentFh = this.nearestFootholdAt(player.x, player.y);
+                if (currentFh && !currentFh.solid) {
+                  this.localDropThroughFootholdId = currentFh.id;
+                  this.localDropThroughTimer = DROP_THROUGH_MS;
+                  this.localGrounded = false;
+                }
+                // Solid foothold → do nothing (can't drop through the ground).
+              } else {
+                this.localVy = JUMP_VELOCITY;
+                this.localGrounded = false;
+              }
             }
           }
           this.lastJumpHeld = jump;
@@ -599,7 +635,8 @@ export class MapScene extends Phaser.Scene {
 
             // Still check foothold landing (for seabed collision)
             if (this.localVy >= 0) {
-              const fh = this.landingFoothold(player.x, prevY, player.y);
+              const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
+              const fh = this.landingFoothold(player.x, prevY, player.y, skipId);
               if (fh) {
                 player.y = groundYAt(fh, player.x);
                 this.localVy = 0;
@@ -617,15 +654,21 @@ export class MapScene extends Phaser.Scene {
 
               // Landing: check if we crossed a foothold surface while falling.
               if (this.localVy >= 0) {
-                const fh = this.landingFoothold(player.x, prevY, player.y);
+                const skipId =
+                  this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
+                const fh = this.landingFoothold(player.x, prevY, player.y, skipId);
                 if (fh) {
                   player.y = groundYAt(fh, player.x);
                   this.localVy = 0;
                   this.localGrounded = true;
+                  this.localDropThroughFootholdId = -1; // clear once landed
                 }
               }
             }
           }
+
+          // Decrement drop-through timer (mirrors server tickPlayerTimers).
+          if (this.localDropThroughTimer > 0) this.localDropThroughTimer -= delta;
 
           // ── Clamp Y to map bounds (floor safety net) ──
           if (player.y > this.map.height) {
@@ -802,6 +845,23 @@ export class MapScene extends Phaser.Scene {
     room.onMessage(MessageType.SERVER_ANNOUNCEMENT, (payload: ServerAnnouncementPayload) => {
       this.lastAnnouncement = { text: payload.text, at: Date.now() };
     });
+
+    // Stun/slow visual on local player sprite — tint amber when stunned.
+    room.onMessage(
+      MessageType.STATUS_EFFECTS,
+      (payload: { effects: { kind: string; id: string }[] }) => {
+        const sprite = this.playerSprites.get(this.localSessionId);
+        if (!sprite) return;
+        const isStunned = payload.effects.some((e) => e.kind === "stun");
+        const wasStunned = sprite.getData("stunned") === true;
+        if (isStunned && !wasStunned) {
+          sprite.setTintFill(0xffaa00);
+        } else if (!isStunned && wasStunned) {
+          sprite.clearTint();
+        }
+        sprite.setData("stunned", isStunned);
+      },
+    );
 
     this.configureReconnection(room);
 
@@ -1075,6 +1135,10 @@ export class MapScene extends Phaser.Scene {
         });
       }
 
+      // Seed prevAnimX so updateRemoteAnim has a baseline for movement detection
+      // from the very first frame (avoids a 1-frame idle flash on spawn).
+      sprite.setData("prevAnimX", player.x);
+
       // Floating name + level tag (shared by local and remote).
       const tag = this.createPlayerTag(player.name, player.level, player.equippedTitle);
       this.playerTags.set(sessionId, tag);
@@ -1086,6 +1150,28 @@ export class MapScene extends Phaser.Scene {
         // doesn't jerk the camera. A deadzone was considered but Phaser's
         // deadzone overrides lerp with instant snaps — asymmetric lerp is smoother.
         this.cameras.main.startFollow(sprite, true, 0.15, 0.08);
+
+        // ── Onboarding: fire coach marks on first spawn ──
+        // Fire the move hint shortly after spawn so the player knows they can move
+        // immediately, instead of waiting for first input.
+        if (!this.coachMoveFired) {
+          this.coachMoveFired = true;
+          this.time.delayedCall(1200, () => {
+            this.registry.set("coachmark:move", true);
+          });
+        }
+        // Fire the first-objective hint for brand-new characters on Dawn Isle.
+        if (this.mapId === "dawn_isle") {
+          const charId = getCharId();
+          if (charId) {
+            const seen = getSeenCoachMarks(charId);
+            if (!seen.has("firstObjective")) {
+              this.time.delayedCall(800, () => {
+                this.registry.set("coachmark:firstObjective", true);
+              });
+            }
+          }
+        }
 
         // Seed prediction state from the authoritative server snapshot.
         this.localVy = player.vy;
@@ -1217,6 +1303,14 @@ export class MapScene extends Phaser.Scene {
       sprite.setData("hit", mob.hit);
       sprite.setData("mobId", mob.mobId);
       sprite.setData("isElite", mob.isElite);
+      sprite.setData("stunned", mob.stunned);
+
+      // Zone-based visual differentiation: tint mobs by biome + element, scale by mob type.
+      // Elite override below will replace this with gold for elite mobs.
+      const biome = resolveBiomeSet(this.mapId, this.map.bgSet);
+      const element = getMobDef(mob.mobId)?.element as import("@maple/shared").Element | undefined;
+      sprite.setTint(mobTint(mob.mobId, biome, element));
+      sprite.setScale(mobScale(mob.mobId));
 
       // Elite visual treatment: golden tint + slight scale-up + nameplate.
       if (mob.isElite) {
@@ -1283,6 +1377,40 @@ export class MapScene extends Phaser.Scene {
           hpContainer.setVisible(false);
         }
 
+        // Stun visual: amber tint while stunned, clear on unstun.
+        const wasStunned = sprite.getData("stunned") === true;
+        if (mob.stunned && !wasStunned) {
+          sprite.setTint(0xffaa00);
+        } else if (!mob.stunned && wasStunned && !mob.isElite) {
+          sprite.clearTint();
+        } else if (!mob.stunned && wasStunned && mob.isElite) {
+          sprite.setTint(0xffd700); // restore elite golden tint
+        }
+        sprite.setData("stunned", mob.stunned);
+
+        // Caster telegraph visual: draw AoE circle while telegraph is active.
+        const prevTelegraph = sprite.getData("telegraph") as string;
+        if (mob.bossTelegraph !== prevTelegraph) {
+          sprite.setData("telegraph", mob.bossTelegraph);
+          const existingTg = this.telegraphGfx.get(key);
+          if (existingTg) {
+            existingTg.destroy();
+            this.telegraphGfx.delete(key);
+          }
+          if (mob.bossTelegraph !== "" && !mob.dead) {
+            const tgGfx = this.add.graphics();
+            tgGfx.setDepth(mob.y - 1);
+            this.drawTelegraphCircle(tgGfx, mob.x, mob.y, 80);
+            this.telegraphGfx.set(key, tgGfx);
+          }
+        }
+        // Animate telegraph pulsing.
+        const tgGfx = this.telegraphGfx.get(key);
+        if (tgGfx && mob.bossTelegraph !== "") {
+          const pulse = 0.3 + Math.sin(this.time.now * 0.008) * 0.15;
+          tgGfx.setAlpha(pulse);
+        }
+
         sprite.setData("dead", mob.dead);
         sprite.setData("hit", mob.hit);
       });
@@ -1300,14 +1428,73 @@ export class MapScene extends Phaser.Scene {
         nameplate.destroy();
         this.mobNameplates.delete(key);
       }
+      // Clean up telegraph visual.
+      const tg = this.telegraphGfx.get(key);
+      if (tg) {
+        tg.destroy();
+        this.telegraphGfx.delete(key);
+      }
     });
 
+    // ── Mob projectiles ──
+    $(room.state).projectiles.onAdd((proj: ProjectileView, key: string) => {
+      const gfx = this.add.graphics();
+      gfx.setDepth(proj.y + 1);
+      this.drawProjectile(gfx, proj);
+      this.projectileGfx.set(key, gfx);
+    });
+    $(room.state).projectiles.onChange((proj: ProjectileView, key: string) => {
+      const gfx = this.projectileGfx.get(key);
+      if (gfx) {
+        gfx.setPosition(proj.x, proj.y);
+        gfx.setDepth(proj.y + 1);
+        this.drawProjectile(gfx, proj);
+      }
+    });
+    $(room.state).projectiles.onRemove((_proj: ProjectileView, key: string) => {
+      const gfx = this.projectileGfx.get(key);
+      if (gfx) {
+        gfx.destroy();
+        this.projectileGfx.delete(key);
+      }
+    });
+
+    // ── Mob explosion events (exploder VFX) ──
+    room.onMessage(
+      "mob_explode",
+      (data: { mobId: string; x: number; y: number; radius: number }) => {
+        this.playExplosion(data.x, data.y, data.radius);
+      },
+    );
+
     // ── Loot drops (no shadow — they sit flat on the grass) ──
+    const tierColor: Record<string, string> = {
+      COMMON: "#aaaaaa",
+      RARE: "#ffffff",
+      EPIC: "#6eb5ff",
+      UNIQUE: "#b57aff",
+      LEGENDARY: "#ffc847",
+    };
     $(room.state).loot.onAdd((loot: LootView, uid: string) => {
       const key = loot.legendary ? TextureKeys.LootGemLegendary : TextureKeys.LootGem;
       const sprite = this.add.sprite(loot.x, loot.y, key);
       sprite.setDepth(loot.y);
       this.lootSprites.set(uid, sprite);
+
+      // Item name label above the gem.
+      const itemName = getItemDef(loot.defId)?.name ?? loot.defId;
+      const color = loot.legendary ? "#ffc847" : (tierColor[loot.potentialTier] ?? "#ffffff");
+      const label = this.add
+        .text(loot.x, loot.y - 18, itemName, {
+          fontFamily: "ui-monospace, Menlo, monospace",
+          fontSize: loot.legendary ? "11px" : "10px",
+          color,
+          stroke: "#000000",
+          strokeThickness: 3,
+        })
+        .setOrigin(0.5)
+        .setDepth(loot.y + 1);
+      this.lootLabels.set(uid, label);
 
       // Play loot drop SFX.
       getAudioManager().playSfx(loot.legendary ? "legendary_drop" : "loot_drop");
@@ -1324,16 +1511,29 @@ export class MapScene extends Phaser.Scene {
         },
       });
 
+      // ── Legendary drop screen flourish: green flash + floating label ──
+      if (loot.legendary) {
+        this.playLegendaryDropFlourish(loot.x, loot.y);
+      }
+
       // Loot is static; its position only changes if the server nudges it.
       $(loot).onChange(() => {
         sprite.setPosition(loot.x, loot.y);
         sprite.setDepth(loot.y);
+        label.setPosition(loot.x, loot.y - 18);
+        label.setDepth(loot.y + 1);
       });
     });
 
     $(room.state).loot.onRemove((_loot: LootView, uid: string) => {
       this.pickupRequestedAt.delete(uid);
       this.destroyTracked(this.lootSprites, uid);
+      const label = this.lootLabels.get(uid);
+      if (label) {
+        this.tweens.killTweensOf(label);
+        label.destroy();
+        this.lootLabels.delete(uid);
+      }
     });
 
     // ── Dialog system ──
@@ -1361,6 +1561,13 @@ export class MapScene extends Phaser.Scene {
       } else {
         this.openGeneralStore(payload.shopId);
       }
+    });
+
+    room.onMessage("storage_open", async () => {
+      if (this.scene.isActive("storage")) return;
+      await loadScene(this.game, "storage", () => import("./Storage"));
+      this.scene.launch("storage");
+      this.scene.pause();
     });
 
     room.onMessage(MessageType.BRANCH_LIST, (payload: BranchListPayload) => {
@@ -1409,7 +1616,9 @@ export class MapScene extends Phaser.Scene {
       this.room = undefined;
 
       // Show the loading screen with the destination map name.
-      this.scene.launch("loading", { mapName: destName });
+      loadScene(this.game, "loading", () => import("./Loading")).then(() => {
+        this.scene.launch("loading", { mapName: destName });
+      });
 
       // Fade out then hand off to a fresh MapScene instance for the destination.
       this.cameras.main.fade(400, 0, 0, 0);
@@ -1430,6 +1639,39 @@ export class MapScene extends Phaser.Scene {
       }
     });
 
+    // ── Scheduled transport countdown ──
+    room.onMessage(MessageType.TRANSPORT_STATUS, (payload: TransportStatusPayload) => {
+      uiStore.getState().setTransport({
+        portalLabel: payload.portalLabel,
+        departInMs: payload.departInMs,
+        boardedCount: payload.boardedCount,
+        portalId: payload.portalId,
+        receivedAt: Date.now(),
+      });
+    });
+
+    room.onMessage(
+      MessageType.TRANSPORT_DEPARTED,
+      (payload: { portalLabel: string; mapId: string }) => {
+        // Clear the countdown banner — the TRAVEL message follows immediately.
+        uiStore.getState().setTransport(null);
+        const player = this.localPlayer;
+        if (player) {
+          this.floatText(
+            player.x,
+            player.y - 40,
+            `🚢 ${payload.portalLabel} departing!`,
+            "#93c5fd",
+          );
+        }
+      },
+    );
+
+    // Clear transport state when leaving the room (teleport, disconnect, etc.).
+    room.onLeave(() => {
+      uiStore.getState().setTransport(null);
+    });
+
     // ── Channel system ──
     room.onMessage(MessageType.CHANNEL_LIST, (payload: ChannelListPayload) => {
       this.registry.set("channelList", payload);
@@ -1448,7 +1690,9 @@ export class MapScene extends Phaser.Scene {
 
       const destMap = getMap(payload.mapId);
       const destName = destMap?.name ?? payload.mapId;
-      this.scene.launch("loading", { mapName: destName });
+      loadScene(this.game, "loading", () => import("./Loading")).then(() => {
+        this.scene.launch("loading", { mapName: destName });
+      });
 
       this.cameras.main.fade(300, 0, 0, 0);
       this.time.delayedCall(350, () => {
@@ -1480,6 +1724,9 @@ export class MapScene extends Phaser.Scene {
     room.onMessage(
       MessageType.QUEST_UPDATE,
       (payload: { quests: { questId: string; name: string; status: string }[] }) => {
+        // Store for NPC indicator computation.
+        this.questLogData = payload.quests;
+        this.updateNpcIndicators();
         // Show a floating notification when a new quest is accepted.
         for (const q of payload.quests) {
           if (q.status === "active") {
@@ -1490,7 +1737,23 @@ export class MapScene extends Phaser.Scene {
       },
     );
 
-    // ── Achievement unlock: show title reward float text ──
+    // ── Quest turn-in flourish: golden burst + particles at the player ──
+    room.onMessage(
+      "quest_turnin",
+      (_payload: {
+        questId: string;
+        questName: string;
+        mesos: number;
+        exp: number;
+        items: string[];
+      }) => {
+        if (this.localPlayer) {
+          this.playQuestCompleteFlourish(this.localPlayer.x, this.localPlayer.y);
+        }
+      },
+    );
+
+    // ── Achievement unlock: float text + bridge toast to React overlay ──
     room.onMessage(
       MessageType.ACHIEVEMENT_UNLOCK,
       (payload: {
@@ -1499,15 +1762,32 @@ export class MapScene extends Phaser.Scene {
         description: string;
         rewards: { mesos?: number; exp?: number; title?: string };
       }) => {
-        if (payload.rewards.title && this.localPlayer) {
+        // Float text in the game world.
+        if (this.localPlayer) {
           this.floatText(
             this.localPlayer.x,
-            this.localPlayer.y - 40,
-            `\ud83c\udfc5 Title: ${payload.rewards.title}`,
+            this.localPlayer.y - 50,
+            `🏆 Achievement: ${payload.name}`,
             "#facc15",
           );
           getAudioManager().playSfx("levelup");
         }
+        // Title float text if earned.
+        if (payload.rewards.title && this.localPlayer) {
+          this.floatText(
+            this.localPlayer.x,
+            this.localPlayer.y - 70,
+            `🏅 Title: ${payload.rewards.title}`,
+            "#facc15",
+          );
+        }
+        // Emit to Phaser game event bus so the React overlay can toast.
+        this.game.events.emit("achievement-unlock", {
+          id: payload.achievementId,
+          name: payload.name,
+          description: payload.description,
+          rewards: payload.rewards,
+        });
       },
     );
 
@@ -1541,6 +1821,23 @@ export class MapScene extends Phaser.Scene {
         if (payload.hit && payload.crit && payload.attackerSession === this.localSessionId) {
           this.shakeCamera(0.28, 120);
         }
+        // Play attack animation on the attacker's sprite (remote players only —
+        // the local player's attack is driven by playSwing() in the update loop).
+        if (
+          payload.hit &&
+          payload.attackerSession &&
+          payload.attackerSession !== this.localSessionId
+        ) {
+          const attackerSprite = this.playerSprites.get(payload.attackerSession);
+          if (attackerSprite) {
+            const atkPrefix = attackerSprite.getData("apPrefix") as string | undefined;
+            const atkKey = atkPrefix ? `${atkPrefix}_attack` : "warrior_attack";
+            attackerSprite.play(atkKey);
+            // Guard the animation so updateRemoteAnim doesn't immediately override it.
+            attackerSprite.setData("attackAnimUntil", this.time.now + 250);
+          }
+        }
+
         // Update mob HP bar if present.
         const hpBar = this.mobHpBars.get(payload.targetKey);
         if (hpBar) {
@@ -1590,6 +1887,24 @@ export class MapScene extends Phaser.Scene {
           const duration = isBoss ? 340 : payload.crit ? 220 : 150;
           this.shakeCamera(intensity, duration);
         }
+      },
+    );
+
+    // ── DoT/HoT effect ticks — floating damage/heal number on the affected player ──
+    room.onMessage(
+      "effect_tick",
+      (payload: { sessionId: string; delta: number; hp: number; dead: boolean }) => {
+        const sprite = this.playerSprites.get(payload.sessionId);
+        if (!sprite) return;
+        this.showCombatNumber(sprite.x, sprite.y - sprite.displayHeight / 2 - 10, {
+          targetKey: "",
+          attackerSession: "",
+          damage: Math.abs(payload.delta),
+          crit: false,
+          hit: true,
+          mobHp: 0,
+          mobMaxHp: 0,
+        });
       },
     );
 
@@ -1686,7 +2001,7 @@ export class MapScene extends Phaser.Scene {
             }
           });
         });
-        this.floatText(c.x, c.y - 20, "50", "#ffffff");
+        this.floatText(c.x, c.y - 20, String(payload.damage), "#ffffff");
       }
     });
 
@@ -1712,6 +2027,15 @@ export class MapScene extends Phaser.Scene {
         this.floatText(c.x - 10, c.y - 26, `+${payload.mesos} mesos`, "#ffe9a8");
       }
       getAudioManager().playSfx("loot_drop");
+    });
+
+    room.onMessage(MessageType.TREASURE_DESPAWN, (payload: TreasureDespawnPayload) => {
+      const c = this.boxSprites.get(payload.boxId);
+      if (c) {
+        this.tweens.killTweensOf(c);
+        c.destroy();
+        this.boxSprites.delete(payload.boxId);
+      }
     });
   }
 
@@ -1791,16 +2115,66 @@ export class MapScene extends Phaser.Scene {
     }
   }
 
+  // ─── Behavior VFX helpers ───────────────────────────────────────────────
+
+  /** Draw a projectile as a small colored circle. */
+  private drawProjectile(gfx: Phaser.GameObjects.Graphics, proj: ProjectileView): void {
+    gfx.clear();
+    const color = proj.kind === "caster" ? 0xa855f7 : 0xef4444; // purple caster, red ranged
+    const radius = proj.kind === "caster" ? 5 : 4;
+    gfx.fillStyle(color, 0.9);
+    gfx.fillCircle(0, 0, radius);
+    gfx.lineStyle(1, 0xffffff, 0.6);
+    gfx.strokeCircle(0, 0, radius + 1);
+  }
+
+  /** Draw a telegraph AoE circle on the ground. */
+  private drawTelegraphCircle(
+    gfx: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    radius: number,
+  ): void {
+    gfx.clear();
+    gfx.fillStyle(0xff4444, 0.2);
+    gfx.fillCircle(x, y, radius);
+    gfx.lineStyle(2, 0xff4444, 0.7);
+    gfx.strokeCircle(x, y, radius);
+  }
+
+  /** Play a brief explosion VFX at a position (exploder mob self-destruct). */
+  private playExplosion(x: number, y: number, radius: number): void {
+    const gfx = this.add.graphics();
+    gfx.setDepth(y + 5);
+    gfx.fillStyle(0xff6600, 0.7);
+    gfx.fillCircle(x, y, radius);
+    gfx.lineStyle(3, 0xffaa00, 0.9);
+    gfx.strokeCircle(x, y, radius);
+    this.explosionGfx.push(gfx);
+    // Fade out over 400ms then remove.
+    this.time.delayedCall(400, () => {
+      gfx.destroy();
+      const idx = this.explosionGfx.indexOf(gfx);
+      if (idx !== -1) this.explosionGfx.splice(idx, 1);
+    });
+  }
+
   // ─── Rendering helpers ────────────────────────────────────────────────────────────────────────
-  /** Bake the scenic terrain (parallax layers + platforms from MeadowfieldMap footholds) into a render texture. */
+  /** Resolve the biome palette for the current map. */
+  private get biomePalette(): BiomePalette {
+    return resolveBiomePalette(resolveBiomeSet(this.mapId, this.map.bgSet));
+  }
+
+  /** Bake the scenic terrain (parallax layers + platforms from footholds) into a render texture. */
   private buildBackground(): void {
-    this.buildParallaxLayers();
+    const palette = this.biomePalette;
+    this.buildParallaxLayers(palette);
 
     const gfx = this.make.graphics();
 
     // ── Terrain from footholds (sky is handled by the parallax sky layer) ──
     for (const fh of this.map.footholds) {
-      this.drawTerrainPlatform(gfx, fh);
+      this.drawTerrainPlatform(gfx, fh, palette);
     }
 
     // ── Bake into render texture ──
@@ -1817,8 +2191,10 @@ export class MapScene extends Phaser.Scene {
     this.textures.remove(TERRAIN_KEY);
 
     // ── Overlay the real CC0 grass/dirt tileset on top of the coloured base ──
-    for (const fh of this.map.footholds) {
-      this.stampTerrainTiles(ground, fh);
+    if (palette.useTileOverlay) {
+      for (const fh of this.map.footholds) {
+        this.stampTerrainTiles(ground, fh);
+      }
     }
 
     // ── Ladder / rope visuals ──
@@ -1858,40 +2234,78 @@ export class MapScene extends Phaser.Scene {
   /**
    * Create 3 scrolling parallax layers behind the terrain render texture.
    * Each layer uses setScrollFactor < 1 so it drifts slower than the camera,
-   * giving depth as the player moves across the 1600×900 map.
+   * giving depth as the player moves across the map.
+   * Procedurally generated per biome palette — no biome-specific PNGs required.
    */
-  private buildParallaxLayers(): void {
-    // Far sky — barely moves, anchors the top of the screen.
+  private buildParallaxLayers(palette: BiomePalette): void {
+    const W = this.map.width;
+    const H = this.map.height;
+
+    // ── Far sky: vertical gradient (skyTop → skyBottom) ──
+    const skyKey = `__sky_${this.mapId}`;
+    if (!this.textures.exists(skyKey)) {
+      const sg = this.make.graphics();
+      sg.fillGradientStyle(palette.skyTop, palette.skyTop, palette.skyBottom, palette.skyBottom);
+      sg.fillRect(0, 0, 1, H);
+      sg.generateTexture(skyKey, 1, H);
+      sg.destroy();
+    }
     this.add
-      .tileSprite(0, 0, this.map.width + 400, this.map.height, TextureKeys.ParallaxSky)
+      .tileSprite(0, 0, W + 400, H, skyKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.1, 0)
       .setDepth(GROUND_DEPTH - 3);
 
-    // Mid hills — gentle drift.
+    // ── Mid hills: silhouetted rolling shapes ──
     const hillH = 350;
+    const hillKey = `__hills_${this.mapId}`;
+    if (!this.textures.exists(hillKey)) {
+      const hg = this.make.graphics();
+      hg.fillStyle(palette.hillColor, 1);
+      // Draw a jagged hill silhouette across the width
+      const hillPts: { x: number; y: number }[] = [{ x: 0, y: hillH }];
+      const hillStep = 80;
+      for (let hx = 0; hx <= W + 800; hx += hillStep) {
+        const hy =
+          hillH * 0.3 +
+          Math.sin(hx * 0.008) * hillH * 0.2 +
+          Math.sin(hx * 0.015 + 1.3) * hillH * 0.12;
+        hillPts.push({ x: hx, y: hy });
+      }
+      hillPts.push({ x: W + 800, y: hillH });
+      hg.fillPoints(hillPts, true, true);
+      hg.generateTexture(hillKey, W + 800, hillH);
+      hg.destroy();
+    }
     this.add
-      .tileSprite(
-        0,
-        this.map.height - hillH,
-        this.map.width + 800,
-        hillH,
-        TextureKeys.ParallaxHills,
-      )
+      .tileSprite(0, H - hillH, W + 800, hillH, hillKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.3, 0)
       .setDepth(GROUND_DEPTH - 2);
 
-    // Near trees — noticeable but still slower than the terrain.
+    // ── Near trees: silhouetted treeline ──
     const treeH = 280;
+    const treeKey = `__trees_${this.mapId}`;
+    if (!this.textures.exists(treeKey)) {
+      const tg = this.make.graphics();
+      tg.fillStyle(palette.treeColor, 1);
+      // Draw a jagged treeline silhouette
+      const treePts: { x: number; y: number }[] = [{ x: 0, y: treeH }];
+      const treeStep = 40;
+      for (let tx = 0; tx <= W + 1200; tx += treeStep) {
+        const ty =
+          treeH * 0.25 +
+          Math.sin(tx * 0.012 + 0.7) * treeH * 0.18 +
+          Math.sin(tx * 0.025 + 2.1) * treeH * 0.1;
+        treePts.push({ x: tx, y: ty });
+      }
+      treePts.push({ x: W + 1200, y: treeH });
+      tg.fillPoints(treePts, true, true);
+      tg.generateTexture(treeKey, W + 1200, treeH);
+      tg.destroy();
+    }
     this.add
-      .tileSprite(
-        0,
-        this.map.height - treeH,
-        this.map.width + 1200,
-        treeH,
-        TextureKeys.ParallaxTrees,
-      )
+      .tileSprite(0, H - treeH, W + 1200, treeH, treeKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.6, 0)
       .setDepth(GROUND_DEPTH - 1);
@@ -1901,7 +2315,11 @@ export class MapScene extends Phaser.Scene {
    * Draw a single terrain platform (grass cap + dirt body + outline) for a foothold.
    * Slopes follow the segment angle via groundYAt sampling.
    */
-  private drawTerrainPlatform(gfx: Phaser.GameObjects.Graphics, fh: Foothold): void {
+  private drawTerrainPlatform(
+    gfx: Phaser.GameObjects.Graphics,
+    fh: Foothold,
+    palette: BiomePalette,
+  ): void {
     const minX = Math.min(fh.x1, fh.x2);
     const maxX = Math.max(fh.x1, fh.x2);
     const isGround = fh.solid === true;
@@ -1923,7 +2341,7 @@ export class MapScene extends Phaser.Scene {
 
     const count = surfPts.length;
 
-    // ── Grass cap polygon (surface ± GRASS_HALF) ──
+    // ── Surface cap polygon (surface ± GRASS_HALF) ──
     const grassTop: { x: number; y: number }[] = [];
     const grassBot: { x: number; y: number }[] = [];
     for (let i = 0; i < count; i++) {
@@ -1933,10 +2351,10 @@ export class MapScene extends Phaser.Scene {
         grassBot.push({ x: p.x, y: p.y + GRASS_HALF });
       }
     }
-    gfx.fillStyle(0x72b540, 1);
+    gfx.fillStyle(palette.surfaceColor, 1);
     gfx.fillPoints([...grassTop, ...grassBot.reverse()], true, true);
 
-    // ── Dirt body polygon ──
+    // ── Body polygon ──
     const dirtTop: { x: number; y: number }[] = [];
     const dirtBot: { x: number; y: number }[] = [];
     for (let i = 0; i < count; i++) {
@@ -1946,7 +2364,7 @@ export class MapScene extends Phaser.Scene {
         dirtBot.push({ x: p.x, y: isGround ? this.map.height : p.y + DIRT_DEPTH });
       }
     }
-    gfx.fillStyle(0x9b7642, 1);
+    gfx.fillStyle(palette.bodyColor, 1);
     gfx.fillPoints([...dirtTop, ...dirtBot.reverse()], true, true);
 
     // ── Darker bottom band for depth (floating platforms only) ──
@@ -1961,12 +2379,12 @@ export class MapScene extends Phaser.Scene {
           darkBot.push({ x: p.x, y: p.y + DIRT_DEPTH });
         }
       }
-      gfx.fillStyle(0x7a5c30, 0.35);
+      gfx.fillStyle(palette.bandColor, 0.35);
       gfx.fillPoints([...darkTop, ...darkBot.reverse()], true, true);
     }
 
-    // ── Dirt grain speckles ──
-    gfx.fillStyle(0x6b5230, 0.3);
+    // ── Grain speckles ──
+    gfx.fillStyle(palette.speckleColor, 0.3);
     const speckStep = 16;
     for (let sx = minX + 8; sx < maxX; sx += speckStep) {
       const sy = groundYAt(fh, sx);
@@ -1977,8 +2395,8 @@ export class MapScene extends Phaser.Scene {
       }
     }
 
-    // ── Grass blade silhouettes along top edge ──
-    gfx.fillStyle(0x5ea035, 0.7);
+    // ── Surface edge silhouettes along top edge ──
+    gfx.fillStyle(palette.bladeColor, 0.7);
     for (let x = minX + 2; x < maxX; x += 5) {
       const y = groundYAt(fh, x);
       const bladeH = 2 + ((x * 7) % 3);
@@ -1995,7 +2413,7 @@ export class MapScene extends Phaser.Scene {
         outlineBot.push({ x: p.x, y: isGround ? this.map.height : p.y + DIRT_DEPTH });
       }
     }
-    gfx.lineStyle(1.5, 0x5a3d1e, 0.45);
+    gfx.lineStyle(1.5, palette.outlineColor, 0.45);
     gfx.strokePoints([...outlineTop, ...outlineBot.reverse()], true, true);
   }
 
@@ -2123,7 +2541,39 @@ export class MapScene extends Phaser.Scene {
       this.npcSprites.set(npc.id, sprite);
       this.npcLabels.set(npc.id, label);
       this.npcPrompts.set(npc.id, prompt);
+
+      // Right-click context menu for NPCs.
+      sprite.setInteractive({ useHandCursor: true });
+      sprite.on("pointerdown", (_pointer: Phaser.Input.Pointer) => {
+        if (_pointer.rightButtonDown()) {
+          this.game.events.emit("npc-rightclick", {
+            npcId: npc.id,
+            npcName: npc.name,
+            role: npc.role,
+            worldX: _pointer.worldX,
+            worldY: _pointer.worldY,
+          });
+        }
+      });
+
+      // Quest indicator (! / ?) above the NPC name — hidden until quest data arrives.
+      const indicator = this.add
+        .text(npc.x, npc.y - 46, "", {
+          fontFamily: "ui-monospace, Menlo, monospace",
+          fontSize: "18px",
+          fontStyle: "bold",
+          color: "#facc15",
+          stroke: "#1a1a2e",
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(npc.y + 1002)
+        .setAlpha(0);
+
+      this.npcIndicators.set(npc.id, indicator);
     }
+    // Push existing quest data onto freshly spawned indicators.
+    if (this.questLogData.length > 0) this.updateNpcIndicators();
   }
 
   /** Show/hide the "press ENTER" prompt above each NPC based on player distance. */
@@ -2145,6 +2595,79 @@ export class MapScene extends Phaser.Scene {
           duration: 150,
           ease: "Quad.easeOut",
         });
+      }
+    }
+  }
+
+  /**
+   * Compute and render quest indicators (! / ?) above NPCs.
+   * "!" (yellow)  = available quest whose prereqs are met.
+   * "?" (grey)    = active (in-progress) quest whose giver is this NPC.
+   * "?" (blue)    = completed quest ready for turn-in.
+   * Priority: turn-in > active > available.
+   */
+  private updateNpcIndicators(): void {
+    // Build a lookup: npcId → { hasAvailable, hasActive, hasTurnin }
+    const npcFlags = new Map<
+      string,
+      { hasAvailable: boolean; hasActive: boolean; hasTurnin: boolean }
+    >();
+    for (const qs of this.questLogData) {
+      const def = QUESTS[qs.questId];
+      if (!def) continue;
+      const npcId = def.giverNpcId;
+      let flags = npcFlags.get(npcId);
+      if (!flags) {
+        flags = { hasAvailable: false, hasActive: false, hasTurnin: false };
+        npcFlags.set(npcId, flags);
+      }
+      if (qs.status === "complete") {
+        flags.hasTurnin = true;
+      } else if (qs.status === "active") {
+        flags.hasActive = true;
+      } else if (qs.status === "available") {
+        // Check prereqs client-side so we only show "!" for truly available quests.
+        const prereqMet =
+          !def.prereqQuestId ||
+          this.questLogData.some((q) => q.questId === def.prereqQuestId && q.status === "turnedIn");
+        const levelMet = def.requiredLevel === undefined || this.localLevel >= def.requiredLevel;
+        if (prereqMet && levelMet) flags.hasAvailable = true;
+      }
+    }
+
+    for (const npc of this.npcsForMap) {
+      const indicator = this.npcIndicators.get(npc.id);
+      if (!indicator) continue;
+      const flags = npcFlags.get(npc.id);
+      if (!flags || (!flags.hasAvailable && !flags.hasActive && !flags.hasTurnin)) {
+        // No quest indicator — fade out.
+        if (indicator.alpha > 0) {
+          this.tweens.killTweensOf(indicator);
+          indicator.setData("bobbing", false);
+          this.tweens.add({ targets: indicator, alpha: 0, duration: 200 });
+        }
+        continue;
+      }
+      // Priority: turn-in (blue ?) > active (grey ?) > available (yellow !)
+      const isTurnin = flags.hasTurnin;
+      const isActive = !isTurnin && flags.hasActive;
+      indicator.setText(isTurnin ? "?" : isActive ? "?" : "!");
+      indicator.setColor(isTurnin ? "#60a5fa" : isActive ? "#9ca3af" : "#facc15");
+      // Gentle bobbing tween.
+      if (!indicator.getData("bobbing")) {
+        indicator.setData("bobbing", true);
+        this.tweens.add({
+          targets: indicator,
+          y: indicator.y - 4,
+          duration: 600,
+          ease: "Sine.easeInOut",
+          yoyo: true,
+          repeat: -1,
+        });
+      }
+      if (indicator.alpha < 1) {
+        this.tweens.killTweensOf(indicator, "alpha");
+        this.tweens.add({ targets: indicator, alpha: 1, duration: 200 });
       }
     }
   }
@@ -2174,21 +2697,24 @@ export class MapScene extends Phaser.Scene {
   }
 
   /** Launch the Free Market overlay on top and pause Meadowfield until it closes. */
-  private openMarket(): void {
+  private async openMarket(): Promise<void> {
     if (this.scene.isActive("market")) return;
+    await loadScene(this.game, "market", () => import("./Market"));
     this.scene.launch("market");
     this.scene.pause();
   }
 
   /** Launch the Cash Shop overlay and pause Meadowfield until it closes. */
-  private openCashShop(): void {
+  private async openCashShop(): Promise<void> {
     if (this.scene.isActive("cashshop")) return;
+    await loadScene(this.game, "cashshop", () => import("./CashShop"));
     this.scene.launch("cashshop");
     this.scene.pause();
   }
 
-  private openGeneralStore(shopId: string): void {
+  private async openGeneralStore(shopId: string): Promise<void> {
     if (this.scene.isActive("generalstore")) return;
+    await loadScene(this.game, "generalstore", () => import("./GeneralStore"));
     this.scene.launch("generalstore", { shopId });
     this.scene.pause();
   }
@@ -2369,6 +2895,10 @@ export class MapScene extends Phaser.Scene {
 
   /** Drive a remote player's animation from its interpolated state. */
   private updateRemoteAnim(sprite: Phaser.GameObjects.Sprite): void {
+    // Don't override attack animation while it's still playing.
+    const attackUntil = sprite.getData("attackAnimUntil") as number | undefined;
+    if (attackUntil !== undefined && this.time.now < attackUntil) return;
+
     const climbing = sprite.getData("serverClimbing") as boolean | undefined;
     const grounded = sprite.getData("serverGrounded") as boolean | undefined;
     const vy = sprite.getData("serverVy") as number | undefined;
@@ -2779,6 +3309,11 @@ export class MapScene extends Phaser.Scene {
         onComplete: () => shadow.setVisible(false),
       });
     }
+    // ── Boss-kill payoff: dramatic fanfare + screen-wide effects ──
+    const mobId = sprite.getData("mobId") as string | undefined;
+    if (mobId && getMobDef(mobId)?.isBoss) {
+      this.playBossKillPayoff(sprite.x, sprite.y);
+    }
   }
 
   /** Reset a reused mob entry to a fresh, fully-visible state when the server respawns it. */
@@ -2787,16 +3322,21 @@ export class MapScene extends Phaser.Scene {
     sprite.clearTint();
     sprite.setAlpha(1);
     sprite.setVisible(true);
-    // Re-apply elite tint/scale if this mob is an elite.
+    // Re-apply zone tint + scale (or elite override if applicable).
     const isElite = sprite.getData("isElite") === true;
+    const mobId = sprite.getData("mobId") as string | undefined;
     if (isElite) {
       sprite.setTint(0xffd700);
       sprite.setScale(1.2);
+    } else if (mobId) {
+      const biome = resolveBiomeSet(this.mapId, this.map.bgSet);
+      const element = getMobDef(mobId)?.element as import("@maple/shared").Element | undefined;
+      sprite.setTint(mobTint(mobId, biome, element));
+      sprite.setScale(mobScale(mobId));
     } else {
       sprite.setScale(1);
     }
     // Restart the mob's idle animation so it doesn't sit frozen on a dead frame.
-    const mobId = sprite.getData("mobId") as string | undefined;
     if (mobId) sprite.play(mobAnimKey(mobId));
     // Snap onto the server's respawn position so it doesn't slide in from the death spot.
     const sx = sprite.getData("serverX") as number | undefined;
@@ -2874,14 +3414,14 @@ export class MapScene extends Phaser.Scene {
       color = "#6b7280";
       fontSize = "14px";
     } else if (elemMul > 1) {
-      // Weak (extra effective) — golden highlight
-      text = String(payload.damage);
+      // Weak (extra effective) — golden highlight + text label
+      text = `WEAK! ${payload.damage}`;
       color = payload.crit ? "#fbbf24" : "#f59e0b";
       fontSize = payload.crit ? "20px" : "16px";
       isCrit = payload.crit;
     } else if (elemMul < 1) {
-      // Resist — dim blue tint
-      text = String(payload.damage);
+      // Resist — dim blue tint + text label
+      text = `RESIST ${payload.damage}`;
       color = "#60a5fa";
       fontSize = "13px";
     } else if (payload.crit) {
@@ -3018,6 +3558,158 @@ export class MapScene extends Phaser.Scene {
     MapScene.playAdvancementSound();
   }
 
+  // ─── Legendary drop screen flourish ──────────────────────────────────────────────
+  /** Screen-wide green flash + floating label when a Legendary drops. */
+  private playLegendaryDropFlourish(x: number, y: number): void {
+    const { width, height } = this.scale;
+
+    // Green screen flash.
+    const flash = this.add
+      .rectangle(width / 2, height / 2, width, height, 0x50e890, 0.3)
+      .setDepth(9998)
+      .setScrollFactor(0);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 400,
+      ease: "Quad.easeOut",
+      onComplete: () => flash.destroy(),
+    });
+
+    // Radial burst of green sparkles around the drop.
+    const SPARKLE_COUNT = 10;
+    for (let i = 0; i < SPARKLE_COUNT; i++) {
+      const angle = (i / SPARKLE_COUNT) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = 30 + Math.random() * 40;
+      const dot = this.add.circle(x, y, 1.5 + Math.random() * 1.5, 0x50e890, 0.9).setDepth(9999);
+      this.tweens.add({
+        targets: dot,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist - 10,
+        alpha: 0,
+        duration: 350 + Math.random() * 150,
+        ease: "Quad.easeOut",
+        onComplete: () => dot.destroy(),
+      });
+    }
+
+    // "★ LEGENDARY!" floating label above the drop.
+    this.floatText(x, y - 30, "★ LEGENDARY!", "#50e890");
+  }
+
+  // ─── Quest-complete flourish ──────────────────────────────────────────────────────
+  /** Golden burst + sparkle ring at the player when a quest is turned in. */
+  private playQuestCompleteFlourish(x: number, y: number): void {
+    const cy = y - 20;
+
+    // Expanding golden ring.
+    const ring = this.add.circle(x, cy, 6, 0xfacc15, 0).setDepth(9999);
+    ring.setStrokeStyle(2, 0xfacc15, 0.85);
+    this.tweens.add({
+      targets: ring,
+      scaleX: 6,
+      scaleY: 6,
+      alpha: 0,
+      duration: 450,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+
+    // Particle burst.
+    const COUNT = 10;
+    for (let i = 0; i < COUNT; i++) {
+      const angle = (i / COUNT) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = 30 + Math.random() * 35;
+      const dot = this.add.circle(x, cy, 1.5 + Math.random() * 1.5, 0xfacc15, 0.9).setDepth(9999);
+      this.tweens.add({
+        targets: dot,
+        x: x + Math.cos(angle) * dist,
+        y: cy + Math.sin(angle) * dist - 12,
+        alpha: 0,
+        duration: 320 + Math.random() * 180,
+        ease: "Quad.easeOut",
+        onComplete: () => dot.destroy(),
+      });
+    }
+
+    // Brief white flash at the player.
+    const flash = this.add.circle(x, cy, 10, 0xffffff, 0.3).setDepth(9998);
+    this.tweens.add({
+      targets: flash,
+      scaleX: 4,
+      scaleY: 4,
+      alpha: 0,
+      duration: 280,
+      ease: "Quad.easeOut",
+      onComplete: () => flash.destroy(),
+    });
+
+    // Floating label.
+    this.floatText(x, cy - 30, "✨ Quest Complete!", "#facc15");
+  }
+
+  // ─── Boss-kill payoff ─────────────────────────────────────────────────────────────
+  /** Dramatic screen-wide fanfare when a boss is defeated. */
+  private playBossKillPayoff(x: number, y: number): void {
+    const { width, height } = this.scale;
+    const cx = width / 2;
+    const cy = height / 2 - 40;
+
+    // Play the advancement fanfare as the boss-kill payoff.
+    getAudioManager().playSfx("advancement");
+
+    // Big golden screen flash.
+    const screenFlash = this.add
+      .rectangle(cx, cy, width, height, 0xffd700, 0.3)
+      .setDepth(9998)
+      .setScrollFactor(0);
+    this.tweens.add({
+      targets: screenFlash,
+      alpha: 0,
+      duration: 500,
+      ease: "Quad.easeOut",
+      onComplete: () => screenFlash.destroy(),
+    });
+
+    // Expanding golden ring at the boss position.
+    const ring = this.add.circle(x, y - 20, 8, 0xffd700, 0).setDepth(9999);
+    ring.setStrokeStyle(4, 0xffd700, 0.95);
+    this.tweens.add({
+      targets: ring,
+      scaleX: 10,
+      scaleY: 10,
+      alpha: 0,
+      duration: 600,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy(),
+    });
+
+    // Radial particle burst — more particles, wider spread.
+    const PARTICLE_COUNT = 18;
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const angle = (i / PARTICLE_COUNT) * Math.PI * 2 + Math.random() * 0.3;
+      const dist = 50 + Math.random() * 60;
+      const isGold = i % 3 !== 0;
+      const color = isGold ? 0xffd700 : 0xffffff;
+      const dot = this.add.circle(x, y - 20, 2 + Math.random() * 2.5, color, 0.9).setDepth(9999);
+      this.tweens.add({
+        targets: dot,
+        x: x + Math.cos(angle) * dist,
+        y: y - 20 + Math.sin(angle) * dist - 20,
+        alpha: 0,
+        duration: 450 + Math.random() * 250,
+        ease: "Quad.easeOut",
+        onComplete: () => dot.destroy(),
+      });
+    }
+
+    // Camera shake for impact.
+    this.shakeCamera(0.9, 350);
+
+    // "BOSS DEFEATED!" floating label.
+    this.floatText(cx, cy - 20, "💀 BOSS DEFEATED!", "#ffd700");
+  }
+
   // ─── Portal rendering + interaction ──────────────────────────────────────────────
   /** Interaction range (px) for portal prompts — matches PORTAL_RANGE in server MapRoom.ts. */
   private static readonly PORTAL_RANGE = 80;
@@ -3025,8 +3717,12 @@ export class MapScene extends Phaser.Scene {
   /** Spawn glowing portal markers at every portal position on the current map. */
   private spawnPortals(): void {
     for (const portal of this.map.portals) {
+      const isComingSoon = portal.comingSoon === true;
+      const glowColor = isComingSoon ? 0xf59e0b : 0x6ec6ff;
+      const labelColor = isComingSoon ? "#f59e0b" : "#6ec6ff";
+
       // Glowing orb marker.
-      const glow = this.add.circle(portal.x, portal.y, 12, 0x6ec6ff, 0.5);
+      const glow = this.add.circle(portal.x, portal.y, 12, glowColor, 0.5);
       glow.setDepth(portal.y);
       this.tweens.add({
         targets: glow,
@@ -3047,7 +3743,7 @@ export class MapScene extends Phaser.Scene {
         .text(portal.x, portal.y - 26, portal.label, {
           fontFamily: "ui-monospace, Menlo, monospace",
           fontSize: "11px",
-          color: "#6ec6ff",
+          color: labelColor,
           stroke: "#1a1a2e",
           strokeThickness: 3,
           align: "center",
@@ -3057,10 +3753,10 @@ export class MapScene extends Phaser.Scene {
 
       // Interaction prompt — hidden until player is in range.
       const prompt = this.add
-        .text(portal.x, portal.y - 42, "[\u2191 ENTER]", {
+        .text(portal.x, portal.y - 42, isComingSoon ? "🚧 Coming Soon" : "[\u2191 ENTER]", {
           fontFamily: "ui-monospace, Menlo, monospace",
           fontSize: "10px",
-          color: "#aeb9c7",
+          color: isComingSoon ? "#f59e0b" : "#aeb9c7",
           stroke: "#1a1a2e",
           strokeThickness: 2,
         })
