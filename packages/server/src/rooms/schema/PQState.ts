@@ -1,5 +1,6 @@
 import { Schema, type, MapSchema, ArraySchema } from "@colyseus/schema";
 import { Player } from "./Player";
+import { Mob } from "./Mob";
 
 /**
  * PQStageProgressSchema — synced progress for a single stage.
@@ -14,10 +15,20 @@ export class PQStageProgressSchema extends Schema {
 }
 
 /**
+ * PQCollectibleSchema — a dropped collectible item on the ground for "collect" objectives.
+ */
+export class PQCollectibleSchema extends Schema {
+  @type("string") uid = "";
+  @type("string") itemId = "";
+  @type("number") x = 0;
+  @type("number") y = 0;
+}
+
+/**
  * PQState — the synced state of a Party Quest room instance.
  *
  * Tracks the active PQ definition, stage machine position, countdown timer,
- * and shared objective progress for all connected players.
+ * shared objective progress, server-spawned mobs, and collectible drops.
  */
 export class PQState extends Schema {
   /** PQ definition id (key in PARTY_QUESTS). */
@@ -45,4 +56,10 @@ export class PQState extends Schema {
 
   /** Players currently in the PQ instance. */
   @type({ map: Player }) players = new MapSchema<Player>();
+
+  /** Server-spawned mobs for the current stage. */
+  @type({ map: Mob }) mobs = new MapSchema<Mob>();
+
+  /** Dropped collectible items on the ground (for "collect" objectives). */
+  @type({ map: PQCollectibleSchema }) collectibles = new MapSchema<PQCollectibleSchema>();
 }

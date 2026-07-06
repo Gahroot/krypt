@@ -44,6 +44,10 @@ export {
 } from "./achievements.js";
 export {
   type PQObjective,
+  type KillCountObjective,
+  type CollectObjective,
+  type ReachPortalObjective,
+  type SolveObjective,
   type PQStageDef,
   type PQRewardSet,
   type PartyQuestDef,
@@ -78,3 +82,9 @@ export {
   type FeedbackSubmitPayload,
   type FeedbackResultPayload,
 } from "./net.js";
+export {
+  type EventEffects,
+  type EventDefinition,
+  type ActiveEvent,
+  type EventsSyncPayload,
+} from "./events.js";

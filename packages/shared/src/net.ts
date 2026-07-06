@@ -3,6 +3,8 @@
  * Lives in @maple/shared (dependency-free) so the browser never has to import server code.
  */
 
+import type { InventoryTab } from "./inventory.js";
+
 /** Per-tick input the client sends; the server is authoritative over the resulting movement. */
 export interface InputData {
   left: boolean;
@@ -210,10 +212,14 @@ export const MessageType = {
   RUNE_DESPAWN: 128,
   RUNE_ACTIVATE: 129,
 
+  // ─── Quest abandon ─────────────────────────────────────────────────────
+  QUEST_ABANDON: 152,
+
   // ─── Treasure Hunter Boxes (destructible loot chests) ─────────────────────
   TREASURE_SPAWN: 130,
   TREASURE_HIT: 131,
   TREASURE_DESTROY: 132,
+  TREASURE_DESPAWN: 151,
 
   // ─── Titles (equipped title above character) ────────────────────────────────
   TITLE_EQUIP: 133,
@@ -247,9 +253,36 @@ export const MessageType = {
   SESSION_GENERATION: 149,
   // Server → client: this session was kicked because the character logged in elsewhere.
   FORCE_LOGOUT: 150,
+
+  // ─── Daily Login Gift (once-per-UTC-day reward) ────────────────────────
+  DAILY_LOGIN_GIFT_SYNC: 153,
+  DAILY_LOGIN_GIFT_CLAIM: 154,
+
+  // ─── Inventory sort ───────────────────────────────────────────────────────
+  INVENTORY_SORT: 155,
+
+  // ─── Unstuck / Return to Town (self-recovery) ─────────────────────────────
+  UNSTUCK_ACTION: 156,
+
+  // ─── Live-ops events (date-gated feature flags) ─────────────────────────
+  EVENTS_SYNC: 157,
+
+  // ─── Scheduled transport (airship / boat / sky-ride) ─────────────────────
+  /** Server → client: periodic countdown while boarded on scheduled transport. */
+  TRANSPORT_STATUS: 158,
+  /** Server → client: ship has departed — TRAVEL follows immediately. */
+  TRANSPORT_DEPARTED: 159,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
+
+/** Server → client: result of an unstuck / return-to-town action. */
+export interface UnstuckResultPayload {
+  success: boolean;
+  message: string;
+  /** Seconds remaining before the player can unstuck again (0 if just succeeded). */
+  cooldownRemaining?: number;
+}
 
 /** Payload a player sends when chatting. */
 export interface ChatPayload {
@@ -281,6 +314,8 @@ export interface PartyChatRelayPayload {
 export interface CreateCharacterPayload {
   name: string;
   gender: "M" | "F";
+  /** Desired class archetype (WARRIOR|MAGE|ARCHER|THIEF|PIRATE). Defaults to BEGINNER. */
+  class?: string;
   appearance: {
     gender: "M" | "F";
     skinId: string;
@@ -319,6 +354,18 @@ export interface ForceLogoutPayload {
 /** Server → client: portal use blocked (e.g. level requirement not met). */
 export interface FerryBlockedPayload {
   message: string;
+}
+
+/** Server → client: periodic countdown while boarded on scheduled transport. */
+export interface TransportStatusPayload {
+  /** Human-readable transport label (e.g. "✈️ Airship to Skyhaven"). */
+  portalLabel: string;
+  /** Milliseconds remaining until departure. */
+  departInMs: number;
+  /** Number of players currently boarded. */
+  boardedCount: number;
+  /** Portal id (for client-side keying). */
+  portalId: string;
 }
 
 /** Client → server: request travel via the world map (clicked a node). */
@@ -1058,6 +1105,8 @@ export interface CubeRerollResultPayload {
   rollSeed?: string;
   /** Hex-encoded commitment for the verifiable roll. */
   rollCommitment?: string;
+  /** True when the new tier is Legendary — signals the on-chain mint pipeline (Phase 2). */
+  mintPending?: boolean;
   message: string;
 }
 
@@ -1353,6 +1402,8 @@ export interface TreasureSpawnPayload {
 export interface TreasureHitPayload {
   /** The box id that was hit. */
   boxId: string;
+  /** Damage dealt this hit. */
+  damage: number;
   /** Current HP after damage. */
   hp: number;
   /** Max HP. */
@@ -1367,6 +1418,12 @@ export interface TreasureDestroyPayload {
   exp: number;
   /** Mesos awarded. */
   mesos: number;
+}
+
+/** Server → client: a treasure box timed out (not destroyed). */
+export interface TreasureDespawnPayload {
+  /** The box id that despawned. */
+  boxId: string;
 }
 
 // ─── Exploration Dispatch ────────────────────────────────────────────────
@@ -1603,6 +1660,11 @@ export interface QuestTurninDeclinePayload {
   readonly questId: string;
 }
 
+/** Client → server: the player abandoned an active quest. */
+export interface QuestAbandonPayload {
+  readonly questId: string;
+}
+
 // ─── Friends / Buddy list ───────────────────────────────────────────────
 
 /** A single friend entry pushed by the server. */
@@ -1708,9 +1770,12 @@ export interface FeedbackSubmitPayload {
   /** Client-reported context (auto-attached). */
   context: {
     mapId: string;
+    x: number;
+    y: number;
     level: number;
     archetype: string;
     clientVersion: string;
+    serverVersion: string;
     logLines: string[];
     userAgent: string;
   };
@@ -1826,4 +1891,25 @@ export interface EquipTitlePayload {
 export interface TitleSyncPayload {
   ownedTitles: string[];
   equippedTitle: string;
+}
+
+// ─── Daily Login Gift (once-per-UTC-day reward) ────────────────────────────
+
+/** Server → client: daily login gift status (sent on join, after claim). */
+export interface DailyLoginGiftSyncPayload {
+  /** Whether the gift is claimable right now. */
+  claimable: boolean;
+  /** The reward preview (always present so client can display it). */
+  reward: { mesos: number; exp: number };
+  /** Server UTC date key for display. */
+  dateKey: string;
+  /** True if this sync follows a successful claim. */
+  claimed?: boolean;
+}
+
+// ─── Inventory Sort ───────────────────────────────────────────────────
+
+/** Client → server: request server-side sort of an inventory tab. */
+export interface InventorySortPayload {
+  tab: InventoryTab;
 }
