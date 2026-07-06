@@ -531,6 +531,22 @@ const SWIM_MAX_FALL = 5;
 /** Vertical speed per tick when swimming freely (no ladder needed). */
 const SWIM_VERTICAL_SPEED = 2.0;
 
+// ─── HP / MP regeneration ─────────────────────────────────────────────────
+/** Ms after the last hit before passive regen begins (out-of-combat delay). */
+const REGEN_COMBAT_DELAY_MS = 5_000;
+/** Ms the player must be completely still before the faster rest regen kicks in. */
+const REGEN_STANDING_DELAY_MS = 3_000;
+/** Passive HP regen rate (% of maxHp per second) while walking/idle out of combat. */
+const REGEN_HP_PASSIVE_RATE = 0.002;
+/** Passive MP regen rate (% of maxMp per second) while walking/idle out of combat. */
+const REGEN_MP_PASSIVE_RATE = 0.0015;
+/** Resting HP regen rate (% of maxHp per second) when standing still out of combat. */
+const REGEN_HP_REST_RATE = 0.01;
+/** Resting MP regen rate (% of maxMp per second) when standing still out of combat. */
+const REGEN_MP_REST_RATE = 0.008;
+/** Mages regen MP at this multiplier (they burn MP on every skill). */
+const REGEN_MAGE_MP_MULTIPLIER = 2.0;
+
 interface PendingMint {
   session: string;
   itemUid: string;
@@ -1878,6 +1894,13 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
     }
 
+    // ── Track standing / resting state for HP/MP regen ──
+    // Reset the standing timer whenever the player is actively moving or jumping.
+    const isMoving = latest.left || latest.right || latest.jump || latest.up || latest.down;
+    if (isMoving) {
+      player.standingSince = Date.now();
+    }
+
     // ── Jump / Drop-through (edge-triggered: fire only on the rising edge) ──
     if (this.map.swimming) {
       // ── Swimming: free vertical movement via jump + up/down keys ──
@@ -2168,6 +2191,61 @@ export class MapRoom extends AuthedRoom<TownState> {
       // Sync to client when effects change (applied or expired).
       if (player.activeEffects.length !== prevLen) {
         this.syncPlayerEffects(player);
+      }
+    }
+
+    // ── HP / MP Regeneration (out-of-combat, MapleStory-style) ──
+    // Only regen if alive, not at full HP/MP, and out of combat for long enough.
+    const now = Date.now();
+    const outOfCombat = now - player.lastDamagedAt >= REGEN_COMBAT_DELAY_MS;
+    if (!player.dead && outOfCombat && (player.hp < player.maxHp || player.mp < player.maxMp)) {
+      const isResting = now - player.standingSince >= REGEN_STANDING_DELAY_MS;
+
+      // Pick the appropriate rate: faster when resting (standing still).
+      const hpRate = isResting ? REGEN_HP_REST_RATE : REGEN_HP_PASSIVE_RATE;
+      let mpRate = isResting ? REGEN_MP_REST_RATE : REGEN_MP_PASSIVE_RATE;
+      // Mages burn through MP fast — give them a class-based MP regen bonus.
+      if (player.archetype === ClassArchetype.MAGE) {
+        mpRate *= REGEN_MAGE_MP_MULTIPLIER;
+      }
+
+      // Accumulate fractional regen; apply only when ≥ 1 HP/MP.
+      const dtSec = dt / 1000;
+      let changed = false;
+      if (player.hp < player.maxHp) {
+        player._regenAccumHp += player.maxHp * hpRate * dtSec;
+        if (player._regenAccumHp >= 1) {
+          const heal = Math.floor(player._regenAccumHp);
+          player.hp = Math.min(player.maxHp, player.hp + heal);
+          player._regenAccumHp -= heal;
+          changed = true;
+        }
+      } else {
+        player._regenAccumHp = 0;
+      }
+      if (player.mp < player.maxMp) {
+        player._regenAccumMp += player.maxMp * mpRate * dtSec;
+        if (player._regenAccumMp >= 1) {
+          const heal = Math.floor(player._regenAccumMp);
+          player.mp = Math.min(player.maxMp, player.mp + heal);
+          player._regenAccumMp -= heal;
+          changed = true;
+        }
+      } else {
+        player._regenAccumMp = 0;
+      }
+
+      // Broadcast a regen event so the client can show a green heal number.
+      if (changed) {
+        const sess = this.findSessionByPlayer(player);
+        if (sess) {
+          this.broadcast("regen_tick", {
+            sessionId: sess,
+            hp: player.hp,
+            mp: player.mp,
+            resting: isResting,
+          });
+        }
       }
     }
   }
@@ -2746,6 +2824,8 @@ export class MapRoom extends AuthedRoom<TownState> {
     // I-frame check: ignore damage during the invulnerability window.
     const now = Date.now();
     if (now < player.iframesUntil) return;
+    // Track when the player was last hit — drives the out-of-combat regen delay.
+    player.lastDamagedAt = now;
     // Knockback the player backward (opposite their facing direction).
     player.knockbackVx += dmg * 0.12 * -player.facing;
     player.hp -= dmg;
@@ -2789,6 +2869,10 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.comboCount = 0;
     player.comboLastHitAt = 0;
     player.knockbackVx = 0;
+    player.lastDamagedAt = Date.now(); // prevent regen immediately after respawn
+    player.standingSince = Date.now();
+    player._regenAccumHp = 0;
+    player._regenAccumMp = 0;
 
     // ── Resolve return map (town or self) ──
     const returnMapId = getDeathReturnMapId(this.state.mapId);

@@ -26,6 +26,9 @@ export class Player extends Schema {
   // ─ Identity ─
   @type("string") name = "";
   @type("string") archetype = "BEGINNER";
+  /** Moderation role: "player" | "gm" | "admin". Synced so the client can gate GM-only UI
+   * reliably (state sync is delivery-guaranteed, unlike a one-shot onJoin message). */
+  @type("string") role = "player";
   @type("uint8") jobTier = 0; // 0 = Beginner, 1 = 1st job, 2 = 2nd job branch, etc.
   @type("string") branchId = ""; // e.g. "berserker" — set on 2nd-job advancement
 
@@ -104,6 +107,16 @@ export class Player extends Schema {
   comboLastHitAt = 0;
   /** Server-authoritative knockback velocity applied after taking contact/boss damage. */
   knockbackVx = 0;
+  /** Epoch (ms) of the last MAP_TRAVEL — rate-limits world-map quick-travel. */
+  lastMapTravelAt = 0;
+  /** Epoch (ms) of the last time the player took damage — drives out-of-combat regen delay. */
+  lastDamagedAt = 0;
+  /** Epoch (ms) when the player last moved — drives the standing/rest regen bonus. */
+  standingSince = Date.now();
+  /** Fractional HP regen accumulator (server-only, not synced). */
+  _regenAccumHp = 0;
+  /** Fractional MP regen accumulator (server-only, not synced). */
+  _regenAccumMp = 0;
 
   // ─── Dialog (server-only, not synced) ────────────────────────────────
   dialogNpcId = ""; // currently talking to this NPC (empty = no dialog active)
