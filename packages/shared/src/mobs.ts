@@ -2517,8 +2517,8 @@ export const MOBS: Record<string, MobDef> = {
         legendaryEligible: true,
       },
       // ── Rare crafting material (for future crafting/upgrade systems) ───────
-      { itemId: "etc.sovereign_heart", chance: 0.3 },
-      { itemId: "etc.dragonfire_core", chance: 0.25 },
+      { itemId: "etc.sovereign_heart", chance: 0.3, minPotentialTier: "UNIQUE" as PotentialTier },
+      { itemId: "etc.dragonfire_core", chance: 0.25, minPotentialTier: "UNIQUE" as PotentialTier },
     ],
   },
 

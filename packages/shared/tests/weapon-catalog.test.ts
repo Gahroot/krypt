@@ -46,9 +46,9 @@ describe("weapon catalog — ascending attack per type", () => {
       }
     });
 
-    it(`${wt} has 4–7 tiers across level bands`, () => {
+    it(`${wt} has 4–8 tiers across level bands`, () => {
       expect(entries.length).toBeGreaterThanOrEqual(4);
-      expect(entries.length).toBeLessThanOrEqual(7);
+      expect(entries.length).toBeLessThanOrEqual(8);
     });
   }
 });

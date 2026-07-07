@@ -78,7 +78,7 @@ export interface QuestRewards {
    * When set, the matching entry is granted in addition to the flat `items`
    * array — so each class receives its appropriate starter weapon.
    */
-  readonly classRewards?: readonly Record<string, readonly string[]>;
+  readonly classRewards?: Readonly<Record<string, readonly string[]>>;
   /**
    * When set the server should advance the player's job tier to this value.
    * Used by job-advancement quest chains so the quest system drives the

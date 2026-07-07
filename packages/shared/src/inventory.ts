@@ -41,7 +41,7 @@ export const TAB_CAPACITY: Record<InventoryTab, number> = {
 /** Max stack size per tab. Equips are always qty 1 (non-stackable). */
 export const MAX_STACK: Record<InventoryTab, number> = {
   EQUIP: 1,
-  USE: 200,
+  USE: 100,
   ETC: 200,
   CASH: 1,
 };

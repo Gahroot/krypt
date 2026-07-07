@@ -386,6 +386,43 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     cooldownMs: 0,
     mesos: 500,
   },
+  // ── Legacy con.* aliases (kept for shop compatibility) ──────────
+  "con.hp_potion_s": {
+    id: "con.hp_potion_s",
+    name: "Minor Healing Tonic",
+    description: "Restores 50 HP.",
+    effect: { kind: "heal", hp: 50 },
+    cooldownMs: 0,
+    mesos: 20,
+    levelReq: 1,
+  },
+  "con.hp_potion_m": {
+    id: "con.hp_potion_m",
+    name: "Moderate Healing Tonic",
+    description: "Restores 100 HP.",
+    effect: { kind: "heal", hp: 100 },
+    cooldownMs: 0,
+    mesos: 60,
+    levelReq: 5,
+  },
+  "con.mp_potion_s": {
+    id: "con.mp_potion_s",
+    name: "Minor Mana Tonic",
+    description: "Restores 30 MP.",
+    effect: { kind: "heal", mp: 30 },
+    cooldownMs: 0,
+    mesos: 25,
+    levelReq: 1,
+  },
+  "con.mp_potion_m": {
+    id: "con.mp_potion_m",
+    name: "Moderate Mana Tonic",
+    description: "Restores 60 MP.",
+    effect: { kind: "heal", mp: 60 },
+    cooldownMs: 0,
+    mesos: 75,
+    levelReq: 5,
+  },
 };
 
 /** Check if a consumable defId is pet food. */

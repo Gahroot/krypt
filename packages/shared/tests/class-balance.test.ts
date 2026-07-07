@@ -53,7 +53,7 @@ function findSkill(id: string): SkillDef {
 // ── 1. Primary stat identity ──────────────────────────────────────────────
 
 describe("Class primary stat identity", () => {
-  it("each class has a unique primary stat", () => {
+  it("warrior and pirate share STR; each other class has a unique primary stat", () => {
     const mains = [
       ClassArchetype.WARRIOR,
       ClassArchetype.MAGE,
@@ -62,7 +62,11 @@ describe("Class primary stat identity", () => {
       ClassArchetype.PIRATE,
     ].map((a) => CLASSES[a].primaryStat);
     const unique = new Set(mains);
-    expect(unique.size).toBe(5);
+    expect(unique.size).toBe(4);
+    expect(unique.has("STR")).toBe(true);
+    expect(unique.has("INT")).toBe(true);
+    expect(unique.has("DEX")).toBe(true);
+    expect(unique.has("LUK")).toBe(true);
   });
 
   it("warrior is STR, mage is INT, archer is DEX, thief is LUK, pirate is STR", () => {

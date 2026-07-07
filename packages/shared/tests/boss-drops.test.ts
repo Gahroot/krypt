@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { MOBS, rollItemDrops } from "../src/mobs.js";
-import { ITEMS } from "../src/items.js";
+import { ITEMS, ETC_ITEMS } from "../src/items.js";
 import { PotentialTier } from "../src/rarity.js";
+
+/** Resolve an item id from either the equip catalog or the etc catalog. */
+function resolveItem(itemId: string): boolean {
+  return itemId in ITEMS || itemId in ETC_ITEMS;
+}
 
 // ── Boss mob ids that live in dungeon / field-boss / raid spawn zones ──
 const BOSS_IDS = [
@@ -43,7 +48,7 @@ describe("boss tier", () => {
 
       it("every drop-table itemId resolves to a real item in the catalog", () => {
         for (const entry of mob.dropTable) {
-          expect(ITEMS[entry.itemId], `Unknown item: ${entry.itemId}`).toBeDefined();
+          expect(resolveItem(entry.itemId), `Unknown item: ${entry.itemId}`).toBe(true);
         }
       });
 
@@ -77,7 +82,6 @@ describe("boss tier", () => {
 
 describe("rollItemDrops on bosses", () => {
   const bogmaw = MOBS["mob.bogmaw"]!;
-  const pyroclasm = MOBS["mob.pyroclasm"]!;
 
   it("drops every entry when rng=0 (all chances pass)", () => {
     const drops = rollItemDrops(bogmaw, () => 0);
@@ -100,7 +104,9 @@ describe("rollItemDrops on bosses", () => {
     for (const bossId of BOSS_IDS) {
       const mob = MOBS[bossId]!;
       for (const entry of mob.dropTable) {
-        expect(ITEMS[entry.itemId], `Boss ${bossId}: unknown item "${entry.itemId}"`).toBeDefined();
+        expect(resolveItem(entry.itemId), `Boss ${bossId}: unknown item "${entry.itemId}"`).toBe(
+          true,
+        );
       }
     }
   });
