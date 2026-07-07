@@ -112,9 +112,14 @@ const SLOT_EMOJI: Record<string, string> = {
 /** Resolve a consumable/etcetera defId to an icon URL, or undefined. */
 function prefixIconUrl(defId: string): string | undefined {
   const id = defId.toLowerCase();
-  // Consumables live under both `con.` and `pot.` prefixes (e.g. con.hp_potion_s,
-  // con.return_scroll, pot.*). Match potions/scrolls by keyword before slot logic.
-  if (id.startsWith("con.") || id.startsWith("pot.") || id.startsWith("item.potion")) {
+  // Consumables live under the `pot.` prefix (e.g. pot.small_hp, pot.elixir_hp,
+  // scroll.return, buff.*, food.*). Match potions/scrolls by keyword before slot logic.
+  if (
+    id.startsWith("pot.") ||
+    id.startsWith("buff.") ||
+    id.startsWith("food.") ||
+    id.startsWith("item.potion")
+  ) {
     if (id.includes("return") || id.includes("teleport")) return iconUrl("use_scroll_return");
     if (id.includes("scroll")) return iconUrl("use_scroll");
     if (id.includes("mp") || id.includes("mana")) return iconUrl("use_potion_mp");

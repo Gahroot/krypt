@@ -59,7 +59,7 @@ describe("FreeMarket.search", () => {
     book.addListing(
       listing({
         id: "l6",
-        defId: "con.hp_potion_s",
+        defId: "pot.small_hp",
         pricePerUnit: 10,
         potentialTier: "RARE",
         qty: 50,

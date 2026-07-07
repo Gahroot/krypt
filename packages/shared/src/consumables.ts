@@ -58,12 +58,14 @@ export interface ConsumableDef {
   readonly cooldownMs: number;
   /** Mesos buy price (for NPC shops). 0 or omitted = not sold by NPCs. */
   readonly mesos?: number;
+  /** Minimum character level to use. 0 or omitted = no level requirement. */
+  readonly levelReq?: number;
 }
 
 // ─── Consumable catalog ─────────────────────────────────────────────────────
 
 export const CONSUMABLES: Record<string, ConsumableDef> = {
-  // ── HP potions ──────────────────────────────────────────────────
+  // ── HP potions (Small → Medium → Large → XL → Elixir) ──────────
   "pot.small_hp": {
     id: "pot.small_hp",
     name: "Minor Healing Tonic",
@@ -71,6 +73,16 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", hp: 50 },
     cooldownMs: 0,
     mesos: 20,
+    levelReq: 1,
+  },
+  "pot.medium_hp": {
+    id: "pot.medium_hp",
+    name: "Moderate Healing Tonic",
+    description: "Restores 100 HP.",
+    effect: { kind: "heal", hp: 100 },
+    cooldownMs: 0,
+    mesos: 40,
+    levelReq: 5,
   },
   "pot.large_hp": {
     id: "pot.large_hp",
@@ -79,8 +91,27 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", hp: 150 },
     cooldownMs: 0,
     mesos: 60,
+    levelReq: 15,
   },
-  // ── MP potions ──────────────────────────────────────────────────
+  "pot.xl_hp": {
+    id: "pot.xl_hp",
+    name: "Superior Healing Tonic",
+    description: "Restores 300 HP.",
+    effect: { kind: "heal", hp: 300 },
+    cooldownMs: 0,
+    mesos: 120,
+    levelReq: 30,
+  },
+  "pot.elixir_hp": {
+    id: "pot.elixir_hp",
+    name: "Supreme Healing Elixir",
+    description: "Restores 600 HP.",
+    effect: { kind: "heal", hp: 600 },
+    cooldownMs: 0,
+    mesos: 250,
+    levelReq: 50,
+  },
+  // ── MP potions (Small → Medium → Large → XL → Elixir) ──────────
   "pot.small_mp": {
     id: "pot.small_mp",
     name: "Minor Mana Tonic",
@@ -88,6 +119,16 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", mp: 30 },
     cooldownMs: 0,
     mesos: 25,
+    levelReq: 1,
+  },
+  "pot.medium_mp": {
+    id: "pot.medium_mp",
+    name: "Moderate Mana Tonic",
+    description: "Restores 60 MP.",
+    effect: { kind: "heal", mp: 60 },
+    cooldownMs: 0,
+    mesos: 50,
+    levelReq: 5,
   },
   "pot.large_mp": {
     id: "pot.large_mp",
@@ -96,6 +137,25 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", mp: 100 },
     cooldownMs: 0,
     mesos: 75,
+    levelReq: 15,
+  },
+  "pot.xl_mp": {
+    id: "pot.xl_mp",
+    name: "Superior Mana Tonic",
+    description: "Restores 200 MP.",
+    effect: { kind: "heal", mp: 200 },
+    cooldownMs: 0,
+    mesos: 150,
+    levelReq: 30,
+  },
+  "pot.elixir_mp": {
+    id: "pot.elixir_mp",
+    name: "Supreme Mana Elixir",
+    description: "Restores 400 MP.",
+    effect: { kind: "heal", mp: 400 },
+    cooldownMs: 0,
+    mesos: 300,
+    levelReq: 50,
   },
   // ── Combined potions ────────────────────────────────────────────
   "pot.combined_small": {
@@ -105,6 +165,16 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", hp: 50, mp: 30 },
     cooldownMs: 0,
     mesos: 40,
+    levelReq: 1,
+  },
+  "pot.combined_medium": {
+    id: "pot.combined_medium",
+    name: "Elixir of Resolve",
+    description: "Restores 100 HP and 60 MP.",
+    effect: { kind: "heal", hp: 100, mp: 60 },
+    cooldownMs: 0,
+    mesos: 80,
+    levelReq: 10,
   },
   "pot.combined_large": {
     id: "pot.combined_large",
@@ -113,6 +183,16 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", hp: 150, mp: 100 },
     cooldownMs: 0,
     mesos: 100,
+    levelReq: 20,
+  },
+  "pot.combined_elixir": {
+    id: "pot.combined_elixir",
+    name: "Elixir of Transcendence",
+    description: "Restores 300 HP and 200 MP.",
+    effect: { kind: "heal", hp: 300, mp: 200 },
+    cooldownMs: 0,
+    mesos: 250,
+    levelReq: 40,
   },
   // ── Percent potions ─────────────────────────────────────────────
   "pot.hp_percent": {
@@ -122,8 +202,111 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     effect: { kind: "heal", hp: 30, percent: true },
     cooldownMs: 5000,
     mesos: 200,
+    levelReq: 20,
   },
-  // ── Stat buffs ──────────────────────────────────────────────────
+  "pot.hp_percent_large": {
+    id: "pot.hp_percent_large",
+    name: "Superior Restoration Draught",
+    description: "Restores 50% of max HP.",
+    effect: { kind: "heal", hp: 50, percent: true },
+    cooldownMs: 5000,
+    mesos: 400,
+    levelReq: 40,
+  },
+  // ── Buff foods (temporary stat boosts) ──────────────────────────
+  "food.honey_bread": {
+    id: "food.honey_bread",
+    name: "Honey Bread",
+    description: "Warm bread drizzled with honey. Regenerates HP and MP for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { hpRegen: 10, mpRegen: 5 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 80,
+    levelReq: 5,
+  },
+  "food.grilled_meat": {
+    id: "food.grilled_meat",
+    name: "Grilled Meat",
+    description: "Hearty grilled venison. Boosts physical attack for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { atk: 8 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 120,
+    levelReq: 10,
+  },
+  "food.apple_pie": {
+    id: "food.apple_pie",
+    name: "Apple Pie",
+    description: "Flaky crust filled with spiced apples. Boosts accuracy and speed for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { accuracy: 10, speed: 5 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 100,
+    levelReq: 10,
+  },
+  "food.fish_stew": {
+    id: "food.fish_stew",
+    name: "Fish Stew",
+    description: "Rich broth brimming with river fish. Boosts magical attack for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { mAtk: 8 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 120,
+    levelReq: 10,
+  },
+  "food.herb_roast": {
+    id: "food.herb_roast",
+    name: "Herb Roast",
+    description: "Slow-roasted with wild herbs. Sharpens critical hit rate for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { critRate: 0.03 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 100,
+    levelReq: 10,
+  },
+  "food.adventurers_stew": {
+    id: "food.adventurers_stew",
+    name: "Adventurer's Stew",
+    description: "A hearty all-rounder stew. Boosts physical and magical attack for 3 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { atk: 5, mAtk: 5 },
+      durationMs: 180_000,
+    },
+    cooldownMs: 0,
+    mesos: 250,
+    levelReq: 20,
+  },
+  "food.jumbo_steak": {
+    id: "food.jumbo_steak",
+    name: "Jumbo Steak",
+    description:
+      "A massive seared steak. Greatly boosts attack and critical hit rate for 2 minutes.",
+    effect: {
+      kind: "buff",
+      secondary: { atk: 12, mAtk: 12, critRate: 0.05 },
+      durationMs: 120_000,
+    },
+    cooldownMs: 0,
+    mesos: 500,
+    levelReq: 40,
+  },
+  // ── Stat buff tonics / elixirs / draughts ──────────────────────
   "buff.power_elixir": {
     id: "buff.power_elixir",
     name: "Elixir of Strength",
@@ -168,51 +351,6 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
       toSpawnId: "dock",
     },
     cooldownMs: 10_000,
-  },
-  // ── Legacy entries (server/client compat) ────────────────────────
-  "con.hp_potion_s": {
-    id: "con.hp_potion_s",
-    name: "Small HP Potion",
-    description: "Restores 50 HP.",
-    effect: { kind: "heal", hp: 50 },
-    cooldownMs: 0,
-    mesos: 20,
-  },
-  "con.hp_potion_m": {
-    id: "con.hp_potion_m",
-    name: "Medium HP Potion",
-    description: "Restores 150 HP.",
-    effect: { kind: "heal", hp: 150 },
-    cooldownMs: 0,
-    mesos: 60,
-  },
-  "con.mp_potion_s": {
-    id: "con.mp_potion_s",
-    name: "Small MP Potion",
-    description: "Restores 30 MP.",
-    effect: { kind: "heal", mp: 30 },
-    cooldownMs: 0,
-    mesos: 25,
-  },
-  "con.mp_potion_m": {
-    id: "con.mp_potion_m",
-    name: "Medium MP Potion",
-    description: "Restores 100 MP.",
-    effect: { kind: "heal", mp: 100 },
-    cooldownMs: 0,
-    mesos: 75,
-  },
-  "con.return_scroll": {
-    id: "con.return_scroll",
-    name: "Return to Town Scroll",
-    description: "Teleports you to the nearest town.",
-    effect: {
-      kind: "recall",
-      toMapId: "heartland_harbor",
-      toSpawnId: "dock",
-    },
-    cooldownMs: 10_000,
-    mesos: 300,
   },
   // ── Flame (bonus stat reroll) ─────────────────────────────────
   "flame.bonus_scroll": {

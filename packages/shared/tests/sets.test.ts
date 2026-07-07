@@ -15,7 +15,7 @@ describe("setMembership", () => {
   it("returns undefined for items not in any set", () => {
     expect(setMembership("wpn.iron_broadsword")).toBeUndefined();
     expect(setMembership("hat.woven_circlet")).toBeUndefined();
-    expect(setMembership("con.hp_potion_s")).toBeUndefined();
+    expect(setMembership("pot.small_hp")).toBeUndefined();
   });
 });
 
@@ -180,7 +180,7 @@ describe("computeSetBonuses — edge cases", () => {
       "wpn.bronze_shortsword",
       "hat.tattered_hood", // starter_warrior 2-piece
       "wpn.iron_broadsword", // not in any set
-      "con.hp_potion_s", // consumable, not in any set
+      "pot.small_hp", // consumable, not in any set
     ]);
     expect(b.STR).toBe(3);
   });
