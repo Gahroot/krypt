@@ -183,6 +183,7 @@ import {
   type MountStatePayload,
   getChairByItemId,
   getChairDef,
+  SIT_ALLOWED_MAPS,
   type ChairSitPayload,
   type ChairSitStatePayload,
   getFishingSpotsForMap,
@@ -2422,13 +2423,43 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
 
     // ── Fishing bite timer ──
-    if (player.fishing && player.fishingBiteAt > 0) {
+    // fishingBiteAt > 0: bite timer counting down
+    // fishingBiteAt === -1: bite sent, waiting for player response
+    // fishingBiteAt === 0: no active bite
+    if (player.fishing && player.fishingBiteAt !== 0) {
       const nowTick = Date.now();
-      if (nowTick >= player.fishingBiteAt) {
-        // Fish is biting! Notify the client to show the timing bar.
+
+      if (player.fishingBiteAt === -1) {
+        // Bite already sent — check if player timed out (reactionWindow + 2s buffer).
+        const spots = getFishingSpotsForMap(this.state.mapId);
+        const spot = spots.find((s) => s.id === player.fishingSpotId);
+        const baseWindow = spot?.baseReactionWindowMs ?? 2500;
+        const streakMultiplier = Math.max(
+          0,
+          1 - player.fishingStreak * FISHING_WINDOW_SHRINK_PERCENT,
+        );
+        const reactionWindow = Math.max(
+          FISHING_MIN_REACTION_WINDOW_MS,
+          baseWindow * streakMultiplier,
+        );
+        const biteSentAt = player.fishingStartAt; // approximate; use biteSentAt if tracked
+        // Auto-cancel after timeout (2s grace beyond reaction window).
+        if (nowTick - biteSentAt > reactionWindow + 3000) {
+          player.fishing = false;
+          player.fishingBiteAt = 0;
+          player.fishingStreak = 0;
+          const sess = this.findSessionByPlayer(player);
+          if (sess) {
+            this.broadcast(MessageType.FISHING_RESULT, {
+              success: false,
+              message: "The fish swam away...",
+            } satisfies FishingResultPayload);
+          }
+        }
+      } else if (nowTick >= player.fishingBiteAt) {
+        // Bite timer expired — send the bite notification.
         const sess = this.findSessionByPlayer(player);
         if (sess) {
-          // Calculate reaction window with difficulty scaling.
           const spots = getFishingSpotsForMap(this.state.mapId);
           const spot = spots.find((s) => s.id === player.fishingSpotId);
           const baseWindow = spot?.baseReactionWindowMs ?? 2500;
@@ -2447,11 +2478,10 @@ export class MapRoom extends AuthedRoom<TownState> {
               player.fishingStreak > 5 ? "rare" : player.fishingStreak > 2 ? "uncommon" : "common",
           } satisfies FishingBitePayload);
 
-          // Auto-fail if client doesn't respond within the window (server-side timeout).
-          // We give a generous extra buffer (2s) for network latency.
-          player.fishingBiteAt = nowTick + reactionWindow + 2000;
+          // Mark as bite sent (sentinel value). Player must respond or auto-fail.
+          player.fishingBiteAt = -1;
+          player.fishingStartAt = nowTick; // repurpose as biteSentAt
         } else {
-          // No client found, cancel fishing.
           player.fishing = false;
           player.fishingBiteAt = 0;
         }
@@ -10887,6 +10917,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Cannot sit while dead, mounted, fishing, or already sitting.
     if (player.dead || player.activeMountId || player.fishing || player.sittingChairId) return;
 
+    // Cannot sit on combat maps.
+    if (!SIT_ALLOWED_MAPS.has(this.state.mapId)) return;
+
     // Look up the chair item in inventory.
     const invItem = player.inventory.get(msg.chairUid);
     if (!invItem) return;
@@ -10977,7 +11010,7 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   private handleFishingCatch(client: Client, msg: FishingCatchPayload): void {
     const player = this.state.players.get(client.sessionId);
-    if (!player || !player.fishing || player.fishingBiteAt === 0) return;
+    if (!player || !player.fishing || player.fishingBiteAt !== -1) return;
 
     const reactionTimeMs = msg?.reactionTimeMs ?? 0;
 
@@ -11144,7 +11177,8 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
 
     // Game over — calculate final rewards.
-    const perfect = player.minigameCorrect === minigameDef.rounds;
+    const score = player.minigameCorrect;
+    const perfect = score === minigameDef.rounds;
     if (perfect) {
       player.mesos += minigameDef.perfectBonusMesos;
       player.exp += minigameDef.perfectBonusExp;
@@ -11154,7 +11188,6 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.minigameRound = 0;
     player.minigameCorrect = 0;
 
-    const score = player.minigameCorrect;
     client.send(MessageType.TOWN_MINIGAME_RESULT, {
       success: true,
       score,

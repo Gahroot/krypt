@@ -3145,12 +3145,8 @@ export class MapScene extends Phaser.Scene {
       if (this.registry.get("settingsOpen") === true) return;
       if (this.registry.get(DIALOG_OPEN_KEY) === true) return;
       if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
-      if (this.localFishing) {
+      if (this.localFishing || this.fishingBiteActive) {
         this.respondToFishBite();
-      } else if (this.fishingBiteActive) {
-        this.respondToFishBite();
-      } else if (this.localChairId) {
-        this.toggleChairSit();
       } else {
         this.toggleChairSit();
       }
@@ -5130,7 +5126,7 @@ export class MapScene extends Phaser.Scene {
   // ─── Chair / Sit rendering ────────────────────────────────────────────────────
 
   /** Chair sprites for seated players (sessionId → sprite). */
-  private readonly chairSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  private readonly chairSprites = new Map<string, Phaser.GameObjects.Graphics>();
 
   /** Local player's active chair id (client-tracked for toggle). */
   private localChairId = "";
@@ -5153,7 +5149,6 @@ export class MapScene extends Phaser.Scene {
     if (!payload.chairId) return; // stood up
 
     // Render a simple colored rectangle as the chair placeholder.
-    // In a real game, this would be a spritesheet animation.
     const chairColor = payload.chairId.includes("golden")
       ? 0xffd700
       : payload.chairId.includes("blue")
@@ -5170,15 +5165,7 @@ export class MapScene extends Phaser.Scene {
     chairGfx.x = payload.x;
     chairGfx.y = payload.y;
     chairGfx.setDepth(playerSprite.depth - 0.01);
-
-    // Store as a sprite-like object with destroy method.
-    const wrapper = {
-      x: payload.x,
-      y: payload.y,
-      destroy: () => chairGfx.destroy(),
-      setDepth: (d: number) => chairGfx.setDepth(d),
-    } as unknown as Phaser.GameObjects.Sprite;
-    this.chairSprites.set(payload.sessionId, wrapper);
+    this.chairSprites.set(payload.sessionId, chairGfx);
   }
 
   /** Toggle chair sit for the local player. */
