@@ -7,8 +7,15 @@
 
 import type { TownState } from "./rooms/schema/TownState";
 import type { Mob } from "./rooms/schema/Mob";
+import type { Player } from "./rooms/schema/Player";
 import type { GameMap, MobDef, BossSpawnZone } from "@maple/shared";
-import { getMobDef, applyEffect, skillDebuffToStatusEffects } from "@maple/shared";
+import {
+  getMobDef,
+  applyEffect,
+  skillDebuffToStatusEffects,
+  getBossAttackPattern,
+} from "@maple/shared";
+import type { BossAttackPatternDef } from "@maple/shared";
 import { groundYAt } from "@maple/shared";
 import { Mob as MobSchema } from "./rooms/schema/Mob";
 
@@ -91,6 +98,9 @@ export class BossManager {
         enc.telegraphTimer -= dt;
         if (enc.telegraphTimer <= 0) {
           mob.bossTelegraph = "";
+          mob.bossTelegraphX = 0;
+          mob.bossTelegraphY = 0;
+          mob.bossTelegraphRadius = 0;
           enc.telegraphTimer = 0;
         }
       }
@@ -113,6 +123,9 @@ export class BossManager {
           enc.lastAttackTick = BOSS_ATTACK_INTERVAL_MS;
           enc.telegraphTimer = 0;
           mob.bossTelegraph = "";
+          mob.bossTelegraphX = 0;
+          mob.bossTelegraphY = 0;
+          mob.bossTelegraphRadius = 0;
           // Despawn all adds.
           for (const addId of enc.addInstanceIds) {
             state.mobs.delete(addId);
@@ -369,70 +382,231 @@ export class BossManager {
     const allPatterns = def.attackPatternIds ?? ["attack"];
     // Unlock new patterns progressively: phase 0 → first 2, phase 1 → first 3, phase 2 → all.
     const unlockedCount = Math.min(allPatterns.length, 2 + enc.phase);
-    const pattern = allPatterns[enc.attackPatternIndex % unlockedCount] ?? "attack";
+    const patternId = allPatterns[enc.attackPatternIndex % unlockedCount] ?? "attack";
     enc.attackPatternIndex++;
 
-    // Find nearest player for targeted attack.
-    let nearestSessionId = "";
-    let nearestDist = Infinity;
+    const patternDef = getBossAttackPattern(patternId);
+    const patternType = patternDef?.type ?? "simple_melee";
 
+    // Phase-scaled base damage.
+    let baseDmg: number;
+    if (enc.phase >= 2) {
+      baseDmg = Math.floor((def.aoeDamage ?? def.attackDamage ?? 10) * 1.25);
+    } else if (enc.phase >= 1) {
+      baseDmg = def.aoeDamage ?? def.attackDamage ?? 10;
+    } else {
+      baseDmg = def.attackDamage ?? 10;
+    }
+    const dmg = Math.floor(baseDmg * (patternDef?.damageScale ?? 1));
+    const telegraphMs = patternDef?.telegraphMs ?? def.telegraphMs ?? TELEGRAPH_MS;
+
+    switch (patternType) {
+      case "targeted_slam": {
+        // AoE at the nearest living player's position.
+        const target = this.findNearestPlayer(state, boss);
+        if (!target) return;
+        const radius = patternDef?.telegraphRadius ?? 80;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = target.player.x;
+        boss.bossTelegraphY = target.player.y;
+        boss.bossTelegraphRadius = radius;
+        enc.telegraphTimer = telegraphMs;
+
+        // Damage all players within the AoE radius centered on the target.
+        for (const [, player] of state.players) {
+          if (player.dead) continue;
+          const dist = Math.hypot(target.player.x - player.x, target.player.y - player.y);
+          if (dist < radius) {
+            this.applyBossDamage(player, dmg, def, patternDef);
+          }
+        }
+        break;
+      }
+
+      case "ground_slam": {
+        // Large AoE centered on the boss itself.
+        const radius = patternDef?.telegraphRadius ?? 120;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = boss.x;
+        boss.bossTelegraphY = boss.y;
+        boss.bossTelegraphRadius = radius;
+        enc.telegraphTimer = telegraphMs;
+
+        for (const [, player] of state.players) {
+          if (player.dead) continue;
+          const dist = Math.hypot(boss.x - player.x, boss.y - player.y);
+          if (dist < radius) {
+            this.applyBossDamage(player, dmg, def, patternDef);
+          }
+        }
+        break;
+      }
+
+      case "line_attack": {
+        // Horizontal rectangle in the direction the boss is facing.
+        const length = patternDef?.telegraphLength ?? 250;
+        const width = patternDef?.telegraphWidth ?? 60;
+        const dir = boss.facing;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = boss.x + dir * (length / 2);
+        boss.bossTelegraphY = boss.y;
+        boss.bossTelegraphRadius = length;
+        enc.telegraphTimer = telegraphMs;
+
+        for (const [, player] of state.players) {
+          if (player.dead) continue;
+          const dx = player.x - boss.x;
+          const dy = player.y - boss.y;
+          const along = dx * dir;
+          const across = Math.abs(dy);
+          if (along >= -20 && along <= length && across <= width / 2) {
+            this.applyBossDamage(player, dmg, def, patternDef);
+          }
+        }
+        break;
+      }
+
+      case "debuff_cloud": {
+        // AoE at nearest player + applies debuff.
+        const target = this.findNearestPlayer(state, boss);
+        if (!target) return;
+        const radius = patternDef?.telegraphRadius ?? 80;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = target.player.x;
+        boss.bossTelegraphY = target.player.y;
+        boss.bossTelegraphRadius = radius;
+        enc.telegraphTimer = telegraphMs;
+
+        for (const [, player] of state.players) {
+          if (player.dead) continue;
+          const dist = Math.hypot(target.player.x - player.x, target.player.y - player.y);
+          if (dist < radius) {
+            this.applyBossDamage(player, dmg, def, patternDef);
+          }
+        }
+        break;
+      }
+
+      case "projectile_volley": {
+        // Hit up to 3 nearest living players.
+        const targets = this.findNearestPlayers(state, boss, 3);
+        if (targets.length === 0) return;
+        const radius = patternDef?.telegraphRadius ?? 40;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = boss.x;
+        boss.bossTelegraphY = boss.y;
+        boss.bossTelegraphRadius = radius;
+        enc.telegraphTimer = telegraphMs;
+
+        for (const entry of targets) {
+          const dist = Math.hypot(boss.x - entry.player.x, boss.y - entry.player.y);
+          if (dist < 350) {
+            this.applyBossDamage(entry.player, dmg, def, patternDef);
+          }
+        }
+        break;
+      }
+
+      case "summon_retreat": {
+        // Visual indicator only — actual adds spawned by the summon timer.
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = boss.x;
+        boss.bossTelegraphY = boss.y;
+        boss.bossTelegraphRadius = patternDef?.telegraphRadius ?? 50;
+        enc.telegraphTimer = telegraphMs;
+        break;
+      }
+
+      case "simple_melee":
+      default: {
+        // Hit the nearest player in melee range (original behavior).
+        const target = this.findNearestPlayer(state, boss);
+        if (!target) return;
+        const dist = Math.hypot(boss.x - target.player.x, boss.y - target.player.y);
+        const radius = patternDef?.telegraphRadius ?? 40;
+
+        boss.bossTelegraph = patternId;
+        boss.bossTelegraphX = boss.x;
+        boss.bossTelegraphY = boss.y;
+        boss.bossTelegraphRadius = radius;
+        enc.telegraphTimer = telegraphMs;
+
+        if (dist < 200) {
+          this.applyBossDamage(target.player, dmg, def, patternDef);
+        }
+        break;
+      }
+    }
+  }
+
+  /** Apply boss damage to a player with i-frames, knockback, death check, and debuff. */
+  private applyBossDamage(
+    player: Player,
+    dmg: number,
+    bossDef: MobDef,
+    patternDef?: BossAttackPatternDef,
+  ): void {
+    const now = Date.now();
+    if (now < player.iframesUntil) return;
+
+    player.hp = Math.max(0, player.hp - dmg);
+    player.knockbackVx += dmg * 0.12 * -player.facing;
+    player.iframesUntil = now + 600;
+
+    if (player.hp <= 0) {
+      player.dead = true;
+      player.attacking = false;
+      player.respawnTimer = 4000;
+    }
+
+    // Apply debuff: pattern-specific first, then boss global.
+    const debuff = patternDef?.debuff ?? bossDef.debuffEffect;
+    if (debuff) {
+      const debuffs = skillDebuffToStatusEffects(bossDef.id, debuff, bossDef.name);
+      for (const d of debuffs) {
+        player.activeEffects = applyEffect(player.activeEffects, d);
+        player.effectElapsed.set(d.id, 0);
+      }
+    }
+  }
+
+  /** Find the nearest living player to the boss. */
+  private findNearestPlayer(
+    state: TownState,
+    boss: Mob,
+  ): { sessionId: string; player: Player } | undefined {
+    let best: { sessionId: string; player: Player } | undefined;
+    let bestDist = Infinity;
     state.players.forEach((player, sessionId) => {
       if (player.dead) return;
       const dist = Math.hypot(boss.x - player.x, boss.y - player.y);
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestSessionId = sessionId;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = { sessionId, player };
       }
     });
+    return best;
+  }
 
-    // Telegraph warning before AoE attacks.
-    const isAoe = pattern.includes("slam") || pattern.includes("roar") || pattern.includes("cloud");
-    if (isAoe && nearestSessionId) {
-      // Sync the telegraph pattern name so the client can render a ground indicator.
-      boss.bossTelegraph = pattern;
-      enc.telegraphTimer = TELEGRAPH_MS;
-    }
-
-    // Damage the nearest player if in range.
-    if (nearestSessionId && nearestDist < 200) {
-      // Phase-scaled damage: base → aoeDamage → aoeDamage ×1.25 enrage.
-      let dmg: number;
-      if (enc.phase >= 2) {
-        dmg = Math.floor((def.aoeDamage ?? def.attackDamage ?? 10) * 1.25);
-      } else if (enc.phase >= 1) {
-        dmg = def.aoeDamage ?? def.attackDamage ?? 10;
-      } else {
-        dmg = def.attackDamage ?? 10;
-      }
-      const target = state.players.get(nearestSessionId);
-      if (target && !target.dead) {
-        // I-frame check: ignore damage during the invulnerability window.
-        const now = Date.now();
-        let hit = false;
-        if (now >= target.iframesUntil) {
-          hit = true;
-          target.hp = Math.max(0, target.hp - dmg);
-          // Knockback the player backward (opposite their facing).
-          target.knockbackVx += dmg * 0.12 * -target.facing;
-          // Grant i-frames after boss damage.
-          target.iframesUntil = now + 600;
-        }
-        if (target.hp <= 0) {
-          target.dead = true;
-          target.attacking = false;
-          target.respawnTimer = 4000;
-        }
-
-        // Apply boss debuff (stun/slow/poison) to the player on hit.
-        if (hit && def.debuffEffect) {
-          const debuffs = skillDebuffToStatusEffects(def.id, def.debuffEffect, def.name);
-          for (const debuff of debuffs) {
-            target.activeEffects = applyEffect(target.activeEffects, debuff);
-            target.effectElapsed.set(debuff.id, 0);
-          }
-        }
-      }
-    }
+  /** Find the N nearest living players to the boss, sorted by distance. */
+  private findNearestPlayers(
+    state: TownState,
+    boss: Mob,
+    count: number,
+  ): { sessionId: string; player: Player }[] {
+    const entries: { sessionId: string; player: Player; dist: number }[] = [];
+    state.players.forEach((player, sessionId) => {
+      if (player.dead) return;
+      const dist = Math.hypot(boss.x - player.x, boss.y - player.y);
+      entries.push({ sessionId, player, dist });
+    });
+    entries.sort((a, b) => a.dist - b.dist);
+    return entries.slice(0, count).map(({ sessionId, player }) => ({ sessionId, player }));
   }
 
   private spawnAdds(

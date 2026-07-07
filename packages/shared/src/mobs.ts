@@ -142,6 +142,8 @@ export interface MobDef {
 
   /** Named attack patterns for telegraphed multi-phase boss attacks. */
   readonly attackPatternIds?: readonly string[];
+  /** Telegraph warning duration (ms) override per boss. Default 500. */
+  readonly telegraphMs?: number;
   /** Contact damage dealt when a player touches the boss. */
   readonly contactDamage?: number;
   /** AoE damage dealt by area attacks. */
@@ -154,6 +156,402 @@ export interface MobDef {
   readonly phases?: readonly number[];
   /** Optional debuff applied to the player on hit (stun, slow, or poison). */
   readonly debuffEffect?: import("./classes.js").DebuffEffect;
+}
+
+// ── Boss attack pattern definitions ─────────────────────────────────────────
+
+/** The behavioral type of a boss attack pattern — drives server damage logic. */
+export type AttackPatternType =
+  | "targeted_slam" // AoE at a player's location
+  | "ground_slam" // Large AoE centered on boss
+  | "line_attack" // Horizontal line from boss
+  | "debuff_cloud" // AoE at player + debuff
+  | "projectile_volley" // Multiple hits on different players
+  | "summon_retreat" // Summon adds, reposition
+  | "simple_melee"; // Basic single-target hit
+
+/** Telegraph visual shape rendered by the client. */
+export type TelegraphShape = "circle" | "line" | "rect";
+
+/** Full definition for a boss attack pattern — drives both server damage logic and client visuals. */
+export interface BossAttackPatternDef {
+  readonly type: AttackPatternType;
+  readonly telegraphShape: TelegraphShape;
+  readonly telegraphRadius: number;
+  readonly telegraphLength: number;
+  readonly telegraphWidth: number;
+  readonly telegraphColor: number;
+  readonly telegraphMs: number;
+  readonly damageScale: number;
+  readonly debuff?: import("./classes.js").DebuffEffect;
+}
+
+/** Registry of attack pattern definitions, keyed by pattern id string. */
+export const BOSS_ATTACK_PATTERNS: Record<string, BossAttackPatternDef> = {
+  charge: {
+    type: "simple_melee",
+    telegraphShape: "circle",
+    telegraphRadius: 40,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff4444,
+    telegraphMs: 300,
+    damageScale: 1.0,
+  },
+  slam: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 100,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff6644,
+    telegraphMs: 500,
+    damageScale: 1.1,
+  },
+  root_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 70,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x88cc44,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  poison_cloud: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 80,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x66cc44,
+    telegraphMs: 600,
+    damageScale: 0.8,
+    debuff: { poisonTickDamage: 2, poisonTickMs: 500, poisonMs: 3000 },
+  },
+  body_slam: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 130,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xcc88ff,
+    telegraphMs: 600,
+    damageScale: 1.2,
+  },
+  split_spawn: {
+    type: "summon_retreat",
+    telegraphShape: "circle",
+    telegraphRadius: 50,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xffcc00,
+    telegraphMs: 400,
+    damageScale: 0,
+  },
+  spore_burst: {
+    type: "projectile_volley",
+    telegraphShape: "circle",
+    telegraphRadius: 40,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xcc44cc,
+    telegraphMs: 400,
+    damageScale: 0.9,
+  },
+  toxic_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 75,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x44cc88,
+    telegraphMs: 500,
+    damageScale: 1.1,
+    debuff: { poisonTickDamage: 2, poisonTickMs: 500, poisonMs: 2500 },
+  },
+  dark_charge: {
+    type: "simple_melee",
+    telegraphShape: "circle",
+    telegraphRadius: 40,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x8844cc,
+    telegraphMs: 300,
+    damageScale: 1.2,
+  },
+  wing_slash: {
+    type: "line_attack",
+    telegraphShape: "line",
+    telegraphRadius: 0,
+    telegraphLength: 250,
+    telegraphWidth: 60,
+    telegraphColor: 0xcc44aa,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  abyssal_roar: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 160,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x6622cc,
+    telegraphMs: 700,
+    damageScale: 1.3,
+  },
+  dark_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 80,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x9944ff,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  curse_cloud: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 90,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x4466ff,
+    telegraphMs: 600,
+    damageScale: 0.8,
+    debuff: { stunMs: 800 },
+  },
+  bog_cloud: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 85,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x44aa66,
+    telegraphMs: 600,
+    damageScale: 0.8,
+    debuff: { slowPercent: 30, slowMs: 3000 },
+  },
+  mire_roar: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 140,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x88aa44,
+    telegraphMs: 600,
+    damageScale: 1.2,
+  },
+  storm_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 90,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xffff44,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  chain_lightning: {
+    type: "projectile_volley",
+    telegraphShape: "circle",
+    telegraphRadius: 45,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x44ccff,
+    telegraphMs: 400,
+    damageScale: 0.9,
+  },
+  gale_roar: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 180,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x88ddff,
+    telegraphMs: 700,
+    damageScale: 1.3,
+  },
+  frost_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 85,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x88ccff,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  blizzard_cloud: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 100,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x44aaff,
+    telegraphMs: 600,
+    damageScale: 0.8,
+    debuff: { slowPercent: 35, slowMs: 3500 },
+  },
+  glacial_roar: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 170,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x66bbff,
+    telegraphMs: 700,
+    damageScale: 1.3,
+  },
+  ice_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 90,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x88ddff,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  frost_cloud: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 95,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x44bbff,
+    telegraphMs: 600,
+    damageScale: 0.8,
+    debuff: { slowPercent: 30, slowMs: 3000 },
+  },
+  frozen_slam: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 150,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x66ccff,
+    telegraphMs: 700,
+    damageScale: 1.3,
+  },
+  ink_slam: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 95,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x224488,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  tentacle_sweep: {
+    type: "line_attack",
+    telegraphShape: "line",
+    telegraphRadius: 0,
+    telegraphLength: 300,
+    telegraphWidth: 70,
+    telegraphColor: 0x4466aa,
+    telegraphMs: 600,
+    damageScale: 1.1,
+  },
+  crushing_grip: {
+    type: "targeted_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 100,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0x2266cc,
+    telegraphMs: 500,
+    damageScale: 1.2,
+    debuff: { stunMs: 1000 },
+  },
+  dragon_claw: {
+    type: "simple_melee",
+    telegraphShape: "circle",
+    telegraphRadius: 50,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff4400,
+    telegraphMs: 300,
+    damageScale: 1.3,
+  },
+  inferno_breath: {
+    type: "line_attack",
+    telegraphShape: "line",
+    telegraphRadius: 0,
+    telegraphLength: 350,
+    telegraphWidth: 80,
+    telegraphColor: 0xff6600,
+    telegraphMs: 600,
+    damageScale: 1.2,
+    debuff: { poisonTickDamage: 5, poisonTickMs: 500, poisonMs: 3000 },
+  },
+  tail_sweep: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 200,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff8800,
+    telegraphMs: 700,
+    damageScale: 1.1,
+  },
+  aerial_bombardment: {
+    type: "projectile_volley",
+    telegraphShape: "circle",
+    telegraphRadius: 50,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xffaa00,
+    telegraphMs: 500,
+    damageScale: 1.0,
+  },
+  brood_summon: {
+    type: "summon_retreat",
+    telegraphShape: "circle",
+    telegraphRadius: 60,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff4444,
+    telegraphMs: 500,
+    damageScale: 0,
+  },
+  shadow_flame: {
+    type: "debuff_cloud",
+    telegraphShape: "circle",
+    telegraphRadius: 110,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xcc22ff,
+    telegraphMs: 600,
+    damageScale: 0.9,
+    debuff: { slowPercent: 40, slowMs: 4000 },
+  },
+  sovereign_roar: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 220,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff2200,
+    telegraphMs: 800,
+    damageScale: 1.5,
+  },
+  extinction_event: {
+    type: "ground_slam",
+    telegraphShape: "circle",
+    telegraphRadius: 300,
+    telegraphLength: 0,
+    telegraphWidth: 0,
+    telegraphColor: 0xff0000,
+    telegraphMs: 1000,
+    damageScale: 2.0,
+  },
+};
+
+/** Look up the attack pattern definition by id. Returns undefined for unknown patterns. */
+export function getBossAttackPattern(id: string): BossAttackPatternDef | undefined {
+  return BOSS_ATTACK_PATTERNS[id];
 }
 
 export const MOBS: Record<string, MobDef> = {

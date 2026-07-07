@@ -86,6 +86,9 @@ export interface MobView {
   grounded: boolean;
   isElite: boolean;
   bossTelegraph: string;
+  bossTelegraphX: number;
+  bossTelegraphY: number;
+  bossTelegraphRadius: number;
   stunned: boolean;
 }
 

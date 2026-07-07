@@ -34,6 +34,7 @@ import {
   type TreasureDespawnPayload,
   type ServerAnnouncementPayload,
   getMobDef,
+  getBossAttackPattern,
   QUESTS,
   PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CODE,
@@ -1455,19 +1456,40 @@ export class MapScene extends Phaser.Scene {
         }
         sprite.setData("stunned", mob.stunned);
 
-        // Caster telegraph visual: draw AoE circle while telegraph is active.
+        // Boss telegraph visual: draw shape based on pattern definition.
         const prevTelegraph = sprite.getData("telegraph") as string;
-        if (mob.bossTelegraph !== prevTelegraph) {
+        const tgChanged = mob.bossTelegraph !== prevTelegraph;
+        const tgPosChanged =
+          mob.bossTelegraphX !== (sprite.getData("tgX") as number) ||
+          mob.bossTelegraphY !== (sprite.getData("tgY") as number);
+        if (tgChanged || (mob.bossTelegraph !== "" && tgPosChanged)) {
           sprite.setData("telegraph", mob.bossTelegraph);
+          sprite.setData("tgX", mob.bossTelegraphX);
+          sprite.setData("tgY", mob.bossTelegraphY);
           const existingTg = this.telegraphGfx.get(key);
           if (existingTg) {
             existingTg.destroy();
             this.telegraphGfx.delete(key);
           }
           if (mob.bossTelegraph !== "" && !mob.dead) {
+            const patDef = getBossAttackPattern(mob.bossTelegraph);
             const tgGfx = this.add.graphics();
-            tgGfx.setDepth(mob.y - 1);
-            this.drawTelegraphCircle(tgGfx, mob.x, mob.y, 80);
+            const tx = mob.bossTelegraphX;
+            const ty = mob.bossTelegraphY;
+            const color = patDef?.telegraphColor ?? 0xff4444;
+            const shape = patDef?.telegraphShape ?? "circle";
+            if (shape === "line") {
+              const len = (mob.bossTelegraphRadius || patDef?.telegraphLength) ?? 250;
+              const w = patDef?.telegraphWidth ?? 60;
+              const dir = mob.facing >= 0 ? 1 : -1;
+              tgGfx.setDepth(ty - 1);
+              this.drawTelegraphLine(tgGfx, mob.x, ty, len, w, dir, color);
+            } else {
+              // circle / rect
+              const r = mob.bossTelegraphRadius || 80;
+              tgGfx.setDepth(ty - 1);
+              this.drawTelegraphCircle(tgGfx, tx, ty, r, color);
+            }
             this.telegraphGfx.set(key, tgGfx);
           }
         }
@@ -2453,12 +2475,32 @@ export class MapScene extends Phaser.Scene {
     x: number,
     y: number,
     radius: number,
+    color = 0xff4444,
   ): void {
     gfx.clear();
-    gfx.fillStyle(0xff4444, 0.2);
+    gfx.fillStyle(color, 0.2);
     gfx.fillCircle(x, y, radius);
-    gfx.lineStyle(2, 0xff4444, 0.7);
+    gfx.lineStyle(2, color, 0.7);
     gfx.strokeCircle(x, y, radius);
+  }
+
+  /** Draw a telegraph horizontal line (rectangle) for breath/sweep attacks. */
+  private drawTelegraphLine(
+    gfx: Phaser.GameObjects.Graphics,
+    x: number,
+    y: number,
+    length: number,
+    width: number,
+    dir: number,
+    color: number,
+  ): void {
+    gfx.clear();
+    const startX = dir >= 0 ? x : x - length;
+    const rect = new Phaser.Geom.Rectangle(startX, y - width / 2, length, width);
+    gfx.fillStyle(color, 0.2);
+    gfx.fillRect(rect.x, rect.y, rect.width, rect.height);
+    gfx.lineStyle(2, color, 0.7);
+    gfx.strokeRect(rect.x, rect.y, rect.width, rect.height);
   }
 
   /** Play a brief explosion VFX at a position (exploder mob self-destruct). */

@@ -18,6 +18,9 @@ export class Mob extends Schema {
   @type("boolean") grounded = false;
   @type("number") knockbackVx = 0; // synced: horizontal knockback velocity
   @type("string") bossTelegraph = ""; // synced: current AoE telegraph pattern name (empty = none)
+  @type("number") bossTelegraphX = 0; // synced: telegraph center X (may differ from boss position)
+  @type("number") bossTelegraphY = 0; // synced: telegraph center Y
+  @type("number") bossTelegraphRadius = 0; // synced: telegraph radius or length
   @type("boolean") stunned = false; // synced: true when a stun debuff is active
 
   // ─── Server-only (NOT synced) ───────────────────────────────────────
