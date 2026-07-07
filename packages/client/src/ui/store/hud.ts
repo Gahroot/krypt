@@ -25,7 +25,11 @@ export interface HudSkillSlot {
   key: string;
   /** What's assigned, or null for an empty slot. */
   kind: "skill" | "consumable" | null;
-  /** Short label rendered in the slot. */
+  /** Skill ID (e.g. "warrior.rally") or item defId (e.g. "con.hp_potion_s"). */
+  id: string;
+  /** Skill kind for icon shape — only meaningful when kind === "skill". */
+  skillKind?: "active" | "buff" | "passive";
+  /** Short label rendered in the slot (kept for text fallback). */
   label: string;
   /** Full name shown in the hover tooltip. */
   fullName: string;

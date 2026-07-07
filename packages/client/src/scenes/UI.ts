@@ -2119,6 +2119,7 @@ export class UIScene extends Phaser.Scene {
           index: i,
           key,
           kind: null,
+          id: "",
           label: "",
           fullName: "",
           usable: false,
@@ -2131,13 +2132,17 @@ export class UIScene extends Phaser.Scene {
       let fullName: string;
       let usable = true;
       let count: number | undefined;
+      let skillKind: "active" | "buff" | "passive" | undefined;
       if (entry.type === "skill") {
         const learned = this.localSkillBook[entry.id] ?? 0;
         const allSkills = p ? allSkillsForClass(p.archetype as ClassArchetype) : [];
         const skillDef = allSkills.find((s: { id: string }) => s.id === entry.id);
         fullName = skillDef?.name ?? entry.id;
         label = (skillDef?.name ?? entry.id.slice(entry.id.lastIndexOf(".") + 1)).slice(0, 6);
-        if (skillDef && p) usable = p.mp >= skillStatAt(skillDef, learned).mpCost;
+        if (skillDef) {
+          skillKind = skillDef.kind;
+          if (p) usable = p.mp >= skillStatAt(skillDef, learned).mpCost;
+        }
         if (learned <= 0) usable = false;
       } else {
         let stack = 0;
@@ -2158,6 +2163,8 @@ export class UIScene extends Phaser.Scene {
         index: i,
         key,
         kind: entry.type,
+        id: entry.id,
+        skillKind,
         label,
         fullName,
         usable,

@@ -1,6 +1,7 @@
 import { Progress } from "@/ui/components/ui/progress";
 import { cn } from "@/ui/lib/utils";
 import { useUIStore, type StatusEffectSnapshot } from "@/ui/store";
+import { resolveEffectIcon } from "@/ui/skill-icon";
 
 /**
  * StatusEffects — the always-on buff/debuff icon strip (lives in the HUD layer).
@@ -8,8 +9,8 @@ import { useUIStore, type StatusEffectSnapshot } from "@/ui/store";
  * React port of the hand-drawn Phaser `buildStatusEffects` / `renderStatusEffects`.
  * Pure renderer of the bridge snapshot (store/statusEffects.ts): the scene owns
  * the authoritative list and ticks the countdowns, republishing on change. Each
- * icon shows a kind emoji, a remaining-time bar, a seconds countdown, and a stack
- * badge. Non-interactive, so it inherits the click-through host.
+ * icon shows a skill icon (or coloured glyph), a remaining-time bar, a seconds
+ * countdown, and a stack badge. Non-interactive, so it inherits the click-through host.
  */
 
 /** Per-kind tile tint (Tailwind class on the indicator + ring). */
@@ -29,32 +30,6 @@ const KIND_FILL: Record<string, string> = {
   dot: "[&_[data-slot=progress-indicator]]:bg-red-300",
 };
 
-/** Map a status-effect kind + label to an emoji icon (port of effectEmoji). */
-function effectEmoji(kind: string, label: string): string {
-  const l = label.toLowerCase();
-  switch (kind) {
-    case "stun":
-      return "⭐";
-    case "hot":
-      return "❤️";
-    case "dot":
-      return "🔥";
-    case "debuff":
-      if (l.includes("slow")) return "🐌";
-      if (l.includes("poison")) return "☠️";
-      return "⬇️";
-    case "buff":
-      if (l.includes("atk") || l.includes("power") || l.includes("rally")) return "⚔️";
-      if (l.includes("def") || l.includes("guard") || l.includes("iron")) return "🛡️";
-      if (l.includes("speed") || l.includes("haste")) return "💨";
-      if (l.includes("hp") || l.includes("heal")) return "💚";
-      if (l.includes("mp") || l.includes("mana")) return "💙";
-      return "✨";
-    default:
-      return "🔮";
-  }
-}
-
 /** Short text label for each status kind — shown below the icon for colorblind accessibility. */
 const KIND_LABEL: Record<string, string> = {
   buff: "BUFF",
@@ -69,16 +44,18 @@ function EffectIcon({ effect }: { effect: StatusEffectSnapshot }) {
     effect.durationMs > 0 ? Math.max(0, Math.min(1, effect.remainingMs / effect.durationMs)) : 0;
   const secs = Math.max(0, Math.ceil(effect.remainingMs / 1000));
 
+  const icon = resolveEffectIcon(effect.id, effect.kind);
+
   return (
     <div className="flex w-8 flex-col items-center gap-0.5">
       <div
         className={cn(
-          "relative flex size-8 items-center justify-center rounded-md border border-white/30 text-base",
+          "relative flex size-8 items-center justify-center rounded-md border border-white/30",
           KIND_BG[effect.kind] ?? "bg-slate-600/85",
         )}
         title={`${effect.label} — ${secs}s`}
       >
-        <span>{effectEmoji(effect.kind, effect.label)}</span>
+        <img src={icon} alt={effect.label} className="size-5 object-contain" draggable={false} />
         {effect.stacks > 1 && (
           <span className="absolute -top-1 -right-1 rounded bg-black/70 px-1 text-[9px] font-bold text-amber-300">
             {effect.stacks}

@@ -8,6 +8,8 @@ import {
 } from "@/ui/components/ui/tooltip";
 import { cn } from "@/ui/lib/utils";
 import { useUIStore, type HudSkillSlot } from "@/ui/store";
+import { isImageIcon } from "@/ui/item-icon";
+import { slotIconUrl } from "@/ui/skill-icon";
 
 /**
  * SkillBar — the always-on quickslot hotbar ported from the legacy Phaser bar.
@@ -35,6 +37,11 @@ function SkillSlot({
   const sweepDeg = onCooldown ? (remaining / slot.cooldownTotalMs) * 360 : 0;
   const disabled = empty || onCooldown || !slot.usable;
 
+  // Resolve icon — SVG data URI for skills, PNG path for consumables, or
+  // undefined for empty slots.
+  const icon = empty ? undefined : slotIconUrl(slot.id, slot.kind, slot.skillKind);
+  const isImg = icon !== undefined && isImageIcon(icon);
+
   const button = (
     <button
       type="button"
@@ -50,7 +57,16 @@ function SkillSlot({
             : "border-border/50 bg-black/60 text-muted-foreground",
       )}
     >
-      {!empty && (
+      {/* Icon image or text label fallback. */}
+      {!empty && isImg && (
+        <img
+          src={icon}
+          alt={slot.fullName}
+          className="pointer-events-none size-8 object-contain"
+          draggable={false}
+        />
+      )}
+      {!empty && !isImg && (
         <span className="px-0.5 text-center leading-tight tabular-nums">{slot.label}</span>
       )}
 
