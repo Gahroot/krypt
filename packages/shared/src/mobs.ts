@@ -128,8 +128,8 @@ export interface MobDef {
   /** True for dungeon / field bosses. The server uses this to gate encounter logic. */
   readonly isBoss?: boolean;
   /**
-   * Base physical damage the boss deals per hit. The authoritative server
-   * should use this value (with optional variance) when computing boss
+   * Base physical damage this mob deals per hit (applies to all mobs, not just bosses).
+   * The authoritative server should use this value (with optional variance) when computing
    * attack damage against players.
    */
   readonly attackDamage?: number;
@@ -572,6 +572,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 0,
     mDef: 0,
     avoid: 0,
+    attackDamage: 3,
     dropTable: [
       { itemId: "etc.snail_shell", chance: 0.35 },
       { itemId: "ammo.shortbow_arrow", chance: 0.15 },
@@ -597,6 +598,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 1,
     mDef: 0,
     avoid: 0,
+    attackDamage: 3,
     dropTable: [
       { itemId: "etc.green_puff_fiber", chance: 0.3 },
       { itemId: "wpn.apprentice_wand", chance: 0.02 },
@@ -619,6 +621,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 1,
     mDef: 1,
     avoid: 0,
+    attackDamage: 4,
     dropTable: [
       { itemId: "hat.leather_cap", chance: 0.03 },
       { itemId: "hat.tattered_hood", chance: 0.03 },
@@ -642,6 +645,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 3,
     mDef: 2,
     avoid: 3,
+    attackDamage: 5,
     dropTable: [
       { itemId: "etc.rat_whisker", chance: 0.25 },
       { itemId: "etc.cargo_manifest", chance: 0.1 },
@@ -667,6 +671,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 6,
     mDef: 3,
     avoid: 2,
+    attackDamage: 6,
     dropTable: [
       { itemId: "etc.crab_claw", chance: 0.22 },
       { itemId: "hat.leather_cap", chance: 0.03 },
@@ -690,6 +695,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 4,
     mDef: 4,
     avoid: 8,
+    attackDamage: 6,
     dropTable: [
       { itemId: "etc.gull_feather", chance: 0.2 },
       { itemId: "wpn.bronze_shortsword", chance: 0.03 },
@@ -715,6 +721,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 6,
     mDef: 8,
     avoid: 5,
+    attackDamage: 7,
     dropTable: [
       { itemId: "etc.spectral_cloth", chance: 0.18 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -734,6 +741,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 5,
     avoid: 6,
+    attackDamage: 8,
     dropTable: [
       { itemId: "etc.rat_whisker", chance: 0.22 },
       { itemId: "etc.cargo_manifest", chance: 0.08 },
@@ -756,6 +764,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 0,
     mDef: 0,
     avoid: 0,
+    attackDamage: 3,
     dropTable: [
       { itemId: "wpn.bronze_shortsword", chance: 0.05 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -779,6 +788,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 2,
     mDef: 2,
     avoid: 1,
+    attackDamage: 7,
     dropTable: [{ itemId: "etc.slime_jelly", chance: 0.25 }],
   },
   "mob.green_mushroom": {
@@ -795,6 +805,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 4,
     mDef: 4,
     avoid: 3,
+    attackDamage: 8,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.04 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -825,6 +836,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 16,
     mDef: 14,
     avoid: 8,
+    attackDamage: 13,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.03 },
       { itemId: "top.traveler_jerkin", chance: 0.05 },
@@ -845,6 +857,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 8,
     avoid: 4,
+    attackDamage: 9,
     dropTable: [
       { itemId: "hat.leather_cap", chance: 0.03 },
       { itemId: "etc.mushroom_cap", chance: 0.2 },
@@ -864,6 +877,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 18,
     mDef: 12,
     avoid: 6,
+    attackDamage: 12,
     dropTable: [
       { itemId: "wpn.bronze_shortsword", chance: 0.04 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -887,6 +901,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 6,
     avoid: 10,
+    attackDamage: 9,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.05 },
       { itemId: "top.traveler_jerkin", chance: 0.05 },
@@ -905,6 +920,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 6,
     mDef: 4,
     avoid: 12,
+    attackDamage: 10,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.05 },
       { itemId: "top.traveler_jerkin", chance: 0.05 },
@@ -926,6 +942,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 14,
     mDef: 8,
     avoid: 5,
+    attackDamage: 8,
     dropTable: [
       { itemId: "wpn.bronze_shortsword", chance: 0.04 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -953,6 +970,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 18,
     mDef: 10,
     avoid: 4,
+    attackDamage: 9,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.04 },
       { itemId: "hat.leather_cap", chance: 0.03 },
@@ -977,6 +995,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 10,
     mDef: 8,
     avoid: 12,
+    attackDamage: 10,
     dropTable: [
       { itemId: "wpn.gale_bow", chance: 0.04 },
       { itemId: "cape.travelers_mantle", chance: 0.04 },
@@ -998,6 +1017,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 22,
     mDef: 12,
     avoid: 3,
+    attackDamage: 12,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.05 },
       { itemId: "top.traveler_jerkin", chance: 0.04 },
@@ -1018,6 +1038,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 30,
     mDef: 15,
     avoid: 2,
+    attackDamage: 13,
     dropTable: [
       { itemId: "wpn.oak_maul", chance: 0.05 },
       { itemId: "shield.iron_buckler", chance: 0.05 },
@@ -1042,6 +1063,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 6,
     mDef: 14,
     avoid: 6,
+    attackDamage: 8,
     dropTable: [
       { itemId: "wpn.oakwood_staff", chance: 0.03 },
       { itemId: "hat.woven_circlet", chance: 0.03 },
@@ -1065,6 +1087,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 8,
     avoid: 9,
+    attackDamage: 9,
     dropTable: [
       { itemId: "wpn.gale_bow", chance: 0.03 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -1085,6 +1108,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 12,
     mDef: 14,
     avoid: 7,
+    attackDamage: 10,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.04 },
       { itemId: "top.traveler_jerkin", chance: 0.04 },
@@ -1106,6 +1130,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 18,
     mDef: 12,
     avoid: 5,
+    attackDamage: 11,
     dropTable: [
       { itemId: "wpn.oak_maul", chance: 0.04 },
       { itemId: "shield.iron_buckler", chance: 0.03 },
@@ -1134,6 +1159,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 18,
     avoid: 8,
+    attackDamage: 12,
     dropTable: [
       { itemId: "wpn.frostwick", chance: 0.04 },
       { itemId: "hat.woven_circlet", chance: 0.04 },
@@ -1154,6 +1180,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 8,
     mDef: 6,
     avoid: 8,
+    attackDamage: 8,
     dropTable: [
       { itemId: "wpn.nightfang_dagger", chance: 0.03 },
       { itemId: "shoes.worn_boots", chance: 0.03 },
@@ -1177,6 +1204,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 6,
     mDef: 8,
     avoid: 10,
+    attackDamage: 9,
     dropTable: [
       { itemId: "wpn.hardwood_crossbow", chance: 0.03 },
       { itemId: "hat.leather_cap", chance: 0.04 },
@@ -1203,6 +1231,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 12,
     mDef: 14,
     avoid: 6,
+    attackDamage: 10,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.04 },
       { itemId: "top.traveler_jerkin", chance: 0.04 },
@@ -1222,6 +1251,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 20,
     mDef: 16,
     avoid: 4,
+    attackDamage: 11,
     dropTable: [
       { itemId: "wpn.oak_maul", chance: 0.04 },
       { itemId: "shield.iron_buckler", chance: 0.03 },
@@ -1242,6 +1272,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 14,
     mDef: 14,
     avoid: 9,
+    attackDamage: 12,
     dropTable: [
       { itemId: "wpn.nightfang_dagger", chance: 0.05 },
       { itemId: "cape.travelers_mantle", chance: 0.04 },
@@ -1268,6 +1299,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 14,
     mDef: 18,
     avoid: 8,
+    attackDamage: 12,
     dropTable: [
       { itemId: "wpn.ember_wand", chance: 0.04 },
       { itemId: "hat.woven_circlet", chance: 0.04 },
@@ -1296,6 +1328,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 10,
     mDef: 22,
     avoid: 10,
+    attackDamage: 13,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.05 },
       { itemId: "top.traveler_jerkin", chance: 0.05 },
@@ -1318,6 +1351,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 18,
     mDef: 22,
     avoid: 8,
+    attackDamage: 14,
     dropTable: [{ itemId: "item.subway_pass", chance: 0.35 }],
   },
   "mob.subway_stalker": {
@@ -1340,6 +1374,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 20,
     mDef: 20,
     avoid: 10,
+    attackDamage: 15,
     dropTable: [
       { itemId: "wpn.iron_broadsword", chance: 0.04 },
       { itemId: "top.traveler_jerkin", chance: 0.04 },
@@ -1360,6 +1395,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 24,
     mDef: 28,
     avoid: 10,
+    attackDamage: 16,
     dropTable: [{ itemId: "item.subway_pass", chance: 0.45 }],
   },
   // ── BOSS — Dusk Ward Subway PQ boss ────────────────────────────────
@@ -1434,6 +1470,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 22,
     mDef: 18,
     avoid: 8,
+    attackDamage: 14,
     dropTable: [
       { itemId: "wpn.steel_fang", chance: 0.05 },
       { itemId: "hat.iron_crest_helm", chance: 0.04 },
@@ -1455,6 +1492,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 26,
     mDef: 20,
     avoid: 6,
+    attackDamage: 15,
     dropTable: [
       { itemId: "wpn.frostwick", chance: 0.04 },
       { itemId: "bottom.steel_chausses", chance: 0.04 },
@@ -1482,6 +1520,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 32,
     mDef: 24,
     avoid: 8,
+    attackDamage: 17,
     dropTable: [
       { itemId: "wpn.iron_bell", chance: 0.05 },
       { itemId: "hat.iron_crest_helm", chance: 0.04 },
@@ -1511,6 +1550,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 24,
     mDef: 30,
     avoid: 10,
+    attackDamage: 18,
     dropTable: [
       { itemId: "wpn.shadow_fang", chance: 0.05 },
       { itemId: "hat.rogue_cowl", chance: 0.04 },
@@ -1531,6 +1571,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 28,
     mDef: 32,
     avoid: 8,
+    attackDamage: 19,
     dropTable: [
       { itemId: "wpn.shadow_fang", chance: 0.05 },
       { itemId: "hat.rogue_cowl", chance: 0.04 },
@@ -1551,6 +1592,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 34,
     mDef: 28,
     avoid: 7,
+    attackDamage: 20,
     dropTable: [
       { itemId: "wpn.shadow_fang", chance: 0.06 },
       { itemId: "hat.rogue_cowl", chance: 0.05 },
@@ -1608,6 +1650,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 24,
     mDef: 30,
     avoid: 18,
+    attackDamage: 20,
     dropTable: [
       { itemId: "wpn.crimson_edge", chance: 0.05 },
       { itemId: "wpn.earthcrusher", chance: 0.05 },
@@ -1629,6 +1672,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 30,
     mDef: 35,
     avoid: 16,
+    attackDamage: 22,
     dropTable: [
       { itemId: "wpn.crimson_edge", chance: 0.05 },
       { itemId: "wpn.stormbloom", chance: 0.04 },
@@ -1650,6 +1694,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 28,
     mDef: 38,
     avoid: 22,
+    attackDamage: 25,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "top.ironwrought_mantle", chance: 0.06 },
@@ -1722,6 +1767,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 35,
     mDef: 28,
     avoid: 20,
+    attackDamage: 23,
     dropTable: [
       { itemId: "wpn.crimson_edge", chance: 0.05 },
       { itemId: "top.plate_cuirass", chance: 0.05 },
@@ -1743,6 +1789,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 25,
     mDef: 42,
     avoid: 14,
+    attackDamage: 25,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "top.ironwrought_mantle", chance: 0.06 },
@@ -1763,6 +1810,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 30,
     mDef: 45,
     avoid: 18,
+    attackDamage: 27,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "top.ironwrought_mantle", chance: 0.06 },
@@ -1842,6 +1890,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 42,
     mDef: 35,
     avoid: 14,
+    attackDamage: 26,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "wpn.molten_greatmaul", chance: 0.05 },
@@ -1862,6 +1911,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 55,
     mDef: 40,
     avoid: 12,
+    attackDamage: 28,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.07 },
       { itemId: "wpn.skyfire_longbow", chance: 0.05 },
@@ -1882,6 +1932,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 60,
     mDef: 50,
     avoid: 16,
+    attackDamage: 32,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.07 },
       { itemId: "wpn.titans_grudge", chance: 0.05 },
@@ -1903,6 +1954,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 50,
     mDef: 48,
     avoid: 14,
+    attackDamage: 31,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.08 },
       { itemId: "top.ironwrought_mantle", chance: 0.08 },
@@ -1922,6 +1974,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 46,
     mDef: 52,
     avoid: 16,
+    attackDamage: 32,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.08 },
       { itemId: "wpn.voidspire", chance: 0.06 },
@@ -2006,6 +2059,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 20,
     mDef: 35,
     avoid: 15,
+    attackDamage: 23,
     dropTable: [
       { itemId: "wpn.crimson_edge", chance: 0.05 },
       { itemId: "top.plate_cuirass", chance: 0.05 },
@@ -2026,6 +2080,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 40,
     mDef: 25,
     avoid: 8,
+    attackDamage: 25,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "shield.reinforced_targe", chance: 0.04 },
@@ -2047,6 +2102,7 @@ export const MOBS: Record<string, MobDef> = {
     mDef: 30,
     avoid: 12,
     contactDamage: 15,
+    attackDamage: 26,
     dropTable: [
       { itemId: "wpn.solstice_blade", chance: 0.06 },
       { itemId: "top.ironwrought_mantle", chance: 0.06 },
@@ -2067,6 +2123,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 35,
     mDef: 40,
     avoid: 14,
+    attackDamage: 28,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.07 },
       { itemId: "top.ironwrought_mantle", chance: 0.07 },
@@ -2087,6 +2144,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 45,
     mDef: 35,
     avoid: 18,
+    attackDamage: 32,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.08 },
       { itemId: "top.dragonscale_aegis", chance: 0.08 },
@@ -2107,6 +2165,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 40,
     mDef: 50,
     avoid: 20,
+    attackDamage: 35,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.08 },
       { itemId: "wpn.titans_grudge", chance: 0.06 },
@@ -2195,6 +2254,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 120,
     mDef: 80,
     avoid: 45,
+    attackDamage: 56,
     dropTable: [
       { itemId: "wpn.voidcleaver", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.viper_fang", chance: 0.18 },
@@ -2213,6 +2273,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 180,
     mDef: 90,
     avoid: 30,
+    attackDamage: 59,
     dropTable: [
       { itemId: "wpn.titans_grudge", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.chitin_plate", chance: 0.18 },
@@ -2232,6 +2293,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 150,
     mDef: 140,
     avoid: 35,
+    attackDamage: 62,
     dropTable: [
       { itemId: "wpn.eclipse_blade", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.dragon_bone", chance: 0.15 },
@@ -2250,6 +2312,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 100,
     mDef: 160,
     avoid: 40,
+    attackDamage: 65,
     dropTable: [
       { itemId: "wpn.abyssal_rake", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.withered_vine", chance: 0.15 },
@@ -2270,6 +2333,7 @@ export const MOBS: Record<string, MobDef> = {
     mDef: 140,
     avoid: 40,
     contactDamage: 80,
+    attackDamage: 68,
     dropTable: [
       { itemId: "wpn.leviathans_roar", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.drake_scale", chance: 0.15 },
@@ -2289,6 +2353,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 220,
     mDef: 180,
     avoid: 20,
+    attackDamage: 71,
     dropTable: [
       { itemId: "wpn.devastator", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.ember_shell", chance: 0.15 },
@@ -2308,6 +2373,7 @@ export const MOBS: Record<string, MobDef> = {
     wDef: 170,
     mDef: 200,
     avoid: 48,
+    attackDamage: 74,
     dropTable: [
       { itemId: "wpn.phantom_grasp", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.wyrm_essence", chance: 0.12 },
@@ -2328,6 +2394,7 @@ export const MOBS: Record<string, MobDef> = {
     mDef: 160,
     avoid: 42,
     contactDamage: 70,
+    attackDamage: 73,
     dropTable: [
       { itemId: "wpn.hellion_cannon", chance: 0.1, legendaryEligible: true },
       { itemId: "etc.drake_scale", chance: 0.12 },

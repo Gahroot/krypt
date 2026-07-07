@@ -200,6 +200,7 @@ import {
   type TownMinigameResultPayload,
   getMinigameDef,
   MINIGAME_COLORS,
+  getAttackCooldownMs,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -427,6 +428,7 @@ const FOOTHOLD_SNAP_PX = 4;
 const MOB_MOB_GRAVITY = 0.45;
 const MOB_MAX_FALL = 12;
 
+/** Fallback cooldown when no weapon is equipped (bare fists). Weapon-equipped cooldown is derived from weapon.attackSpeed via getAttackCooldownMs(). */
 const ATTACK_COOLDOWN_MS = 450;
 const ATTACK_DURATION_MS = 250;
 
@@ -2529,7 +2531,8 @@ export class MapRoom extends AuthedRoom<TownState> {
                 text: `Out of ${weaponDef.ammoType === "ARROW" ? "arrows" : weaponDef.ammoType === "BULLET" ? "bullets" : "stars"}! Buy more from an NPC shop.`,
               });
             }
-            attacker.attackCooldown = ATTACK_COOLDOWN_MS;
+            // Use the weapon's attack speed even on out-of-ammo.
+            attacker.attackCooldown = getAttackCooldownMs(weaponDef?.attackSpeed);
             return;
           }
           // Consume 1 ammo.
@@ -2557,9 +2560,17 @@ export class MapRoom extends AuthedRoom<TownState> {
       }
     }
 
+    // Resolve cooldown from the equipped weapon's attackSpeed stat.
+    let cooldownMs = ATTACK_COOLDOWN_MS; // fallback: bare fists
+    if (weaponUid) {
+      const weaponDef = getItemDef(attacker.inventory.get(weaponUid)?.defId ?? "");
+      if (weaponDef?.attackSpeed != null) {
+        cooldownMs = getAttackCooldownMs(weaponDef.attackSpeed);
+      }
+    }
     attacker.attacking = true;
     attacker.attackTimer = ATTACK_DURATION_MS;
-    attacker.attackCooldown = ATTACK_COOLDOWN_MS;
+    attacker.attackCooldown = cooldownMs;
 
     const attackerStats = this.buildAttackerStats(attacker);
     let hitCount = 0;
