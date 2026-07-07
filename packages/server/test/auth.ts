@@ -159,7 +159,7 @@ async function main() {
   const email = `tester_${Date.now()}_${uniq()}@example.com`;
   const password = "s3cret-passw0rd";
 
-  const reg = await http("/auth/register", { email, password });
+  const reg = await http("/auth/register", { email, password, tosAccepted: true });
   assert.strictEqual(reg.status, 200, "6) register succeeds");
   const acctId = reg.data.accountId!;
   assert.ok(acctId, "6) register returns a server-issued accountId");
@@ -192,14 +192,14 @@ async function main() {
   const recovered = accountStore.listCharacters(login.data.accountId!);
   assert.strictEqual(recovered.length, 1, "6) the character is recovered");
   assert.strictEqual(recovered[0].charId, recChar.charId, "6) same character id");
-  assert.strictEqual(recovered[0].mesos, 4242, "6) mesos recovered");
+  assert.strictEqual(recovered[0].mesos, 4242, "6) mesos recovered (pre-join, no daily gift yet)");
   assert.ok(recovered[0].inventory[itemUid], "6) item recovered");
   console.log("[auth] 6 PASS ✔  register → logout → login recovers character + mesos + items");
 
   // ─── 7) Wrong password / duplicate email rejected; recovered token loads char ─
   const wrong = await http("/auth/login", { email, password: "not-the-password" });
   assert.strictEqual(wrong.status, 401, "7) wrong password rejected");
-  const dup = await http("/auth/register", { email, password });
+  const dup = await http("/auth/register", { email, password, tosAccepted: true });
   assert.strictEqual(dup.status, 409, "7) duplicate email rejected");
 
   const recRoom = await colyseus.sdk.joinOrCreate("meadowfield", {
@@ -209,12 +209,16 @@ async function main() {
   await sleep(200);
   const recPlayer = (recRoom.state as any).players.get(recRoom.sessionId);
   assert.strictEqual(recPlayer.charId, recChar.charId, "7) recovered token loads the character");
-  assert.strictEqual(recPlayer.mesos, 4242, "7) recovered character keeps its mesos in-game");
+  // The daily login gift grants +100 mesos to a fresh level-1 character on first join.
+  assert.ok(
+    recPlayer.mesos >= 4242,
+    `7) recovered character keeps its mesos in-game (got ${recPlayer.mesos}, expected >= 4242)`,
+  );
   await recRoom.leave();
   console.log("[auth] 7 PASS ✔  bad creds rejected; recovered token loads char end-to-end");
 
   // ─── 8) Guest claim/upgrade keeps the same accountId + progress ───────────────
-  const guest = await http("/auth/guest", {});
+  const guest = await http("/auth/guest", { tosAccepted: true });
   assert.strictEqual(guest.status, 200, "8) guest sign-in succeeds");
   const guestAccountId = guest.data.accountId!;
   const guestChar = accountStore.createCharacter(guestAccountId, {
@@ -257,7 +261,11 @@ async function main() {
   assert.strictEqual(nonce1.status, 200, "9) nonce issued");
   assert.ok(nonce1.data.message, "9) nonce returns a message to sign");
   const sig1 = await walletAcct.signMessage({ message: nonce1.data.message! });
-  const verify1 = await http("/auth/wallet/verify", { address, signature: sig1 });
+  const verify1 = await http("/auth/wallet/verify", {
+    address,
+    signature: sig1,
+    tosAccepted: true,
+  });
   assert.strictEqual(verify1.status, 200, "9) valid signature authenticates");
   const walletAccountId = verify1.data.accountId!;
   assert.ok(walletAccountId, "9) wallet sign-in mints/links an account");
@@ -290,7 +298,7 @@ async function main() {
   // ─── 11) POST /auth/refresh — renew a valid token, reject an expired/invalid one ─
   // A still-valid token refreshes to a NEW token (later expiry, same accountId) so a
   // long play session is never kicked.
-  const refreshGuest = await http("/auth/guest", {});
+  const refreshGuest = await http("/auth/guest", { tosAccepted: true });
   const refreshAcct = refreshGuest.data.accountId!;
   const oldToken = refreshGuest.data.token!;
   await sleep(1100); // ensure a strictly later `iat`/`exp` (seconds-resolution safety)
