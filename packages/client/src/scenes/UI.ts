@@ -41,6 +41,7 @@ import {
   type GameMap,
   type InventoryTab,
   type SecondaryStats,
+  type Portal,
 } from "@maple/shared";
 
 import type {
@@ -167,15 +168,6 @@ const MESOS_Y = 28;
 const MINIMAP_Y = 12;
 const MINIMAP_H = 100;
 
-// ─── World map overlay geometry ─────────────────────────────────────────────────────────────────
-const WORLD_MAP_NODE_R = 18;
-const WORLD_MAP_LINE_COLOR = 0x4a6a4a;
-const WORLD_MAP_CURRENT_COLOR = 0xfacc15;
-const WORLD_MAP_CONNECTED_COLOR = 0x3b82f6; // bright blue — eligible to travel
-const WORLD_MAP_LOCKED_COLOR = 0x6b4c3b; // dim brown — connected but level-gated
-const WORLD_MAP_COMING_SOON_COLOR = 0x78716c; // warm gray — coming soon
-const WORLD_MAP_UNDISCOVERED_COLOR = 0x1a1a2e; // dark — never visited, not connected
-
 /** Display order for equipment slots (classic MapleStory paper-doll layout). */
 const EQUIP_SLOT_ORDER: EquipSlot[] = [
   EquipSlot.WEAPON,
@@ -275,17 +267,9 @@ export class UIScene extends Phaser.Scene {
   // Minimap is rendered by the React HUD (src/ui/hud/Minimap.tsx); Phaser only
   // tracks the current map id for snapshot resolution.
   private currentMapId = "dawn_isle";
-
-  // World map overlay (toggled with W).
-  private worldMapOpen = false;
-  private worldMapContainer!: Phaser.GameObjects.Container;
-  private worldMapBg!: Phaser.GameObjects.Graphics;
-  private worldMapNodes!: Phaser.GameObjects.Graphics;
-  private worldMapLabels!: Phaser.GameObjects.Text[];
-  /** Maps the player has visited this session — used for discovered/undiscovered visuals. */
   private discoveredMaps = new Set<string>();
-  /** Click-hit zones for world map nodes (rebuilt each render). */
-  private worldMapHitZones: Phaser.GameObjects.Zone[] = [];
+
+  // World map is now a React overlay — no Phaser objects needed.
 
   // Inventory panel (tabbed). Rendering now lives in the React overlay; this
   // flag is kept in sync with the bridge store.
@@ -2030,6 +2014,18 @@ export class UIScene extends Phaser.Scene {
       close: () => this.setInventoryOpen(false),
     });
 
+    // World map travel action — sends MAP_TRAVEL to the authoritative server.
+    uiStore.getState().setWorldMapActions({
+      travelTo: (targetMapId: string) => {
+        getAudioManager().playSfx("button_click");
+        const targetDef = getMap(targetMapId);
+        const targetName = targetDef?.name ?? targetMapId;
+        this.showFloatMessage(`Traveling to ${targetName}...`);
+        uiStore.getState().setWorldMapOpen(false);
+        room.send(MessageType.MAP_TRAVEL, { targetMapId });
+      },
+    });
+
     // NPC dialog actions — the server walks the dialog tree and fires the
     // downstream effect (open shop / travel / advance job / …); the client only
     // sends the chosen index (-1 advances a line node / closes).
@@ -2894,340 +2890,178 @@ export class UIScene extends Phaser.Scene {
 
   // ─── World map overlay (toggled with W) ───────────────────────────────────────────────────────
 
-  /** Fixed layout positions for each map node on the world map. Computed once from the MAPS registry
-   *  and portal links. Values are in screen-space coordinates (centred in the viewport). */
-  private worldMapPositions = new Map<string, { x: number; y: number }>();
-
   private buildWorldMap(): void {
-    this.worldMapContainer = this.add.container(0, 0);
-    this.worldMapBg = this.add.graphics();
-    this.worldMapNodes = this.add.graphics();
-    this.worldMapContainer.add([this.worldMapBg, this.worldMapNodes]);
-    this.worldMapContainer.setDepth(1000);
-    this.worldMapContainer.setVisible(false);
-    this.worldMapLabels = [];
+    /* React overlay — no Phaser objects needed. */
   }
 
-  /** Compute node positions for all maps. Uses a simple force-directed-ish grid: group by zone
-   *  (via portal links) and lay out in a readable grid. */
-  private computeWorldMapLayout(): void {
-    const sw = this.scale.width;
-    const sh = this.scale.height;
-    const cx = sw / 2;
-    const cy = sh / 2;
+  /** Compute and push the world map snapshot to the React overlay. */
+  private publishWorldMapSnapshot(): void {
+    const currentId = this.currentMapId;
+    const p = this.localPlayer;
+    const playerLevel = p?.level ?? 1;
 
     // Build adjacency from portal links.
-    const adjacent = new Map<string, Set<string>>();
+    const currentMapDef = MAPS[currentId];
+    const outgoingPortals = currentMapDef?.portals ?? [];
+    const connectedFromCurrent = new Map<string, Portal>();
+    for (const portal of outgoingPortals) {
+      connectedFromCurrent.set(portal.toMapId, portal);
+    }
+
+    // Build discovered maps set (track visited).
+    this.discoveredMaps.add(currentId);
+
+    // Region membership map.
+    const REGION_MAP: Record<string, string> = {};
+    const dawnIds = ["dawn_isle"];
+    const heartlandIds = [
+      "heartland_harbor",
+      "harbor_docks",
+      "crossway",
+      "meadowfield",
+      "sylvanreach",
+      "sylvanreach_canopy",
+      "sylvanreach_roots",
+      "craghold",
+      "craghold_cliffs",
+      "craghold_quarry",
+      "dusk_ward",
+      "dusk_ward_subway",
+      "dusk_ward_backalley",
+      "dusk_subway_pq_staging",
+      "dusk_subway_pq_stage1",
+      "dusk_subway_pq_stage2",
+      "dusk_subway_pq_stage3",
+      "dusk_subway_pq_stage4",
+      "mirefen",
+      "mirefen_ruins",
+      "free_market",
+    ];
+    const farReachesIds = [
+      "skyhaven",
+      "skyhaven_driftpeaks",
+      "frosthold",
+      "frosthold_slopes",
+      "frosthold_icecave",
+      "tideways",
+      "tideways_reef",
+      "tideways_abyss",
+      "drakemoor",
+      "drakemoor_jungle_floor",
+      "drakemoor_dragon_abyss",
+    ];
+    for (const id of dawnIds) REGION_MAP[id] = "dawn_isle";
+    for (const id of heartlandIds) REGION_MAP[id] = "heartland";
+    for (const id of farReachesIds) REGION_MAP[id] = "far_reaches";
+
+    // Build nodes.
+    const nodes = Object.entries(MAPS).map(([id, mapDef]) => {
+      const conn = connectedFromCurrent.get(id);
+      const isCurrent = id === currentId;
+      const discovered = this.discoveredMaps.has(id);
+      const region = REGION_MAP[id] ?? "far_reaches";
+
+      let isConnected = false;
+      let comingSoon = false;
+      let requiresLevel = 0;
+      let meetsLevel = true;
+      let clickable = false;
+
+      if (conn) {
+        isConnected = true;
+        comingSoon = conn.comingSoon ?? false;
+        requiresLevel = conn.requiresLevel ?? 0;
+        meetsLevel = !requiresLevel || playerLevel >= requiresLevel;
+        clickable = !comingSoon && meetsLevel;
+      }
+
+      const room = this.registry.get(ROOM_REGISTRY_KEY) as Room<unknown, TownStateView> | undefined;
+      let playerCount = 0;
+      if (isCurrent && room) {
+        room.state.players.forEach(() => {
+          playerCount++;
+        });
+      }
+
+      return {
+        id,
+        name: mapDef.name,
+        region,
+        isCurrent,
+        isConnected,
+        comingSoon,
+        requiresLevel,
+        meetsLevel,
+        discovered,
+        playerCount,
+        clickable,
+      };
+    });
+
+    // Build links.
+    const linkSet = new Set<string>();
+    const links: { fromId: string; toId: string; isFromCurrent: boolean; comingSoon: boolean }[] =
+      [];
     for (const [id, m] of Object.entries(MAPS)) {
-      if (!adjacent.has(id)) adjacent.set(id, new Set());
-      for (const p of m.portals) {
-        const fromSet = adjacent.get(id);
-        if (fromSet) fromSet.add(p.toMapId);
-        if (!adjacent.has(p.toMapId)) adjacent.set(p.toMapId, new Set());
-        const toSet = adjacent.get(p.toMapId);
-        if (toSet) toSet.add(id);
-      }
-    }
-
-    // BFS layering from "crossway" (central hub) to assign rough layers.
-    const layers = new Map<string, number>();
-    const queue: string[] = ["crossway"];
-    layers.set("crossway", 0);
-    while (queue.length > 0) {
-      const cur = queue.shift();
-      if (cur === undefined) break;
-      const layer = layers.get(cur);
-      if (layer === undefined) continue;
-      for (const nb of adjacent.get(cur) ?? []) {
-        if (layers.has(nb)) continue;
-        layers.set(nb, layer + 1);
-        queue.push(nb);
-      }
-    }
-    // Unvisited maps get a high layer.
-    for (const id of Object.keys(MAPS)) {
-      if (!layers.has(id)) layers.set(id, 6);
-    }
-
-    // Group by layer, spread horizontally.
-    const byLayer = new Map<number, string[]>();
-    for (const [id, layer] of layers) {
-      if (!byLayer.has(layer)) byLayer.set(layer, []);
-      const layerIds = byLayer.get(layer);
-      if (layerIds) layerIds.push(id);
-    }
-
-    const layerSpacing = 80;
-    const nodeSpacing = 110;
-    const maxLayer = Math.max(...byLayer.keys());
-    const startY = cy - (maxLayer * layerSpacing) / 2;
-
-    for (const [layer, ids] of byLayer) {
-      const startX = cx - ((ids.length - 1) * nodeSpacing) / 2;
-      for (let i = 0; i < ids.length; i++) {
-        const mapId = ids[i];
-        if (mapId === undefined) continue;
-        this.worldMapPositions.set(mapId, {
-          x: startX + i * nodeSpacing,
-          y: startY + layer * layerSpacing,
+      for (const pt of m.portals) {
+        const key = [id, pt.toMapId].sort().join("|");
+        if (linkSet.has(key)) continue;
+        linkSet.add(key);
+        links.push({
+          fromId: id,
+          toId: pt.toMapId,
+          isFromCurrent: id === currentId || pt.toMapId === currentId,
+          comingSoon: pt.comingSoon ?? false,
         });
       }
     }
+
+    // Region definitions.
+    const regions = [
+      {
+        key: "dawn_isle",
+        label: "Dawn Isle",
+        levelBand: "Lv 1–10",
+        gradient: "linear-gradient(135deg, #2d5a27, #6ab856)",
+        mapIds: dawnIds,
+      },
+      {
+        key: "heartland",
+        label: "The Heartland",
+        levelBand: "Lv 10–30",
+        gradient: "linear-gradient(135deg, #1e3a5f, #4a8fc4)",
+        mapIds: heartlandIds,
+      },
+      {
+        key: "far_reaches",
+        label: "Far Reaches",
+        levelBand: "Lv 30–120+",
+        gradient: "linear-gradient(135deg, #3b1a5e, #9b6dd7)",
+        mapIds: farReachesIds,
+      },
+    ];
+
+    uiStore.getState().setWorldMap({
+      currentMapId: currentId,
+      nodes,
+      links,
+      regions,
+      playerLevel,
+      discoveredMaps: [...this.discoveredMaps],
+    });
   }
+
+  // (old computeWorldMapLayout removed — layout is handled by the React WorldMapPanel)
 
   private setupWorldMapToggle(): void {
     this.input.keyboard?.on("keydown-W", () => {
       if (this.chatFocused || this.registry.get("settingsOpen") === true) return;
       getAudioManager().playSfx("button_click");
-      this.toggleWorldMap();
+      const next = !uiStore.getState().worldMap.open;
+      uiStore.getState().setWorldMapOpen(next);
+      if (next) this.publishWorldMapSnapshot();
     });
-    this.input.keyboard?.on("keydown-ESC", () => {
-      if (this.worldMapOpen) {
-        this.toggleWorldMap();
-      }
-    });
-  }
-
-  private toggleWorldMap(): void {
-    this.worldMapOpen = !this.worldMapOpen;
-    this.worldMapContainer.setVisible(this.worldMapOpen);
-    if (this.worldMapOpen) this.renderWorldMap();
-  }
-
-  /** Render the full world map: background dim, portal-link lines, map nodes, labels. */
-  private renderWorldMap(): void {
-    const sw = this.scale.width;
-    const sh = this.scale.height;
-    const currentId = this.currentMapId;
-    const p = this.localPlayer;
-
-    // Recompute layout for current window size.
-    this.computeWorldMapLayout();
-
-    // Dim background.
-    this.worldMapBg.clear().fillStyle(0x000000, 0.75).fillRect(0, 0, sw, sh);
-
-    const g = this.worldMapNodes;
-    g.clear();
-
-    // Destroy old labels + hit zones.
-    for (const lbl of this.worldMapLabels) lbl.destroy();
-    this.worldMapLabels = [];
-    for (const z of this.worldMapHitZones) z.destroy();
-    this.worldMapHitZones = [];
-
-    // ── Build adjacency: which maps are directly connected from the current map ──
-    const currentMapDef = MAPS[currentId];
-    const outgoingPortals = currentMapDef?.portals ?? [];
-    const connectedFromCurrent = new Map<string, { portal: import("@maple/shared").Portal }>();
-    for (const portal of outgoingPortals) {
-      connectedFromCurrent.set(portal.toMapId, { portal });
-    }
-
-    // Draw portal-link lines first (behind nodes).
-    // Highlight lines from current map in bright blue; others dim.
-    const drawn = new Set<string>();
-    for (const [id, m] of Object.entries(MAPS)) {
-      const posA = this.worldMapPositions.get(id);
-      if (!posA) continue;
-      for (const pt of m.portals) {
-        const posB = this.worldMapPositions.get(pt.toMapId);
-        if (!posB) continue;
-        const key = [id, pt.toMapId].sort().join("|");
-        if (drawn.has(key)) continue;
-        drawn.add(key);
-        const isHighlight =
-          (id === currentId && connectedFromCurrent.has(pt.toMapId)) ||
-          (pt.toMapId === currentId && connectedFromCurrent.has(id));
-        g.lineStyle(
-          isHighlight ? 3 : 1,
-          isHighlight ? 0x3b82f6 : WORLD_MAP_LINE_COLOR,
-          isHighlight ? 0.9 : 0.3,
-        );
-        g.lineBetween(posA.x, posA.y, posB.x, posB.y);
-      }
-    }
-
-    // Draw nodes + labels.
-    for (const [id, pos] of this.worldMapPositions) {
-      const mapDef = MAPS[id];
-      if (!mapDef) continue;
-      const isCurrent = id === currentId;
-
-      // Determine node state.
-      let fillColor: number;
-      let fillAlpha: number;
-      let labelColor: string;
-      let strokeColor: number;
-      let strokeAlpha: number;
-      let clickable = false;
-      let lockText = "";
-
-      if (isCurrent) {
-        fillColor = WORLD_MAP_CURRENT_COLOR;
-        fillAlpha = 1;
-        labelColor = "#facc15";
-        strokeColor = 0xffffff;
-        strokeAlpha = 1;
-      } else {
-        const conn = connectedFromCurrent.get(id);
-        if (conn) {
-          // Connected to current map — check coming-soon and level gate.
-          if (conn.portal.comingSoon) {
-            // Coming soon — warm gray, not clickable.
-            fillColor = WORLD_MAP_COMING_SOON_COLOR;
-            fillAlpha = 0.7;
-            labelColor = "#a8a29e";
-            strokeColor = 0x78716c;
-            strokeAlpha = 0.8;
-            lockText = "🚧 Coming Soon";
-          } else {
-            const req = conn.portal.requiresLevel;
-            const meetsLevel = !req || (p && p.level >= req);
-            if (meetsLevel) {
-              // Eligible — bright blue, clickable.
-              fillColor = WORLD_MAP_CONNECTED_COLOR;
-              fillAlpha = 1;
-              labelColor = "#93c5fd";
-              strokeColor = 0x93c5fd;
-              strokeAlpha = 1;
-              clickable = true;
-            } else {
-              // Level-gated — dim brown, clickable (shows message on click).
-              fillColor = WORLD_MAP_LOCKED_COLOR;
-              fillAlpha = 0.9;
-              labelColor = "#a88b6d";
-              strokeColor = 0x8b6914;
-              strokeAlpha = 0.8;
-              clickable = true;
-              lockText = `🔒 Lv.${req}`;
-            }
-          }
-        } else {
-          // Not connected from current map.
-          fillColor = WORLD_MAP_UNDISCOVERED_COLOR;
-          fillAlpha = 0.5;
-          labelColor = "#4a5568";
-          strokeColor = 0x333344;
-          strokeAlpha = 0.4;
-        }
-      }
-
-      // Node circle.
-      g.fillStyle(fillColor, fillAlpha);
-      g.fillCircle(pos.x, pos.y, WORLD_MAP_NODE_R);
-      g.lineStyle(isCurrent ? 2 : 1, strokeColor, strokeAlpha);
-      g.strokeCircle(pos.x, pos.y, WORLD_MAP_NODE_R);
-
-      // Map name label below the node.
-      const label = this.add
-        .text(pos.x, pos.y + WORLD_MAP_NODE_R + 4, mapDef.name, {
-          fontFamily: FONT,
-          fontSize: "11px",
-          color: labelColor,
-          align: "center",
-        })
-        .setOrigin(0.5, 0);
-      this.worldMapLabels.push(label);
-      this.worldMapContainer.add(label);
-
-      // Lock icon for level-gated nodes.
-      if (lockText) {
-        const lt = this.add
-          .text(pos.x, pos.y + WORLD_MAP_NODE_R + 17, lockText, {
-            fontFamily: FONT,
-            fontSize: "10px",
-            color: "#d97706",
-            align: "center",
-          })
-          .setOrigin(0.5, 0);
-        this.worldMapLabels.push(lt);
-        this.worldMapContainer.add(lt);
-      }
-
-      // Player count (small) below the label (or below lock text).
-      const pCount = this.getPlayerCountForMap(id);
-      if (pCount > 0) {
-        const yOffset = lockText ? 30 : 18;
-        const countLabel = this.add
-          .text(pos.x, pos.y + WORLD_MAP_NODE_R + yOffset, `${pCount}`, {
-            fontFamily: FONT,
-            fontSize: "9px",
-            color: "#94a3b8",
-            align: "center",
-          })
-          .setOrigin(0.5, 0);
-        this.worldMapLabels.push(countLabel);
-        this.worldMapContainer.add(countLabel);
-      }
-
-      // "YOU ARE HERE" indicator.
-      if (isCurrent) {
-        const hereLabel = this.add
-          .text(pos.x, pos.y - WORLD_MAP_NODE_R - 16, "▼ YOU", {
-            fontFamily: FONT,
-            fontSize: "10px",
-            color: "#facc15",
-            align: "center",
-          })
-          .setOrigin(0.5, 0);
-        this.worldMapLabels.push(hereLabel);
-        this.worldMapContainer.add(hereLabel);
-      }
-
-      // Create interactive hit zone for clickable nodes.
-      if (clickable) {
-        const targetMapId = id; // capture for closure
-        const zone = this.add
-          .zone(pos.x, pos.y, WORLD_MAP_NODE_R * 2 + 8, WORLD_MAP_NODE_R * 2 + 8)
-          .setInteractive({ useHandCursor: true })
-          .setDepth(1001);
-        zone.on("pointerdown", () => {
-          this.handleWorldMapTravel(targetMapId);
-        });
-        this.worldMapHitZones.push(zone);
-        this.worldMapContainer.add(zone);
-      }
-    }
-
-    // Title.
-    const title = this.add
-      .text(sw / 2, 30, "World Map", {
-        fontFamily: FONT,
-        fontSize: "16px",
-        color: "#f8fafc",
-        align: "center",
-      })
-      .setOrigin(0.5, 0);
-    this.worldMapLabels.push(title);
-    this.worldMapContainer.add(title);
-
-    // Hint.
-    const hint = this.add
-      .text(sw / 2, sh - 30, "Press W or ESC to close", {
-        fontFamily: FONT,
-        fontSize: "12px",
-        color: "#94a3b8",
-        align: "center",
-      })
-      .setOrigin(0.5, 0);
-    this.worldMapLabels.push(hint);
-    this.worldMapContainer.add(hint);
-  }
-
-  /** Handle a click on a world map node — send MAP_TRAVEL to the server. */
-  private handleWorldMapTravel(targetMapId: string): void {
-    const room = this.registry.get(ROOM_REGISTRY_KEY) as Room<unknown, TownStateView> | undefined;
-    if (!room) return;
-
-    // Client-side feedback: close the map and show a status line.
-    this.toggleWorldMap();
-
-    const targetDef = getMap(targetMapId);
-    const targetName = targetDef?.name ?? targetMapId;
-    this.showFloatMessage(`Traveling to ${targetName}...`);
-
-    room.send(MessageType.MAP_TRAVEL, { targetMapId });
+    // ESC is handled by the React WorldMapPanel itself.
   }
 
   /** Float a short system message above the character (portal-blocked style). */
@@ -3253,20 +3087,6 @@ export class UIScene extends Phaser.Scene {
       ease: "Cubic.easeOut",
       onComplete: () => txt.destroy(),
     });
-  }
-
-  /** Get the player count for a map (only accurate for the current map from synced state). */
-  private getPlayerCountForMap(_mapId: string): number {
-    // Only the current map has live player data from Colyseus.
-    const room = this.registry.get(ROOM_REGISTRY_KEY) as Room<unknown, TownStateView> | undefined;
-    if (!room) return 0;
-    // We can only know the count for the map we're currently on.
-    if (_mapId !== this.currentMapId) return 0;
-    let count = 0;
-    room.state.players.forEach(() => {
-      count++;
-    });
-    return count;
   }
 
   // ─── Low-level builders ──────────────────────────────────────────────────────────────────────
@@ -6028,9 +5848,8 @@ export class UIScene extends Phaser.Scene {
     if (this.skillTreeOpen) {
       this.setSkillTreePanelOpen(false);
     }
-    if (this.worldMapOpen) {
-      this.worldMapOpen = false;
-      this.worldMapContainer.setVisible(false);
+    if (uiStore.getState().worldMap.open) {
+      uiStore.getState().setWorldMapOpen(false);
     }
     if (this.cubePanelOpen) {
       this.cubePanelOpen = false;
@@ -6880,7 +6699,6 @@ export class UIScene extends Phaser.Scene {
       collection: "📦 Collection",
       milestone: "📈 Milestone",
     };
-    let activeCategory = "all";
     let y = py + headerH + 24;
 
     // Category filter row.
@@ -7066,9 +6884,10 @@ export class UIScene extends Phaser.Scene {
     this.upgradePanelElements.length = 0;
     for (const el of this.partyHudElements) el.destroy();
     this.partyHudElements.length = 0;
-    // Clean up world map labels.
-    for (const lbl of this.worldMapLabels) lbl.destroy();
-    this.worldMapLabels.length = 0;
+    // World map is React — close on shutdown.
+    if (uiStore.getState().worldMap.open) {
+      uiStore.getState().setWorldMapOpen(false);
+    }
     // Clean up moderation elements.
     for (const el of this.contextMenuElements) el.destroy();
     this.contextMenuElements.length = 0;

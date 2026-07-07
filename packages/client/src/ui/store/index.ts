@@ -28,6 +28,7 @@ import { createLoginSlice, type LoginSlice } from "./login";
 import { createHelpSlice, type HelpSlice } from "./help";
 import { createEventsSlice, type EventsSlice } from "./events";
 import { createTransportSlice, type TransportSlice } from "./transport";
+import { createWorldMapSlice, type WorldMapSlice } from "./worldMap";
 
 /**
  * The React-overlay bridge store (root).
@@ -177,6 +178,14 @@ export type { LoginSnapshot, LoginActions, LoginSlice } from "./login";
 export type { HelpSlice } from "./help";
 export type { EventSnapshot, EventsSlice } from "./events";
 export type { TransportSnapshot, TransportSlice } from "./transport";
+export type {
+  WorldMapNode,
+  WorldMapLink,
+  WorldMapRegion,
+  WorldMapSnapshot,
+  WorldMapActions,
+  WorldMapSlice,
+} from "./worldMap";
 
 /**
  * Imperative actions the Phaser scene wires up so React can drive the game.
@@ -229,6 +238,7 @@ export type UIState = InventorySlice &
   HelpSlice &
   EventsSlice &
   TransportSlice &
+  WorldMapSlice &
   ActionsSlice;
 
 export const uiStore = createStore<UIState>((...args) => {
@@ -260,6 +270,7 @@ export const uiStore = createStore<UIState>((...args) => {
     ...createHelpSlice(...args),
     ...createEventsSlice(...args),
     ...createTransportSlice(...args),
+    ...createWorldMapSlice(...args),
 
     // ── Actions registry (cross-cutting) ──
     actions: null,

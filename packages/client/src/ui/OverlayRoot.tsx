@@ -67,6 +67,9 @@ const EquipmentPanel = lazy(() =>
   import("@/ui/EquipmentPanel").then((m) => ({ default: m.EquipmentPanel })),
 );
 const HelpPanel = lazy(() => import("@/ui/HelpPanel").then((m) => ({ default: m.HelpPanel })));
+const WorldMapPanel = lazy(() =>
+  import("@/ui/WorldMapPanel").then((m) => ({ default: m.WorldMapPanel })),
+);
 
 /**
  * Mounts a lazy panel only while its `*Open` store flag is true. Because the
@@ -154,6 +157,7 @@ export function OverlayRoot() {
       <LazyPanel open={(s) => s.statPanelOpen} component={StatsPanel} />
       <LazyPanel open={(s) => s.equipmentOpen} component={EquipmentPanel} />
       <LazyPanel open={(s) => s.helpOpen} component={HelpPanel} />
+      <LazyPanel open={(s) => s.worldMap.open} component={WorldMapPanel} />
 
       <Toaster position="top-center" />
     </>
