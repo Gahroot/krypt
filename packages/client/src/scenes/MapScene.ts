@@ -12,6 +12,7 @@ import {
   type WhisperRelayPayload,
   getMap,
   groundYAt,
+  clampXByWalls,
   ladderAt,
   type Foothold,
   type Ladder,
@@ -606,7 +607,11 @@ export class MapScene extends Phaser.Scene {
               this.localVx = Math.min(0, this.localVx + f * dt);
             }
           }
+          const prevPlayerX = player.x;
           player.x += this.localVx * dt;
+          if (this.map.walls?.length) {
+            player.x = clampXByWalls(this.map.walls, prevPlayerX, player.x, player.y);
+          }
           player.x = Phaser.Math.Clamp(player.x, 0, this.map.width);
 
           // ── Grounded re-check after horizontal movement (slope follow + walk-off-edge) ──

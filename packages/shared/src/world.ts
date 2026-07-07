@@ -9,6 +9,31 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** Visual-set identifier for biome-specific parallax backgrounds and terrain palettes. */
+export type BiomeVisualSet =
+  | "pastoral"
+  | "forest"
+  | "rocky"
+  | "urban"
+  | "swamp"
+  | "market"
+  | "sky"
+  | "snow"
+  | "underground"
+  | "underwater"
+  | "jungle";
+
+/** A vertical collision segment — blocks horizontal movement within its height range. */
+export interface Wall {
+  readonly id: number;
+  /** Horizontal position of the wall (single-pixel-thick line). */
+  readonly x: number;
+  /** World-space y of the wall's top edge (smaller y = higher on screen). */
+  readonly y1: number;
+  /** World-space y of the wall's bottom edge. */
+  readonly y2: number;
+}
+
 /** A walkable platform segment (flat or gently sloped). */
 export interface Foothold {
   readonly id: number;
@@ -56,6 +81,8 @@ export interface Portal {
   readonly toSpawnId?: string;
   readonly label: string;
   readonly requiresLevel?: number;
+  /** When true the destination zone is not yet available in the alpha. */
+  readonly comingSoon?: boolean;
   /**
    * When present the portal represents a scheduled transport (airship, boat,
    * train) rather than an instant warp. The server must gate boarding so that
@@ -90,12 +117,16 @@ export interface GameMap {
   /** Named spawn points; playerSpawn is the default respawn location. */
   readonly spawnPoints: Record<string, { readonly x: number; readonly y: number }>;
   readonly playerSpawn: { readonly x: number; readonly y: number };
+  /** Vertical collision segments that block horizontal movement. */
+  readonly walls?: readonly Wall[];
   /** Boss encounters that require special spawn conditions (timed, item-summoned). */
   readonly bossSpawns?: readonly BossSpawnZone[];
   /** When true the map is underwater — swimming physics apply (reduced gravity, free vertical movement). */
   readonly swimming?: boolean;
   /** Audio key for this map's region background music. Omit for silence. */
   readonly bgmKey?: string;
+  /** Visual-set key driving biome-specific parallax backgrounds and terrain palette. Default: "pastoral". */
+  readonly bgSet?: BiomeVisualSet;
 }
 
 /** @deprecated Use {@link GameMap} directly. Kept for backward compat. */
@@ -160,6 +191,35 @@ export function ladderAt(map: GameMap, x: number, y: number, tol = 24): Ladder |
   return undefined;
 }
 
+/**
+ * Clamp a horizontal position so it does not cross any wall segment.
+ *
+ * Given the player/mob moved from `prevX` to `newX` at height `y`, return the
+ * clamped x that does not pass through any wall whose vertical span includes `y`.
+ * The result sits 1 px on the safe side of any intersected wall so the entity
+ * never rests exactly on the wall pixel (preventing sticky-corner edge cases).
+ */
+export function clampXByWalls(
+  walls: readonly Wall[],
+  prevX: number,
+  newX: number,
+  y: number,
+): number {
+  let result = newX;
+  for (const w of walls) {
+    if (y < w.y1 || y > w.y2) continue;
+    // Crossing from left to right through the wall.
+    if (prevX < w.x && result >= w.x) {
+      result = w.x - 1;
+    }
+    // Crossing from right to left through the wall.
+    else if (prevX > w.x && result <= w.x) {
+      result = w.x + 1;
+    }
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Dawn Isle — pastoral tutorial zone (Maple Island parity) Lv 1–10
 // ---------------------------------------------------------------------------
@@ -201,6 +261,7 @@ export const DAWN_ISLE: GameMap = {
   id: "dawn_isle",
   name: "Dawn Isle",
   bgmKey: "town",
+  bgSet: "pastoral",
   width: 1600,
   height: 700,
 
@@ -271,6 +332,14 @@ export const DAWN_ISLE: GameMap = {
   },
 
   playerSpawn: { x: 200, y: DAWN_GROUND_Y - 40 },
+
+  // ── Walls: cliff faces that block horizontal movement ─────────────────────
+  walls: [
+    // Left cliff face — prevents walking off the guide-ledge side above ground
+    { id: 0, x: 70, y1: 120, y2: DAWN_GROUND_Y },
+    // Right cliff face — separates mainland platforms from the ferry dock approach
+    { id: 1, x: 1360, y1: 400, y2: DAWN_GROUND_Y },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -304,6 +373,7 @@ export const HEARTLAND_HARBOR: GameMap = {
   id: "heartland_harbor",
   name: "Tidewatch Harbor",
   bgmKey: "town",
+  bgSet: "pastoral",
   width: 1400,
   height: 800,
 
@@ -370,7 +440,7 @@ export const HEARTLAND_HARBOR: GameMap = {
 };
 
 // ---------------------------------------------------------------------------
-// Harbor Docks — bilge & dock combat zone Lv 4–12
+// Harbor Docks — bilge & dock combat zone Lv 4–10
 // ---------------------------------------------------------------------------
 //
 // A grimy, plank-by-plank combat zone along the harbor waterfront. Rusted
@@ -408,6 +478,7 @@ export const HARBOR_DOCKS: GameMap = {
   id: "harbor_docks",
   name: "Harbor Docks",
   bgmKey: "field",
+  bgSet: "pastoral",
   width: 1400,
   height: 720,
 
@@ -481,6 +552,14 @@ export const HARBOR_DOCKS: GameMap = {
   },
 
   playerSpawn: { x: 100, y: HARBOR_DOCKS_GROUND_Y - 40 },
+
+  // ── Walls: dock structures that block horizontal movement ──────────────────
+  walls: [
+    // Left dock wall — cliff face at the dock's left boundary
+    { id: 0, x: 40, y1: 160, y2: HARBOR_DOCKS_GROUND_Y },
+    // Right cargo wall — vertical barrier near the crate row / upper deck edge
+    { id: 1, x: 1080, y1: 320, y2: 480 },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -519,6 +598,7 @@ export const MEADOWFIELD: GameMap = {
   id: "meadowfield",
   name: "Meadowfield",
   bgmKey: "field",
+  bgSet: "pastoral",
   width: 1600,
   height: 900,
 
@@ -554,14 +634,21 @@ export const MEADOWFIELD: GameMap = {
   ],
 
   spawns: [
-    // Meadow slimes on the ground
-    { footholdId: 0, mobId: "mob.meadow_slime", count: 6 },
-    // Mushrooms on the mid platform
-    { footholdId: 1, mobId: "mob.mushroom", count: 4 },
-    // Thornback hoppers on the upper platform
+    // Green mushrooms on the ground (easiest — entry-level for Lv 10 arrivals)
+    { footholdId: 0, mobId: "mob.green_mushroom", count: 4 },
+    // Mushrooms mixing on the ground (Lv 12)
+    { footholdId: 0, mobId: "mob.mushroom", count: 4 },
+    // Mushrooms on the mid platform (Lv 12)
+    { footholdId: 1, mobId: "mob.mushroom", count: 3 },
+    // Meadow beetles on the mid platform (Lv 16)
+    { footholdId: 1, mobId: "mob.meadow_beetle", count: 3 },
+    // Thornback hoppers on the upper platform (Lv 18)
     { footholdId: 2, mobId: "mob.thornback_hopper", count: 3 },
-    // A single boss-tier crow on the top
-    { footholdId: 3, mobId: "mob.crow", count: 1 },
+    // Crows and feral bunnies on the top (Lv 12–14)
+    { footholdId: 3, mobId: "mob.crow", count: 2 },
+    { footholdId: 3, mobId: "mob.feral_bunny", count: 3 },
+    // Meadow beetles patrolling the far ledge (Lv 16)
+    { footholdId: 4, mobId: "mob.meadow_beetle", count: 3 },
   ],
 
   portals: [
@@ -621,7 +708,7 @@ export const MEADOWFIELD: GameMap = {
     },
   ],
 
-  bossSpawns: [{ footholdId: 0, mobId: "mob.mano", count: 1, respawnIntervalMs: 180_000 }],
+  bossSpawns: [{ footholdId: 0, mobId: "mob.tidemaw", count: 1, respawnIntervalMs: 180_000 }],
 
   spawnPoints: {
     // Default entry from the harbor ferry (east side of map)
@@ -633,6 +720,14 @@ export const MEADOWFIELD: GameMap = {
   },
 
   playerSpawn: { x: 200, y: GROUND_Y_LEFT - 40 },
+
+  // ── Walls: cliff faces that block horizontal movement ─────────────────────
+  walls: [
+    // Left cliff wall — prevents walking off the left side above ground
+    { id: 0, x: 40, y1: 180, y2: GROUND_Y_LEFT },
+    // Right cliff wall — near the harbor-portal approach
+    { id: 1, x: 1560, y1: 480, y2: GROUND_Y_RIGHT },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -678,6 +773,7 @@ export const SYLVANREACH: GameMap = {
   id: "sylvanreach",
   name: "Sylvanreach",
   bgmKey: "forest",
+  bgSet: "forest",
   width: 1400,
   height: 900,
 
@@ -808,6 +904,7 @@ export const SYLVANREACH_CANOPY: GameMap = {
   id: "sylvanreach_canopy",
   name: "Sylvanreach Canopy",
   bgmKey: "forest",
+  bgSet: "forest",
   width: 1400,
   height: 700,
 
@@ -848,7 +945,7 @@ export const SYLVANREACH_CANOPY: GameMap = {
     { footholdId: 3, mobId: "mob.bark_spider", count: 2 },
   ],
 
-  bossSpawns: [{ footholdId: 3, mobId: "mob.stumpy", count: 1, respawnIntervalMs: 180_000 }],
+  bossSpawns: [{ footholdId: 3, mobId: "mob.rotwood", count: 1, respawnIntervalMs: 180_000 }],
 
   portals: [
     // Back to Sylvanreach town
@@ -900,6 +997,7 @@ export const SYLVANREACH_ROOTS: GameMap = {
   id: "sylvanreach_roots",
   name: "Sylvanreach Roots",
   bgmKey: "dungeon",
+  bgSet: "forest",
   width: 1400,
   height: 700,
 
@@ -990,6 +1088,7 @@ export const CRAGHOLD: GameMap = {
   id: "craghold",
   name: "Craghold",
   bgmKey: "dungeon",
+  bgSet: "rocky",
   width: 1600,
   height: 800,
 
@@ -1114,6 +1213,7 @@ export const CRAGHOLD_CLIFFS: GameMap = {
   id: "craghold_cliffs",
   name: "Craghold Cliffs",
   bgmKey: "dungeon",
+  bgSet: "rocky",
   width: 1400,
   height: 700,
 
@@ -1156,7 +1256,7 @@ export const CRAGHOLD_CLIFFS: GameMap = {
     { footholdId: 3, mobId: "mob.cliff_hawk", count: 2 },
   ],
 
-  bossSpawns: [{ footholdId: 3, mobId: "mob.king_slime", count: 1, respawnIntervalMs: 240_000 }],
+  bossSpawns: [{ footholdId: 3, mobId: "mob.gelatinarch", count: 1, respawnIntervalMs: 240_000 }],
 
   portals: [
     // Back to Craghold town
@@ -1212,6 +1312,7 @@ export const CRAGHOLD_QUARRY: GameMap = {
   id: "craghold_quarry",
   name: "Craghold Quarry",
   bgmKey: "dungeon",
+  bgSet: "rocky",
   width: 1600,
   height: 800,
 
@@ -1250,12 +1351,12 @@ export const CRAGHOLD_QUARRY: GameMap = {
   ],
 
   spawns: [
-    // Rock lizards at the pit bottom
-    { footholdId: 0, mobId: "mob.rock_lizard", count: 5 },
+    // Quarry crabs at the pit bottom (Lv 16)
+    { footholdId: 0, mobId: "mob.quarry_crab", count: 5 },
     // Quarry crabs on the quarry floor
     { footholdId: 1, mobId: "mob.quarry_crab", count: 5 },
-    // Fossil beetles on the mid ledge
-    { footholdId: 2, mobId: "mob.fossil_beetle", count: 4 },
+    // Boulder golems on the mid ledge (Lv 18)
+    { footholdId: 2, mobId: "mob.boulder_golem", count: 4 },
     // Boulder golems on the crush deck
     { footholdId: 3, mobId: "mob.boulder_golem", count: 3 },
     // Mixed — crabs and golems on the side ledge
@@ -1320,6 +1421,7 @@ export const DUSK_WARD: GameMap = {
   id: "dusk_ward",
   name: "Dusk Ward",
   bgmKey: "dungeon",
+  bgSet: "urban",
   width: 1500,
   height: 800,
 
@@ -1452,6 +1554,7 @@ export const DUSK_WARD_SUBWAY: GameMap = {
   id: "dusk_ward_subway",
   name: "Dusk Ward Subway",
   bgmKey: "cave",
+  bgSet: "underground",
   width: 1600,
   height: 760,
 
@@ -1567,6 +1670,7 @@ export const DUSK_WARD_BACKALLEY: GameMap = {
   id: "dusk_ward_backalley",
   name: "Dusk Ward Backalleys",
   bgmKey: "dungeon",
+  bgSet: "urban",
   width: 1400,
   height: 780,
 
@@ -1632,7 +1736,7 @@ export const DUSK_WARD_BACKALLEY: GameMap = {
     { footholdId: 5, mobId: "mob.neon_spider", count: 3 },
   ],
 
-  bossSpawns: [{ footholdId: 4, mobId: "mob.mushmom", count: 1, respawnIntervalMs: 240_000 }],
+  bossSpawns: [{ footholdId: 4, mobId: "mob.sporemother", count: 1, respawnIntervalMs: 240_000 }],
 
   portals: [
     // Back to Dusk Ward town (alley floor, left side)
@@ -1702,6 +1806,7 @@ export const CROSSWAY: GameMap = {
   id: "crossway",
   name: "Crossway",
   bgmKey: "town",
+  bgSet: "pastoral",
   width: 2000,
   height: 800,
 
@@ -1825,6 +1930,7 @@ export const CROSSWAY: GameMap = {
       toSpawnId: "from_airship",
       label: "🐉 Dragon Airship to Drakemoor",
       requiresLevel: 100,
+      comingSoon: true,
       schedule: {
         intervalMs: 300_000, // departs every 5 minutes
         windowMs: 60_000, // 60-second boarding window
@@ -1896,6 +2002,7 @@ export const MIREFEN: GameMap = {
   id: "mirefen",
   name: "Mirefen",
   bgmKey: "forest",
+  bgSet: "swamp",
   width: 1500,
   height: 800,
 
@@ -2005,6 +2112,7 @@ export const MIREFEN_RUINS: GameMap = {
   id: "mirefen_ruins",
   name: "Mirefen Ruins",
   bgmKey: "dungeon",
+  bgSet: "swamp",
   width: 1600,
   height: 800,
 
@@ -2068,8 +2176,8 @@ export const MIREFEN_RUINS: GameMap = {
   bossSpawns: [
     // The dungeon boss — Bogmaw, the Ruin Behemoth
     { footholdId: 4, mobId: "mob.bogmaw", count: 1, respawnIntervalMs: 300_000 },
-    // Jr. Balrog is item-summoned only (no respawnIntervalMs)
-    { footholdId: 4, mobId: "mob.jr_balrog", count: 1 },
+    // Void Wisp is item-summoned only (no respawnIntervalMs)
+    { footholdId: 4, mobId: "mob.void_wisp", count: 1 },
   ],
 
   portals: [
@@ -2113,6 +2221,7 @@ export const FREE_MARKET: GameMap = {
   id: "free_market",
   name: "Free Market",
   bgmKey: "market",
+  bgSet: "market",
   width: 1200,
   height: 700,
 
@@ -2195,6 +2304,7 @@ export const SKYHAVEN: GameMap = {
   id: "skyhaven",
   name: "Skyhaven",
   bgmKey: "sky",
+  bgSet: "sky",
   width: 1800,
   height: 800,
 
@@ -2287,6 +2397,7 @@ export const SKYHAVEN: GameMap = {
       toSpawnId: "from_boat",
       label: "⛵ Boat to Tideways",
       requiresLevel: 35,
+      comingSoon: true,
       schedule: {
         intervalMs: 300_000, // departs every 5 minutes
         windowMs: 60_000, // 60-second boarding window
@@ -2349,6 +2460,7 @@ export const SKYHAVEN_DRIFTPEAKS: GameMap = {
   id: "skyhaven_driftpeaks",
   name: "Skyhaven Driftpeaks",
   bgmKey: "sky",
+  bgSet: "sky",
   width: 1600,
   height: 740,
 
@@ -2471,6 +2583,7 @@ export const FROSTHOLD: GameMap = {
   id: "frosthold",
   name: "Frosthold",
   bgmKey: "cave",
+  bgSet: "snow",
   width: 1800,
   height: 800,
 
@@ -2622,6 +2735,7 @@ export const FROSTHOLD_SLOPES: GameMap = {
   id: "frosthold_slopes",
   name: "Frosthold Slopes",
   bgmKey: "sky",
+  bgSet: "snow",
   width: 1800,
   height: 800,
 
@@ -2791,9 +2905,9 @@ export const FROSTHOLD_ICECAVE: GameMap = {
     { footholdId: 2, mobId: "mob.crystal_guardian", count: 5 },
     // Glacial shards near the deep chamber entrance
     { footholdId: 2, mobId: "mob.glacial_shard", count: 3 },
-    // Permafrost revenants in the side tunnel
+    // Permafrost revenants in the side tunnel (Lv 48)
     { footholdId: 4, mobId: "mob.permafrost_revenant", count: 4 },
-    // Frost banshees in the deeper side tunnel
+    // Frost banshees in the deeper side tunnel (Lv 50)
     { footholdId: 4, mobId: "mob.frost_banshee", count: 3 },
   ],
 
@@ -3129,7 +3243,7 @@ export const DUSK_SUBWAY_PQ_STAGE4: GameMap = {
 };
 
 // ---------------------------------------------------------------------------
-// Tideways — underwater coastal town (Aqua Road parallel) Lv 35–50
+// Tideways — underwater coastal town (Aqua Road parallel) Lv 35–60
 // ---------------------------------------------------------------------------
 //
 // An underwater settlement built around coral towers and sunken-ship
@@ -3180,8 +3294,8 @@ export const TIDEWAYS: GameMap = {
     // ── Seabed / ground level (flat) ──────────────────────────────────
     { id: 0, x1: 0, y1: TIDEWAYS_GROUND_Y, x2: 1600, y2: TIDEWAYS_GROUND_Y, solid: true },
 
-    // ── Dock platform (y≈560, x 200–1000) — boat arrival area ──────────
-    { id: 1, x1: 200, y1: 560, x2: 1000, y2: 560 },
+    // ── Dock platform (y≈560, x 200–1100) — boat arrival area ─────────
+    { id: 1, x1: 200, y1: 560, x2: 1100, y2: 560 },
 
     // ── Town plaza (y≈420, x 300–1200) — central hub, shops & NPCs ────
     { id: 2, x1: 300, y1: 420, x2: 1200, y2: 420 },
@@ -3245,6 +3359,7 @@ export const TIDEWAYS: GameMap = {
       toSpawnId: "entry",
       label: "🐚 Dive to the Reef",
       requiresLevel: 35,
+      comingSoon: true,
     },
     // Path to Pearlgate Abyss (dock platform, right side)
     {
@@ -3255,6 +3370,7 @@ export const TIDEWAYS: GameMap = {
       toSpawnId: "entry",
       label: "🦑 Descend to the Abyss",
       requiresLevel: 45,
+      comingSoon: true,
     },
   ],
 
@@ -3373,17 +3489,15 @@ export const TIDEWAYS_REEF: GameMap = {
       toMapId: "tideways",
       toSpawnId: "to_reef",
       label: "🏠 Return to Tideways",
+      comingSoon: true,
     },
   ],
 
-  spawnPoints: {
-    // Entry from Tideways town
-    entry: { x: 100, y: 620 - 40 },
-    // Coral platform landing
-    coral_platform: { x: 700, y: 420 - 40 },
-  },
-
   playerSpawn: { x: 100, y: 620 - 40 },
+
+  spawnPoints: {
+    entry: { x: 100, y: 620 - 40 },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -3470,6 +3584,8 @@ export const TIDEWAYS_ABYSS: GameMap = {
     // Mixed predators on the vent shelf
     { footholdId: 2, mobId: "mob.anglerfish", count: 4 },
     { footholdId: 2, mobId: "mob.tiger_shark", count: 3 },
+    // Sea serpents patrolling the vent shelf
+    { footholdId: 2, mobId: "mob.sea_serpent", count: 3 },
     // Anglerfish packs on the side vent
     { footholdId: 4, mobId: "mob.anglerfish", count: 5 },
   ],
@@ -3488,19 +3604,15 @@ export const TIDEWAYS_ABYSS: GameMap = {
       toMapId: "tideways",
       toSpawnId: "to_abyss",
       label: "🏠 Return to Tideways",
+      comingSoon: true,
     },
   ],
 
-  spawnPoints: {
-    // Entry from Tideways town
-    entry: { x: 100, y: 640 - 40 },
-    // Mid abyss landing
-    mid_abyss: { x: 600, y: 440 - 40 },
-    // Deep trench (boss)
-    deep_trench: { x: 700, y: 120 - 40 },
-  },
-
   playerSpawn: { x: 100, y: 640 - 40 },
+
+  spawnPoints: {
+    entry: { x: 100, y: 640 - 40 },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -3621,6 +3733,7 @@ export const DRAKEMOOR: GameMap = {
       toSpawnId: "entry",
       label: "🌿 Brave the Jungle Floor",
       requiresLevel: 90,
+      comingSoon: true,
     },
     // Path to Dragon Abyss combat zone (abyss gate platform, right)
     {
@@ -3631,6 +3744,7 @@ export const DRAKEMOOR: GameMap = {
       toSpawnId: "entry",
       label: "🐉 Descend to the Dragon Abyss",
       requiresLevel: 110,
+      comingSoon: true,
     },
   ],
 
@@ -3744,15 +3858,15 @@ export const DRAKEMOOR_JUNGLE_FLOOR: GameMap = {
       toMapId: "drakemoor",
       toSpawnId: "to_jungle_floor",
       label: "🏠 Return to Drakemoor",
+      comingSoon: true,
     },
   ],
 
+  playerSpawn: { x: 100, y: 700 - 40 },
+
   spawnPoints: {
     entry: { x: 100, y: 700 - 40 },
-    low_root: { x: 700, y: 560 - 40 },
   },
-
-  playerSpawn: { x: 100, y: 700 - 40 },
 };
 
 // ---------------------------------------------------------------------------
@@ -3852,16 +3966,15 @@ export const DRAKEMOOR_DRAGON_ABYSS: GameMap = {
       toMapId: "drakemoor",
       toSpawnId: "to_dragon_abyss",
       label: "🏠 Return to Drakemoor",
+      comingSoon: true,
     },
   ],
 
+  playerSpawn: { x: 100, y: 640 - 40 },
+
   spawnPoints: {
     entry: { x: 100, y: 640 - 40 },
-    magma_shelf: { x: 700, y: 440 - 40 },
-    sovereign_lair: { x: 700, y: 120 - 40 },
   },
-
-  playerSpawn: { x: 100, y: 640 - 40 },
 };
 
 // ---------------------------------------------------------------------------
@@ -3917,6 +4030,41 @@ export function getMap(id: string): GameMap | undefined {
 /** A map is a combat map if it has mob spawns. Towns and safe zones have zero. */
 export function isCombatMap(map: GameMap): boolean {
   return map.spawns.length > 0;
+}
+
+// ─── Death return map ───────────────────────────────────────────────────────
+
+/**
+ * Combat-zone id → parent town id for death respawn.
+ * Maps without an entry respawn on their own playerSpawn (i.e. towns).
+ */
+export const DEATH_RETURN_MAP: Record<string, string> = {
+  meadowfield: "crossway",
+  harbor_docks: "heartland_harbor",
+  sylvanreach_canopy: "sylvanreach",
+  sylvanreach_roots: "sylvanreach",
+  craghold_cliffs: "craghold",
+  craghold_quarry: "craghold",
+  dusk_ward_subway: "dusk_ward",
+  dusk_ward_backalley: "dusk_ward",
+  dusk_subway_pq_staging: "dusk_ward",
+  dusk_subway_pq_stage1: "dusk_ward",
+  dusk_subway_pq_stage2: "dusk_ward",
+  dusk_subway_pq_stage3: "dusk_ward",
+  dusk_subway_pq_stage4: "dusk_ward",
+  mirefen_ruins: "mirefen",
+  skyhaven_driftpeaks: "skyhaven",
+  frosthold_slopes: "frosthold",
+  frosthold_icecave: "frosthold",
+  tideways_reef: "tideways",
+  tideways_abyss: "tideways",
+  drakemoor_jungle_floor: "drakemoor",
+  drakemoor_dragon_abyss: "drakemoor",
+};
+
+/** Resolve the map a player should respawn on after dying on `mapId`. */
+export function getDeathReturnMapId(mapId: string): string {
+  return DEATH_RETURN_MAP[mapId] ?? mapId;
 }
 
 /** How often (ms) a rune spawns on a combat map. */

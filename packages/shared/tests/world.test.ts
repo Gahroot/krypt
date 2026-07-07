@@ -3,12 +3,14 @@ import {
   groundYAt,
   findFootholdBelow,
   ladderAt,
+  clampXByWalls,
   MEADOWFIELD,
   DAWN_ISLE,
   HEARTLAND_HARBOR,
   MAPS,
   getMap,
   type Foothold,
+  type Wall,
 } from "../src/world.js";
 import { getMobDef } from "../src/mobs.js";
 
@@ -194,6 +196,63 @@ describe("portal integrity", () => {
 // ---------------------------------------------------------------------------
 // Spawn ↔ MOBS consistency
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// clampXByWalls
+// ---------------------------------------------------------------------------
+describe("clampXByWalls", () => {
+  const wall: Wall = { id: 0, x: 200, y1: 100, y2: 500 };
+
+  it("blocks crossing from left to right", () => {
+    // Player at x=150, moving right to x=210 → should be clamped to 199
+    expect(clampXByWalls([wall], 150, 210, 300)).toBe(199);
+  });
+
+  it("blocks crossing from right to left", () => {
+    // Player at x=250, moving left to x=190 → should be clamped to 201
+    expect(clampXByWalls([wall], 250, 190, 300)).toBe(201);
+  });
+
+  it("does not block movement on the same side of the wall", () => {
+    // Player at x=150, moving to x=180 (both left of wall) → no block
+    expect(clampXByWalls([wall], 150, 180, 300)).toBe(180);
+  });
+
+  it("does not block when y is outside the wall's vertical range", () => {
+    // Wall spans y=100–500; player at y=50 (above wall) can cross freely
+    expect(clampXByWalls([wall], 150, 210, 50)).toBe(210);
+    // Player at y=600 (below wall) can cross freely
+    expect(clampXByWalls([wall], 150, 210, 600)).toBe(210);
+  });
+
+  it("allows standing at wall edge and moving away", () => {
+    // Player at x=199 (just left of wall), moving left to x=180 → no block
+    expect(clampXByWalls([wall], 199, 180, 300)).toBe(180);
+    // Player at x=201 (just right of wall), moving right to x=220 → no block
+    expect(clampXByWalls([wall], 201, 220, 300)).toBe(220);
+  });
+
+  it("returns the same position when no walls exist", () => {
+    expect(clampXByWalls([], 150, 210, 300)).toBe(210);
+  });
+
+  it("handles multiple walls (blocks at first intersected wall)", () => {
+    const walls: Wall[] = [
+      { id: 0, x: 150, y1: 0, y2: 600 },
+      { id: 1, x: 250, y1: 0, y2: 600 },
+    ];
+    // From x=100 to x=300 — hits wall at 150 first → clamped to 149
+    expect(clampXByWalls(walls, 100, 300, 300)).toBe(149);
+  });
+
+  it("works with Dawn Isle walls from map data", () => {
+    const walls = DAWN_ISLE.walls!;
+    expect(walls.length).toBeGreaterThan(0);
+    // Left cliff wall at x=70, y1=120, y2=580
+    // Player at x=60 walking right at y=300 → should be blocked at 69
+    expect(clampXByWalls(walls, 60, 80, 300)).toBe(69);
+  });
+});
 
 describe("every spawn.mobId resolves via getMobDef", () => {
   for (const [mapId, gameMap] of Object.entries(MAPS)) {

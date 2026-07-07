@@ -46,6 +46,7 @@ import {
   isMintWorthy,
   lineCountForTier,
   groundYAt,
+  clampXByWalls,
   ladderAt,
   randomizeAppearance,
   NPCS,
@@ -1935,7 +1936,11 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.lastJumpHeld = latest.jump;
 
     // ── Integrate X ──
+    const prevPlayerX = player.x;
     player.x += player.vx;
+    if (this.map.walls?.length) {
+      player.x = clampXByWalls(this.map.walls, prevPlayerX, player.x, player.y);
+    }
     player.x = clamp(player.x, 0, this.map.width);
 
     if (this.map.swimming) {
@@ -3167,6 +3172,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     const minX = Math.min(fh.x1, fh.x2);
     const maxX = Math.max(fh.x1, fh.x2);
 
+    // Save horizontal position before AI + knockback movement for wall check.
+    const prevMobX = mob.x;
+
     // ── AI state machine ──
     switch (mob.aiState) {
       case "idle":
@@ -3205,6 +3213,11 @@ export class MapRoom extends AuthedRoom<TownState> {
       mob.x = clamp(mob.x, 0, this.map.width);
       mob.knockbackVx *= KNOCKBACK_DECAY;
       if (Math.abs(mob.knockbackVx) < 0.3) mob.knockbackVx = 0;
+    }
+
+    // ── Wall collision (after all horizontal movement) ──
+    if (this.map.walls?.length) {
+      mob.x = clampXByWalls(this.map.walls, prevMobX, mob.x, mob.y);
     }
   }
 
