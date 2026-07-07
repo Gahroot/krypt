@@ -550,7 +550,14 @@ export function setMacros(charId: string, macros: SkillMacro[]): void {
 // ─── Coach marks (onboarding overlays — seen once per character) ───────────────
 
 /** IDs of coach marks the player has already seen. */
-export type CoachMarkId = "move" | "attack" | "jump" | "inventory" | "talk" | "firstObjective";
+export type CoachMarkId =
+  | "move"
+  | "attack"
+  | "jump"
+  | "inventory"
+  | "talk"
+  | "firstObjective"
+  | "equip";
 
 /** Read the set of coach mark IDs already dismissed for this character. */
 export function getSeenCoachMarks(charId: string): Set<string> {

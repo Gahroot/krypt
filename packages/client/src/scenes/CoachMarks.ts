@@ -57,6 +57,13 @@ const COACH_MARKS: readonly CoachMarkDef[] = [
     detail: "Talk to Guide Iris — she's nearby with a ⚡ over her head!",
     position: "center-bottom",
   },
+  {
+    id: "equip",
+    icon: "🗡️",
+    title: "Equip Your Weapon!",
+    detail: "Press  I  to open inventory, then right-click a weapon to equip it.",
+    position: "center-bottom",
+  },
 ];
 
 // ─── Scene ─────────────────────────────────────────────────────────────────────
@@ -111,6 +118,7 @@ export class CoachMarksScene extends Phaser.Scene {
       "jump",
       "inventory",
       "talk",
+      "equip",
     ];
     for (const id of triggers) {
       const flag = this.registry.get(`coachmark:${id}`);

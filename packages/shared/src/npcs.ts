@@ -184,6 +184,34 @@ export const NPCS: Record<string, NpcDef> = {
     ],
   },
 
+  "npc.dawn_shop": {
+    id: "npc.dawn_shop",
+    name: "Island Merchant Bria",
+    mapId: "dawn_isle",
+    x: 700,
+    y: 580 - 40,
+    spriteKey: "npc.island_merchant_bria",
+    role: "shop",
+    dialog: [
+      {
+        kind: "line",
+        text: "Welcome! I keep the new arrivals stocked with potions and supplies.",
+        next: 1,
+      },
+      {
+        kind: "branch",
+        text: "What do you need?",
+        choices: [
+          {
+            label: "Show me potions & supplies",
+            action: { kind: "openShop", payload: "shop.dawn_basic" },
+          },
+          { label: "Just browsing.", action: { kind: "end" } },
+        ],
+      },
+    ],
+  },
+
   // ── Split Road of Destiny — Job Instructor preview NPCs ──────────────
 
   "npc.dawn_instructor_warrior": {

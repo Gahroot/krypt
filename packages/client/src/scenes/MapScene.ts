@@ -1919,7 +1919,7 @@ export class MapScene extends Phaser.Scene {
     // ── Quest turn-in flourish: golden burst + particles at the player ──
     room.onMessage(
       "quest_turnin",
-      (_payload: {
+      (payload: {
         questId: string;
         questName: string;
         mesos: number;
@@ -1928,6 +1928,11 @@ export class MapScene extends Phaser.Scene {
       }) => {
         if (this.localPlayer) {
           this.playQuestCompleteFlourish(this.localPlayer.x, this.localPlayer.y);
+        }
+        // After turning in Pest Control (dawn_trio), the player receives a
+        // starter weapon — prompt them to equip it.
+        if (payload.questId === "quest.dawn_trio") {
+          this.registry.set("coachmark:equip", true);
         }
       },
     );

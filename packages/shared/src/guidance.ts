@@ -17,11 +17,14 @@ import { MAPS } from "./world.js";
 /** Ordered quest ids that form the Dawn Isle tutorial. Used by analytics to build a tutorial funnel. */
 export const TUTORIAL_QUEST_CHAIN: readonly string[] = [
   "quest.dawn_tutorial",
-  "quest.dawn_step_jump",
   "quest.dawn_trio",
+  "quest.dawn_step_jump",
   "quest.dawn_step_loot",
   "quest.dawn_step_inventory",
   "quest.dawn_level3",
+  "quest.dawn_shroom_hunt",
+  "quest.dawn_puff_patrol",
+  "quest.dawn_ready",
   "quest.dawn_ferry",
 ];
 

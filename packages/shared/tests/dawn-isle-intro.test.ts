@@ -16,9 +16,9 @@ import { DAWN_ISLE, findFootholdBelow } from "../src/world.js";
 /** Ordered list of quest ids that form the Dawn Isle tutorial chain. */
 const TUTORIAL_CHAIN = [
   "quest.dawn_tutorial", // 1. Welcome / movement
-  "quest.dawn_step_jump", // 2. Jumping
-  "quest.dawn_trio", // 3. Combat (kill snails)
-  "quest.dawn_step_loot", // 4. Loot (collect item)
+  "quest.dawn_trio", // 2. Combat (kill snails) + starter weapon
+  "quest.dawn_step_jump", // 3. Jumping
+  "quest.dawn_step_loot", // 4. Loot (talk to Iris about your spoils)
   "quest.dawn_step_inventory", // 5. Inventory
   "quest.dawn_level3", // 6. Grinding
   "quest.dawn_ferry", // 7. Travel to Heartland
@@ -82,7 +82,9 @@ describe("Dawn Isle tutorial quest chain", () => {
 
     expect(kinds, "should have talk objectives (movement/jump/inventory)").toContain("talk");
     expect(kinds, "should have kill objectives (combat)").toContain("kill");
-    expect(kinds, "should have collect objectives (loot)").toContain("collect");
+    // Loot is covered by a talk objective (talk to Iris about your spoils).
+    // No collect objectives remain in the tutorial — they were fragile when
+    // the reward item could be equipped or sold before turn-in.
     expect(kinds, "should have level objectives (grinding)").toContain("level");
   });
 });

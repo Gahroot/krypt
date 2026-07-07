@@ -35,6 +35,22 @@ export interface ShopDef {
 // ─── Catalog ────────────────────────────────────────────────────────────────
 
 export const SHOPS: Record<string, ShopDef> = {
+  "shop.dawn_basic": {
+    id: "shop.dawn_basic",
+    name: "Island Merchant Bria's Supplies",
+    npcId: "npc.dawn_shop",
+    slots: [
+      { itemId: "pot.small_hp", buyPrice: 20, sellPrice: 5 },
+      { itemId: "pot.medium_hp", buyPrice: 40, sellPrice: 10 },
+      { itemId: "pot.small_mp", buyPrice: 25, sellPrice: 6 },
+      { itemId: "pot.medium_mp", buyPrice: 50, sellPrice: 12 },
+      { itemId: "scroll.return", buyPrice: 300, sellPrice: 75 },
+      { itemId: "ammo.shortbow_arrow", buyPrice: 5, sellPrice: 1 },
+      { itemId: "ammo.lead_bullet", buyPrice: 5, sellPrice: 1 },
+      { itemId: "ammo.iron_star", buyPrice: 5, sellPrice: 1 },
+      { itemId: "wpn.bronze_shortsword", buyPrice: 200, sellPrice: 50 },
+    ],
+  },
   "shop.meadow_basic": {
     id: "shop.meadow_basic",
     name: "Merchant Bram's General Store",

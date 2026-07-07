@@ -174,13 +174,15 @@ export const QUESTS: Record<string, QuestDef> = {
     rewards: { mesos: 50, exp: 40 },
   },
 
-  /** Q4: Loot lesson — collect a Bronze Shortsword (rewarded by Pest Control). */
+  /** Q4: Loot lesson — talk back to Iris after receiving your starter weapon.
+   *  Changed from a collect objective to a talk objective so the quest can't
+   *  soft-lock when the player equips or sells the reward sword. */
   "quest.dawn_step_loot": {
     id: "quest.dawn_step_loot",
     name: "Loot the Spoils",
     giverNpcId: "npc.dawn_guide",
     prereqQuestId: "quest.dawn_step_jump",
-    objectives: [{ kind: "collect", itemId: "wpn.bronze_shortsword", count: 1 }],
+    objectives: [{ kind: "talk", npcId: "npc.dawn_guide" }],
     rewards: { mesos: 100, exp: 50 },
   },
 
