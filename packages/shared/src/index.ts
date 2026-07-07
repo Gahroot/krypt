@@ -32,6 +32,7 @@ export * from "./market.js";
 export * from "./codex.js";
 export * from "./familiars.js";
 export * from "./pets.js";
+export * from "./emotes.js";
 export {
   type AchievementConditionKind,
   type AchievementCondition,

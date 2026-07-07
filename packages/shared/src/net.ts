@@ -293,6 +293,12 @@ export const MessageType = {
   // ─── Skill VFX (cast animation trigger) ─────────────────────────────────
   /** Server → client: broadcast a skill VFX event (cast animation, particles). */
   SKILL_VFX: 164,
+
+  // ─── Emotes (expression bubbles above the head) ─────────────────────────
+  /** Client → server: player triggered an emote. */
+  EMOTE: 165,
+  /** Server → client: broadcast an emote to all clients in the map. */
+  EMOTE_DISPLAY: 166,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -2015,4 +2021,17 @@ export interface PetSyncPayload {
   x: number;
   /** Pet y position (if summoned). */
   y: number;
+}
+
+// ─── Emote system payloads ─────────────────────────────────────────────────
+
+/** Client → server: the player triggered an emote by id. */
+export interface EmotePayload {
+  emoteId: string;
+}
+
+/** Server → client: broadcast an emote from a player to everyone in the map. */
+export interface EmoteDisplayPayload {
+  sessionId: string;
+  emoteId: string;
 }

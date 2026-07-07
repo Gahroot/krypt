@@ -174,6 +174,9 @@ import {
   getSkillEffect,
   isAmmoItem,
   getAmmoDef,
+  EMOTE_IDS,
+  type EmotePayload,
+  type EmoteDisplayPayload,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -653,6 +656,8 @@ export class MapRoom extends AuthedRoom<TownState> {
   private macroCastLimiter = new RateLimiter(5, 0.005);
   /** NPC interactions: 5/sec (quest chains can cascade quickly). */
   private talkNpcLimiter = new RateLimiter(5, 0.005);
+  /** Emotes: 3/sec (prevent spam while allowing expressive play). */
+  private emoteLimiter = new RateLimiter(3, 0.003);
 
   /** sessionId → persistent accountId (set in onJoin, used by create/delete handlers). */
   private sessionAccount = new Map<string, string>();
@@ -1553,6 +1558,28 @@ export class MapRoom extends AuthedRoom<TownState> {
     // ─── Unstuck / Return to Town (self-recovery, any player) ───────────────
     [MessageType.UNSTUCK_ACTION]: (client: Client) => {
       this.handleUnstuckAction(client);
+    },
+
+    // ─── Emotes (expression bubbles above the head) ──────────────────────
+    [MessageType.EMOTE]: (client: Client, msg: EmotePayload) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !msg?.emoteId) return;
+
+      // Rate-limit: prevent emote spam.
+      if (!this.emoteLimiter.consume(client.sessionId)) {
+        logAnomaly(client.sessionId, "rate_limit", "emote");
+        return;
+      }
+
+      // Validate emote id against the shared registry.
+      const emoteId = String(msg.emoteId);
+      if (!EMOTE_IDS.has(emoteId)) return;
+
+      // Broadcast to all clients in the map (including sender for local echo).
+      this.broadcast(MessageType.EMOTE_DISPLAY, {
+        sessionId: client.sessionId,
+        emoteId,
+      } satisfies EmoteDisplayPayload);
     },
   };
 
@@ -5517,6 +5544,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     this.skillCastLimiter.delete(client.sessionId);
     this.pickupLimiter.delete(client.sessionId);
     this.macroCastLimiter.delete(client.sessionId);
+    this.emoteLimiter.delete(client.sessionId);
     this.logLeave(client, { charId: player?.charId });
   }
 

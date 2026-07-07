@@ -50,6 +50,8 @@ import {
   type SkillEffectDef,
   getAmbiance,
   type AmbianceConfig,
+  type EmoteDisplayPayload,
+  getEmote,
 } from "@maple/shared";
 
 import {
@@ -157,6 +159,19 @@ const ROOM_REGISTRY_KEY = "room";
 const CHAT_FOCUSED_KEY = "chatFocused";
 /** How long (ms) a speech bubble stays visible above a player. */
 const SPEECH_BUBBLE_MS = 4000;
+/** How long (ms) an emote bubble stays visible above a player. */
+const EMOTE_BUBBLE_MS = 3000;
+/** Emote hotkey → emote id mapping (F1-F8). */
+const EMOTE_HOTKEYS: Record<string, string> = {
+  F1: "happy",
+  F2: "angry",
+  F3: "cry",
+  F4: "surprised",
+  F5: "love",
+  F6: "sweat",
+  F7: "cool",
+  F8: "wave",
+};
 
 // ─── Combat + loot tunables (mirror packages/server/src/rooms/TownRoom.ts — keep in sync) ────────
 /** Server melee cooldown. Reused to throttle the *visual* swing so the cosmetic tracks real hits. */
@@ -940,6 +955,7 @@ export class MapScene extends Phaser.Scene {
 
     this.bindState(room);
     this.bindChat(room);
+    this.bindEmotes(room);
 
     // We're live — flip the HUD indicator green (it auto-hides shortly after).
     this.setConnStatus("online");
@@ -2355,6 +2371,66 @@ export class MapScene extends Phaser.Scene {
       targets: container,
       y: container.y - 6,
       duration: SPEECH_BUBBLE_MS,
+      ease: "Linear",
+      onComplete: () => container.destroy(),
+    });
+  }
+
+  // ─── Emotes: hotkey bindings + bubble display ─────────────────────────────────────────────
+  /** Bind F1-F8 to emotes, and listen for EMOTE_DISPLAY broadcasts from the server. */
+  private bindEmotes(room: Room<unknown, TownStateView>): void {
+    // ── Local hotkey → send to server ──
+    this.input.keyboard?.on("keydown", (event: KeyboardEvent) => {
+      if (!room) return;
+      // Suppress while typing in chat or a React text field.
+      if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
+      const emoteId = EMOTE_HOTKEYS[event.code];
+      if (!emoteId) return;
+      // Quick guard: only fire on the initial press, not repeat.
+      if (event.repeat) return;
+      room.send(MessageType.EMOTE, { emoteId });
+    });
+
+    // ── Server broadcast → show bubble above the player ──
+    room.onMessage(MessageType.EMOTE_DISPLAY, (msg: EmoteDisplayPayload) => {
+      const sprite = this.playerSprites.get(msg.sessionId);
+      if (!sprite) return;
+      const emote = getEmote(msg.emoteId);
+      if (!emote) return;
+      this.showEmoteBubble(sprite, emote.emoji);
+    });
+  }
+
+  /** Pop an emoji bubble above a player sprite that fades after EMOTE_BUBBLE_MS. */
+  private showEmoteBubble(sprite: Phaser.GameObjects.Sprite, emoji: string): void {
+    const emojiText = this.add
+      .text(0, 0, emoji, {
+        fontSize: "20px",
+        align: "center",
+      })
+      .setOrigin(0.5);
+
+    const pad = 5;
+    const bw = emojiText.width + pad * 2;
+    const bh = emojiText.height + pad * 2;
+    const bg = this.add.graphics();
+    bg.fillStyle(0xffffff, 0.92);
+    bg.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 8);
+    bg.lineStyle(1, 0xcccccc, 0.8);
+    bg.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 8);
+    // Small triangle pointer.
+    bg.fillTriangle(-4, bh / 2, 4, bh / 2, 0, bh / 2 + 6);
+
+    const container = this.add.container(sprite.x, sprite.y - sprite.displayHeight / 2 - 22, [
+      bg,
+      emojiText,
+    ]);
+    container.setDepth(9500);
+
+    this.tweens.add({
+      targets: container,
+      y: container.y - 6,
+      duration: EMOTE_BUBBLE_MS,
       ease: "Linear",
       onComplete: () => container.destroy(),
     });
