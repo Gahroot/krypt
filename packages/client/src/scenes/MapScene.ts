@@ -85,7 +85,14 @@ import {
   resolveBiomePalette,
 } from "../art/textures";
 import type { AppearanceParams, BiomePalette } from "../art/textures";
-import type { TownStateView, PlayerView, MobView, LootView, ProjectileView } from "../state-views";
+import type {
+  TownStateView,
+  PlayerView,
+  MobView,
+  LootView,
+  ProjectileView,
+  GuildUpdateView,
+} from "../state-views";
 import { getAudioManager } from "../audio/AudioManager";
 import { loadScene } from "./lazyScene";
 import { uiStore } from "../ui/store";
@@ -306,6 +313,14 @@ export class MapScene extends Phaser.Scene {
   private petFullnessBar?: Phaser.GameObjects.Graphics;
   // ─── Mount sprites (per-player, keyed by sessionId) ──
   private readonly mountSprites = new Map<string, Phaser.GameObjects.Sprite>();
+  // ── Guild data (from GUILD_UPDATE message) ─────────────────────────────────
+  private localGuildData: GuildUpdateView | null = null;
+  /** Set of charIds belonging to the local player's guild (rebuilt on GUILD_UPDATE). */
+  private guildCharIds = new Set<string>();
+  // ── Mob hover nameplates (shown on pointer-over for any mob) ────────────────
+  private readonly mobHoverNameplates = new Map<string, Phaser.GameObjects.Container>();
+  // ── Custom game cursor sprite ──
+  private cursorSprite?: Phaser.GameObjects.Sprite;
 
   /** Dynamic key refs keyed by action ID — rebuilt on rebind. */
   private readonly actionKeys = new Map<ActionId, Phaser.Input.Keyboard.Key>();
@@ -703,6 +718,12 @@ export class MapScene extends Phaser.Scene {
 
     // 9) Ambient parallax drift (subtle cloud/tree sway).
     this.tickParallaxDrift(delta);
+
+    // 10) Custom cursor follows the pointer.
+    if (this.cursorSprite) {
+      const ptr = this.input.activePointer;
+      this.cursorSprite.setPosition(ptr.x, ptr.y);
+    }
   }
 
   // ─── Connection + state binding ───────────────────────────────────────────────────────────────
@@ -802,6 +823,25 @@ export class MapScene extends Phaser.Scene {
         sprite.setData("stunned", isStunned);
       },
     );
+
+    // ── Guild data (for nameplate guild tags) ──
+    room.onMessage(MessageType.GUILD_UPDATE, (payload: GuildUpdateView) => {
+      this.localGuildData = payload;
+      this.guildCharIds = new Set(payload.members.map((m) => m.charId));
+      // Refresh every existing player tag to reflect the new guild info.
+      for (const [sid, tag] of this.playerTags) {
+        const player = room.state.players.get(sid);
+        if (player) {
+          this.updatePlayerTagText(
+            tag,
+            player.name,
+            player.level,
+            player.equippedTitle,
+            this.getGuildTagForPlayer(player.charId),
+          );
+        }
+      }
+    });
 
     this.configureReconnection(room);
 
@@ -1081,7 +1121,12 @@ export class MapScene extends Phaser.Scene {
       sprite.setData("prevAnimX", player.x);
 
       // Floating name + level tag (shared by local and remote).
-      const tag = this.createPlayerTag(player.name, player.level, player.equippedTitle);
+      const tag = this.createPlayerTag(
+        player.name,
+        player.level,
+        player.equippedTitle,
+        this.getGuildTagForPlayer(player.charId),
+      );
       this.playerTags.set(sessionId, tag);
 
       if (sessionId === this.localSessionId) {
@@ -1175,7 +1220,14 @@ export class MapScene extends Phaser.Scene {
           this.updateLowHpVignette(player.hp, player.maxHp);
 
           const t = this.playerTags.get(sessionId);
-          if (t) this.updatePlayerTagText(t, player.name, player.level, player.equippedTitle);
+          if (t)
+            this.updatePlayerTagText(
+              t,
+              player.name,
+              player.level,
+              player.equippedTitle,
+              this.getGuildTagForPlayer(player.charId),
+            );
 
           // Re-render if appearance changed (e.g. cash-shop equip).
           this.syncPlayerAppearance(sprite, player);
@@ -1206,7 +1258,14 @@ export class MapScene extends Phaser.Scene {
             player.ladderId,
           );
           const t = this.playerTags.get(sessionId);
-          if (t) this.updatePlayerTagText(t, player.name, player.level, player.equippedTitle);
+          if (t)
+            this.updatePlayerTagText(
+              t,
+              player.name,
+              player.level,
+              player.equippedTitle,
+              this.getGuildTagForPlayer(player.charId),
+            );
           this.syncPlayerAppearance(sprite, player);
           // Dim remote players who are riding out a reconnection grace window so others
           // can tell they've briefly dropped (entity is held server-side until they
@@ -1303,6 +1362,48 @@ export class MapScene extends Phaser.Scene {
       hpContainer.setData("h", hpBarH);
       this.mobHpBars.set(key, hpContainer);
 
+      // ── Mob hover: show name + HP bar on pointer-over ──
+      sprite.setInteractive();
+      const baseDefName = getMobDef(mob.mobId)?.name ?? mob.mobId;
+      const mobLevel = getMobDef(mob.mobId)?.level ?? 0;
+      const hoverNameText = this.add
+        .text(0, 0, mobLevel > 0 ? `Lv.${mobLevel} ${baseDefName}` : baseDefName, {
+          fontFamily: "ui-monospace, Menlo, monospace",
+          fontSize: "10px",
+          color: mob.isElite ? "#ffd700" : "#ffffff",
+          stroke: "#1a1a2e",
+          strokeThickness: 2,
+          align: "center",
+        })
+        .setOrigin(0.5);
+      const hoverContainer = this.add.container(
+        sprite.x,
+        sprite.y - sprite.displayHeight / 2 - 16,
+        [hoverNameText],
+      );
+      hoverContainer.setDepth(mob.y + 3).setVisible(false);
+      this.mobHoverNameplates.set(key, hoverContainer);
+      // Track whether the pointer is over this mob so onChange can update the hover HP bar.
+      sprite.setData("hovered", false);
+      sprite.on("pointerover", () => {
+        if (mob.dead) return;
+        sprite.setData("hovered", true);
+        // Show hover nameplate (unless elite already has its own).
+        if (!mob.isElite) {
+          hoverContainer.setVisible(true);
+        }
+        // Force HP bar visible on hover.
+        hpContainer.setVisible(true);
+        const ratio = mob.maxHp > 0 ? Phaser.Math.Clamp(mob.hp / mob.maxHp, 0, 1) : 0;
+        this.drawMobHpFill(hpFill, hpBarW, ratio);
+      });
+      sprite.on("pointerout", () => {
+        sprite.setData("hovered", false);
+        if (!mob.isElite) hoverContainer.setVisible(false);
+        // Hide HP bar only if mob is at full HP (no damage taken).
+        if (mob.hp >= mob.maxHp) hpContainer.setVisible(false);
+      });
+
       $(mob).onChange(() => {
         this.storeServerTransform(sprite, mob.x, mob.y, mob.facing);
 
@@ -1320,6 +1421,13 @@ export class MapScene extends Phaser.Scene {
           hpContainer.setVisible(true);
           const ratio = mob.maxHp > 0 ? Phaser.Math.Clamp(mob.hp / mob.maxHp, 0, 1) : 0;
           this.drawMobHpFill(hpFill, hpBarW, ratio);
+        }
+
+        // Update hover HP bar if this mob is currently hovered.
+        if (sprite.getData("hovered") && !mob.dead) {
+          hpContainer.setVisible(true);
+          const hRatio = mob.maxHp > 0 ? Phaser.Math.Clamp(mob.hp / mob.maxHp, 0, 1) : 0;
+          this.drawMobHpFill(hpFill, hpBarW, hRatio);
         }
 
         // Hide HP bar when dead or full.
@@ -1398,6 +1506,11 @@ export class MapScene extends Phaser.Scene {
       if (nameplate) {
         nameplate.destroy();
         this.mobNameplates.delete(key);
+      }
+      const hoverNp = this.mobHoverNameplates.get(key);
+      if (hoverNp) {
+        hoverNp.destroy();
+        this.mobHoverNameplates.delete(key);
       }
       // Clean up telegraph visual.
       const tg = this.telegraphGfx.get(key);
@@ -2389,6 +2502,11 @@ export class MapScene extends Phaser.Scene {
         nameplate.setPosition(sprite.x, sprite.y - sprite.displayHeight / 2 - 16);
         nameplate.setDepth(sprite.y + 3);
       }
+      const hoverNp = this.mobHoverNameplates.get(key);
+      if (hoverNp && hoverNp.visible) {
+        hoverNp.setPosition(sprite.x, sprite.y - sprite.displayHeight / 2 - 16);
+        hoverNp.setDepth(sprite.y + 3);
+      }
     }
   }
 
@@ -3015,6 +3133,26 @@ export class MapScene extends Phaser.Scene {
         this.castFishingLine();
       }
     });
+
+    // ── Custom game cursor ──
+    const cursorGfx = this.make.graphics();
+    // Crosshair ring
+    cursorGfx.lineStyle(2, 0xffffff, 0.9);
+    cursorGfx.strokeCircle(12, 12, 8);
+    // Center dot
+    cursorGfx.fillStyle(0xff4444, 1);
+    cursorGfx.fillCircle(12, 12, 2);
+    // Crosshair ticks
+    cursorGfx.lineStyle(2, 0xffffff, 0.8);
+    cursorGfx.lineBetween(12, 0, 12, 4);
+    cursorGfx.lineBetween(12, 20, 12, 24);
+    cursorGfx.lineBetween(0, 12, 4, 12);
+    cursorGfx.lineBetween(20, 12, 24, 12);
+    cursorGfx.generateTexture("game-cursor", 24, 24);
+    cursorGfx.destroy();
+    // Hide the system cursor and show our sprite cursor.
+    this.game.canvas.style.cursor = "none";
+    this.cursorSprite = this.add.sprite(0, 0, "game-cursor").setDepth(10000).setScrollFactor(0);
   }
 
   /** Register all warrior + mob animations once (idempotent — safe across HMR reloads). */
@@ -3265,7 +3403,12 @@ export class MapScene extends Phaser.Scene {
   // ── Floating name / level tags (MapleStory style) ──────────────────────────
 
   /** Create a floating name+level tag that sits above a player sprite. */
-  private createPlayerTag(name: string, level: number, title = ""): Phaser.GameObjects.Container {
+  private createPlayerTag(
+    name: string,
+    level: number,
+    title = "",
+    guildTag = "",
+  ): Phaser.GameObjects.Container {
     const label = this.add
       .text(0, 0, `Lv.${level} ${name}`, {
         fontFamily: "ui-monospace, Menlo, monospace",
@@ -3284,19 +3427,39 @@ export class MapScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setVisible(!!title);
 
+    const guildText = this.add
+      .text(0, 0, guildTag, {
+        fontFamily: "ui-monospace, Menlo, monospace",
+        fontSize: "9px",
+        color: "#a78bfa",
+        fontStyle: "italic",
+      })
+      .setOrigin(0.5)
+      .setVisible(!!guildTag);
+
     const P = 4;
-    const totalH = label.height + (title ? titleText.height + 2 : 0);
-    const totalW = Math.max(label.width, titleText.width);
+    const totalH =
+      label.height + (title ? titleText.height + 2 : 0) + (guildTag ? guildText.height + 1 : 0);
+    const totalW = Math.max(label.width, titleText.width, guildText.width);
     const bg = this.add.graphics();
     this.drawTagBg(bg, totalW + P * 2, totalH + P * 2);
 
-    // Stack: label on top, title below.
-    label.setY(-totalH / 2 + label.height / 2);
-    if (title) titleText.setY(-totalH / 2 + label.height + 2 + titleText.height / 2);
+    // Stack: label on top, title below, guild tag at the bottom.
+    let curY = -totalH / 2 + label.height / 2;
+    label.setY(curY);
+    if (title) {
+      curY += label.height / 2 + 2 + titleText.height / 2;
+      titleText.setY(curY);
+    }
+    if (guildTag) {
+      curY += (title ? titleText.height / 2 : label.height / 2) + 1 + guildText.height / 2;
+      guildText.setY(curY);
+    }
 
-    const container = this.add.container(0, 0, [bg, label, titleText]);
+    const container = this.add.container(0, 0, [bg, label, titleText, guildText]);
     container.setData("label", label);
     container.setData("titleText", titleText);
+    container.setData("guildText", guildText);
     container.setData("bg", bg);
     container.setDepth(9000);
     return container;
@@ -3315,9 +3478,11 @@ export class MapScene extends Phaser.Scene {
     name: string,
     level: number,
     title?: string,
+    guildTag?: string,
   ): void {
     const label = tag.getData("label") as Phaser.GameObjects.Text;
     const titleText = tag.getData("titleText") as Phaser.GameObjects.Text | undefined;
+    const guildText = tag.getData("guildText") as Phaser.GameObjects.Text | undefined;
     const bg = tag.getData("bg") as Phaser.GameObjects.Graphics;
 
     label.setText(`Lv.${level} ${name}`);
@@ -3326,18 +3491,42 @@ export class MapScene extends Phaser.Scene {
       titleText.setText(t);
       titleText.setVisible(!!t);
     }
+    if (guildText) {
+      const g = guildTag ?? "";
+      guildText.setText(g);
+      guildText.setVisible(!!g);
+    }
 
     const hasTitle = titleText?.visible ?? false;
-    const totalH = label.height + (hasTitle && titleText ? titleText.height + 2 : 0);
-    const totalW = Math.max(label.width, titleText?.width ?? 0);
+    const hasGuild = guildText?.visible ?? false;
+    const totalH =
+      label.height +
+      (hasTitle && titleText ? titleText.height + 2 : 0) +
+      (hasGuild && guildText ? guildText.height + 1 : 0);
+    const totalW = Math.max(label.width, titleText?.width ?? 0, guildText?.width ?? 0);
 
-    // Re-center label + title vertically.
-    label.setY(-totalH / 2 + label.height / 2);
+    // Re-center label + title + guild vertically.
+    let curY = -totalH / 2 + label.height / 2;
+    label.setY(curY);
     if (hasTitle && titleText) {
-      titleText.setY(-totalH / 2 + label.height + 2 + titleText.height / 2);
+      curY += label.height / 2 + 2 + titleText.height / 2;
+      titleText.setY(curY);
+    }
+    if (hasGuild && guildText) {
+      curY +=
+        (hasTitle && titleText ? titleText.height / 2 : label.height / 2) +
+        1 +
+        guildText.height / 2;
+      guildText.setY(curY);
     }
 
     this.drawTagBg(bg, totalW + 8, totalH + 8);
+  }
+
+  /** Resolve the guild tag string for a player by charId, or empty if not in our guild. */
+  private getGuildTagForPlayer(charId: string): string {
+    if (!this.localGuildData || !this.guildCharIds.has(charId)) return "";
+    return `[${this.localGuildData.guildName}]`;
   }
 
   /** Pin a floating tag just above its parent sprite's head and keep depth in sync. */
@@ -3346,7 +3535,9 @@ export class MapScene extends Phaser.Scene {
     tag: Phaser.GameObjects.Container,
   ): void {
     const titleText = tag.getData("titleText") as Phaser.GameObjects.Text | undefined;
-    const extra = titleText?.visible ? titleText.height + 2 : 0;
+    const guildText = tag.getData("guildText") as Phaser.GameObjects.Text | undefined;
+    let extra = titleText?.visible ? titleText.height + 2 : 0;
+    if (guildText?.visible) extra += guildText.height + 1;
     tag.setPosition(sprite.x, sprite.y - sprite.displayHeight / 2 - 14 - extra);
     tag.setDepth(sprite.y + 1);
   }
@@ -4214,12 +4405,15 @@ export class MapScene extends Phaser.Scene {
       .setDepth(9200);
 
     // Crit gets a dramatic pop-in; normal hits drift up smoothly. Recycle on done.
+    // Scatter: add a slight horizontal offset so stacked hits don't overlap in a line.
+    const scatterX = (Math.random() - 0.5) * (isCrit ? 36 : 24);
     if (isCrit) {
       label.setScale(1.6);
       this.tweens.add({
         targets: label,
         scaleX: 1,
         scaleY: 1,
+        x: x + scatterX,
         y: y - 34,
         alpha: 0,
         duration: 900,
@@ -4230,6 +4424,7 @@ export class MapScene extends Phaser.Scene {
       const drift = payload.hit ? -24 : -18;
       this.tweens.add({
         targets: label,
+        x: x + scatterX,
         y: y + drift,
         alpha: 0,
         duration: 760,
