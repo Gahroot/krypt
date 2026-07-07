@@ -4464,7 +4464,43 @@ export class MapRoom extends AuthedRoom<TownState> {
       return;
     }
 
-    // Valid portal use — persist state and send travel message.
+    // ── Same-map teleporter (in-map portal pair) ──────────────────────────────
+    if (nearest.toMapId === this.map.id) {
+      // Resolve destination: explicit toX/toY override spawn-point lookup.
+      let destX: number;
+      let destY: number;
+      if (nearest.toX !== undefined && nearest.toY !== undefined) {
+        destX = nearest.toX;
+        destY = nearest.toY;
+      } else if (nearest.toSpawnId && this.map.spawnPoints[nearest.toSpawnId]) {
+        const sp = this.map.spawnPoints[nearest.toSpawnId];
+        destX = sp.x;
+        destY = sp.y;
+      } else {
+        destX = this.map.playerSpawn.x;
+        destY = this.map.playerSpawn.y;
+      }
+
+      // Teleport the player in-room (no scene restart).
+      player.x = destX;
+      player.y = destY;
+      player.vx = 0;
+      player.vy = 0;
+      player.grounded = true;
+      player.climbing = false;
+      player.ladderId = -1;
+
+      // Notify the client so it can play a visual effect.
+      const c2 = client ?? this.findClientByPlayer(player);
+      if (c2) {
+        c2.send(MessageType.USE_PORTAL, {
+          message: `✨ ${nearest.label}`,
+        } satisfies FerryBlockedPayload);
+      }
+      return;
+    }
+
+    // Valid cross-map portal use — persist state and send travel message.
     this.persistPlayer(player);
     const c = client ?? this.findClientByPlayer(player);
     if (c) {

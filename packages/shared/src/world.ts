@@ -163,13 +163,17 @@ export const REACTOR_DEFAULT_HP = 200;
 /** Default interaction range for reactors. */
 export const REACTOR_DEFAULT_RANGE = 60;
 
-/** A portal linking two maps at a given position. */
+/** A portal linking two maps at a given position (or teleporting within the same map). */
 export interface Portal {
   readonly id: string;
   readonly x: number;
   readonly y: number;
   readonly toMapId: string;
   readonly toSpawnId?: string;
+  /** Explicit destination coordinates (px) for same-map teleporters. When set these override the spawn-point lookup. */
+  readonly toX?: number;
+  /** Explicit destination y coordinate (px) for same-map teleporters. */
+  readonly toY?: number;
   readonly label: string;
   readonly requiresLevel?: number;
   /** When true the destination zone is not yet available in the alpha. */
@@ -365,8 +369,8 @@ export const DAWN_ISLE: GameMap = {
   height: 700,
 
   footholds: [
-    // Ground floor (flat)
-    { id: 0, x1: 0, y1: DAWN_GROUND_Y, x2: 1600, y2: DAWN_GROUND_Y, solid: true },
+    // Ground floor — gentle slope: left is slightly higher, right dips toward the dock
+    { id: 0, x1: 0, y1: DAWN_GROUND_Y - 10, x2: 1600, y2: DAWN_GROUND_Y, solid: true },
     // Guide-NPC ledge (y=120, x 80–300) — the tutorial high ground (upper-left)
     { id: 1, x1: 80, y1: 120, x2: 300, y2: 120 },
     // Fork Base Plaza (y=470, x 360–1240) — where the Split Road of Destiny forks
@@ -416,6 +420,26 @@ export const DAWN_ISLE: GameMap = {
       toSpawnId: "dock",
       label: "⛵ Ferry to Tidewatch Harbor",
       requiresLevel: 10,
+    },
+    // In-map teleporter: ferry dock → guide ledge (connects the bottom-right to the upper-left)
+    {
+      id: "dock_to_guide",
+      x: 1450,
+      y: 500 - 40,
+      toMapId: "dawn_isle",
+      toX: 120,
+      toY: 120 - 40,
+      label: "⬆ Warp to Guide Ledge",
+    },
+    // In-map teleporter: guide ledge → ferry dock (return path)
+    {
+      id: "guide_to_dock",
+      x: 120,
+      y: 120 - 40,
+      toMapId: "dawn_isle",
+      toX: 1450,
+      toY: 500 - 40,
+      label: "⬇ Warp to Ferry Dock",
     },
   ],
 
@@ -582,8 +606,15 @@ export const HARBOR_DOCKS: GameMap = {
   height: 720,
 
   footholds: [
-    // ── Bilge planks (ground level — waterlogged wood) ──────────────────
-    { id: 0, x1: 0, y1: HARBOR_DOCKS_GROUND_Y, x2: 1400, y2: HARBOR_DOCKS_GROUND_Y, solid: true },
+    // ── Bilge planks — gentle slope: left is slightly higher, right dips toward the water ──
+    {
+      id: 0,
+      x1: 0,
+      y1: HARBOR_DOCKS_GROUND_Y - 10,
+      x2: 1400,
+      y2: HARBOR_DOCKS_GROUND_Y,
+      solid: true,
+    },
 
     // ── Crate row (y≈480, x 200–1100) — stacked cargo crates ────────────
     { id: 1, x1: 200, y1: 480, x2: 1100, y2: 480 },
@@ -640,6 +671,26 @@ export const HARBOR_DOCKS: GameMap = {
       toMapId: "heartland_harbor",
       toSpawnId: "dock",
       label: "⚓ Return to Tidewatch Harbor",
+    },
+    // In-map teleporter: crow's nest → side pier (connects the top platform to the far-right side platform)
+    {
+      id: "nest_to_pier",
+      x: 550,
+      y: 160 - 40,
+      toMapId: "harbor_docks",
+      toX: 1220,
+      toY: 540 - 40,
+      label: "⬇ Warp to Side Pier",
+    },
+    // In-map teleporter: side pier → crow's nest (return path)
+    {
+      id: "pier_to_nest",
+      x: 1220,
+      y: 540 - 40,
+      toMapId: "harbor_docks",
+      toX: 550,
+      toY: 160 - 40,
+      label: "⬆ Warp to Crow's Nest",
     },
   ],
 

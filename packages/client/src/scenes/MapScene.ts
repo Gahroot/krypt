@@ -4462,8 +4462,9 @@ export class MapScene extends Phaser.Scene {
   private spawnPortals(): void {
     for (const portal of this.map.portals) {
       const isComingSoon = portal.comingSoon === true;
-      const glowColor = isComingSoon ? 0xf59e0b : 0x6ec6ff;
-      const labelColor = isComingSoon ? "#f59e0b" : "#6ec6ff";
+      const isLocal = portal.toMapId === this.map.id;
+      const glowColor = isComingSoon ? 0xf59e0b : isLocal ? 0xb388ff : 0x6ec6ff;
+      const labelColor = isComingSoon ? "#f59e0b" : isLocal ? "#b388ff" : "#6ec6ff";
 
       // Glowing orb marker.
       const glow = this.add.circle(portal.x, portal.y, 12, glowColor, 0.5);
@@ -4497,13 +4498,18 @@ export class MapScene extends Phaser.Scene {
 
       // Interaction prompt — hidden until player is in range.
       const prompt = this.add
-        .text(portal.x, portal.y - 42, isComingSoon ? "🚧 Coming Soon" : "[\u2191 ENTER]", {
-          fontFamily: "ui-monospace, Menlo, monospace",
-          fontSize: "10px",
-          color: isComingSoon ? "#f59e0b" : "#aeb9c7",
-          stroke: "#1a1a2e",
-          strokeThickness: 2,
-        })
+        .text(
+          portal.x,
+          portal.y - 42,
+          isComingSoon ? "🚧 Coming Soon" : isLocal ? "[\u2191 ENTER] \u2728" : "[\u2191 ENTER]",
+          {
+            fontFamily: "ui-monospace, Menlo, monospace",
+            fontSize: "10px",
+            color: isComingSoon ? "#f59e0b" : "#aeb9c7",
+            stroke: "#1a1a2e",
+            strokeThickness: 2,
+          },
+        )
         .setOrigin(0.5)
         .setDepth(portal.y + 1001)
         .setAlpha(0);
