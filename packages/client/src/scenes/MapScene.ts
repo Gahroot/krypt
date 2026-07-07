@@ -52,6 +52,7 @@ import {
   type AmbianceConfig,
   type EmoteDisplayPayload,
   getEmote,
+  getMountDef,
 } from "@maple/shared";
 
 import {
@@ -295,6 +296,8 @@ export class MapScene extends Phaser.Scene {
   // ─── Pet sprites ──
   private petSprite?: Phaser.GameObjects.Sprite;
   private petFullnessBar?: Phaser.GameObjects.Graphics;
+  // ─── Mount sprites (per-player, keyed by sessionId) ──
+  private readonly mountSprites = new Map<string, Phaser.GameObjects.Sprite>();
 
   /** Dynamic key refs keyed by action ID — rebuilt on rebind. */
   private readonly actionKeys = new Map<ActionId, Phaser.Input.Keyboard.Key>();
@@ -840,6 +843,9 @@ export class MapScene extends Phaser.Scene {
       }
     }
 
+    // 5c) Mount sprites follow their owner player sprites.
+    this.updateMountSprites();
+
     // 6) Auto-vacuum the nearest loot drop in range (server re-checks the 60px gate authoritatively).
     this.autoPickupLoot();
 
@@ -1365,6 +1371,12 @@ export class MapScene extends Phaser.Scene {
 
     $(room.state).players.onRemove((_player: PlayerView, sessionId: string) => {
       this.destroyTracked(this.playerSprites, sessionId);
+      // Clean up mount sprite for departing player.
+      const mountSprite = this.mountSprites.get(sessionId);
+      if (mountSprite) {
+        mountSprite.destroy();
+        this.mountSprites.delete(sessionId);
+      }
       const tag = this.playerTags.get(sessionId);
       if (tag) {
         tag.destroy();
@@ -1786,6 +1798,8 @@ export class MapScene extends Phaser.Scene {
       this.petSprite = undefined;
       this.petFullnessBar?.destroy();
       this.petFullnessBar = undefined;
+      // Clean up mount sprites.
+      this.destroyAllMountSprites();
     });
 
     // ── Channel system ──
@@ -2326,6 +2340,14 @@ export class MapScene extends Phaser.Scene {
     room.onMessage(MessageType.PET_SYNC, (payload: import("@maple/shared").PetSyncPayload) => {
       this.handlePetSync(payload);
     });
+
+    // ── Mount state sync (server pushes mount ride/dismount) ──
+    room.onMessage(
+      MessageType.MOUNT_STATE,
+      (payload: import("@maple/shared").MountStatePayload) => {
+        this.handleMountState(payload);
+      },
+    );
   }
 
   // ─── Chat: speech bubbles ───────────────────────────────────────────────────────────────────────
@@ -4940,6 +4962,59 @@ export class MapScene extends Phaser.Scene {
     const color = ratio > 0.5 ? 0x2ecc71 : ratio > 0.25 ? 0xf39c12 : 0xe74c3c;
     bar.fillStyle(color, 1);
     bar.fillRect(0, 0, Math.ceil(w * ratio), h);
+  }
+
+  // ─── Mount rendering ─────────────────────────────────────────────────────────
+
+  /** Handle mount state broadcast from the server. */
+  private handleMountState(payload: import("@maple/shared").MountStatePayload): void {
+    const sprite = this.playerSprites.get(payload.sessionId);
+    if (!sprite) return;
+
+    // Clean up existing mount sprite for this player.
+    const existing = this.mountSprites.get(payload.sessionId);
+    if (existing) {
+      existing.destroy();
+      this.mountSprites.delete(payload.sessionId);
+    }
+
+    if (!payload.mountId) return; // dismounted
+
+    // Resolve mount texture key from the shared MOUNTS catalog.
+    const mountDef = getMountDef(payload.mountId);
+    const texKey = mountDef?.textureKey ?? payload.mountId;
+
+    const mountSprite = this.add.sprite(
+      sprite.x,
+      sprite.y + 14,
+      this.textures.exists(texKey) ? texKey : texKey,
+    );
+    mountSprite.setScale(0.9);
+    mountSprite.setFlipX(sprite.flipX);
+    this.attachShadow(mountSprite);
+    this.mountSprites.set(payload.sessionId, mountSprite);
+  }
+
+  /** Position mount sprites with their owner player sprites each frame. */
+  private updateMountSprites(): void {
+    for (const [sessionId, mountSprite] of this.mountSprites) {
+      const playerSprite = this.playerSprites.get(sessionId);
+      if (!playerSprite) {
+        mountSprite.destroy();
+        this.mountSprites.delete(sessionId);
+        continue;
+      }
+      mountSprite.x = playerSprite.x;
+      mountSprite.y = playerSprite.y + 14;
+      mountSprite.setFlipX(playerSprite.flipX);
+      this.applyDepthAndShadow(mountSprite);
+    }
+  }
+
+  /** Clean up all mount sprites (e.g. on scene shutdown). */
+  private destroyAllMountSprites(): void {
+    for (const sprite of this.mountSprites.values()) sprite.destroy();
+    this.mountSprites.clear();
   }
 
   /** Smoothly lerp a sprite toward target x/y. */

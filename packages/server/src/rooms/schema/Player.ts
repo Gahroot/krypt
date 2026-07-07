@@ -189,4 +189,10 @@ export class Player extends Schema {
   petFullness = 100;
   /** Whether the pet is currently summoned this session. */
   petSummoned = false;
+
+  // ─── Mount system ────────────────────────────────────────────────────────
+  /** Active mount def id ("" = not mounted). Synced to all clients. */
+  @type("string") activeMountId = "";
+  /** Owned mount def ids (server-only, not synced). */
+  ownedMounts: string[] = [];
 }

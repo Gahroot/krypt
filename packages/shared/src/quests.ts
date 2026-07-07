@@ -237,7 +237,7 @@ export const QUESTS: Record<string, QuestDef> = {
     requiredLevel: 8,
     prereqQuestId: "quest.dawn_puff_patrol",
     objectives: [{ kind: "level", level: 8 }],
-    rewards: { mesos: 400, exp: 300 },
+    rewards: { mesos: 400, exp: 300, items: ["mount.red_snail"] },
   },
 
   /** Q10: Talk to Ferrymaster Cole — leave Dawn Isle. */

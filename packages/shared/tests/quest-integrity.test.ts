@@ -6,7 +6,7 @@
  *  2. Every kill objective's mobId resolves in MOBS.
  *  3. Every collect objective's itemId resolves in ITEMS or ETC_ITEMS.
  *  4. Every talk objective's npcId resolves in NPCS.
- *  5. Every reward item resolves in ITEMS.
+ *  5. Every reward item resolves in ITEMS or MOUNTS.
  *  6. Every prereqQuestId resolves to a real quest id.
  */
 
@@ -15,6 +15,7 @@ import { QUESTS } from "../src/quests.js";
 import { NPCS } from "../src/npcs.js";
 import { MOBS } from "../src/mobs.js";
 import { ITEMS, ETC_ITEMS } from "../src/items.js";
+import { MOUNTS } from "../src/mounts.js";
 
 describe("Quest giver NPC resolution", () => {
   for (const quest of Object.values(QUESTS)) {
@@ -64,8 +65,8 @@ describe("Quest reward item resolution", () => {
   for (const quest of Object.values(QUESTS)) {
     if (quest.rewards.items) {
       for (const itemId of quest.rewards.items) {
-        it(`"${quest.id}" reward itemId "${itemId}" resolves in ITEMS`, () => {
-          expect(ITEMS[itemId]).toBeDefined();
+        it(`"${quest.id}" reward itemId "${itemId}" resolves in ITEMS or MOUNTS`, () => {
+          expect(ITEMS[itemId] ?? MOUNTS[itemId]).toBeDefined();
         });
       }
     }

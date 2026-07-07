@@ -177,6 +177,10 @@ import {
   EMOTE_IDS,
   type EmotePayload,
   type EmoteDisplayPayload,
+  getMountDef,
+  isMountId,
+  type MountRidePayload,
+  type MountStatePayload,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -1581,6 +1585,14 @@ export class MapRoom extends AuthedRoom<TownState> {
         emoteId,
       } satisfies EmoteDisplayPayload);
     },
+
+    // ─── Mount system (rideable companions) ───────────────────────────────
+    [MessageType.MOUNT_RIDE]: (client: Client, msg: MountRidePayload) => {
+      this.handleMountRide(client, msg);
+    },
+    [MessageType.MOUNT_DISMOUNT]: (client: Client) => {
+      this.handleMountDismount(client);
+    },
   };
 
   onCreate(options: { mapId?: string; channel?: number } = {}): void {
@@ -1962,8 +1974,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     }
 
     // ── Horizontal velocity (acceleration / friction for gliding Maple feel) ──
-    // Slow debuffs reduce movement speed.
-    const playerSpeedMult = getSlowMultiplier(player.activeEffects);
+    // Slow debuffs reduce movement speed; mounts boost speed.
+    const playerSpeedMult =
+      getSlowMultiplier(player.activeEffects) * this.getMountSpeedMultiplier(player);
     const maxSpeed = PLAYER_SPEED * playerSpeedMult;
 
     // Detect current foothold for slippery (ice) check.
@@ -2359,6 +2372,9 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   // ─── Combat ───────────────────────────────────────────────────────────────
   private tryAttack(attacker: Player): void {
+    // Dismount on attack (MapleStory behavior).
+    this.dismountOnAttack(attacker);
+
     // Resolve attack type from equipped weapon → class fallback.
     const invLookup = (uid: string) => attacker.inventory.get(uid)?.defId;
     const equippedRec = Object.fromEntries(attacker.equipped.entries());
@@ -5059,6 +5075,9 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.exploration = character.exploration ?? { slots: [] };
     player.ownedTitles = new ArraySchema<string>(...(character.ownedTitles ?? []));
     player.equippedTitle = character.equippedTitle ?? "";
+    player.ownedMounts = [
+      ...(((character as unknown as Record<string, unknown>).ownedMounts as string[]) ?? []),
+    ];
 
     this.state.players.set(client.sessionId, player);
 
@@ -6976,6 +6995,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       macros: player.macros,
       exploration: player.exploration,
       familiars: familiars ?? undefined,
+      ownedMounts: player.ownedMounts,
     });
   }
 
@@ -10655,6 +10675,115 @@ export class MapRoom extends AuthedRoom<TownState> {
         owner.totalItemsCollected += 1;
         accountStore.incrementLifetimeCounter(owner.charId, "totalItemsCollected", 1);
       }
+    }
+  }
+
+  // ─── Mount system ──────────────────────────────────────────────────────
+
+  private handleMountRide(client: Client, msg: MountRidePayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.dead) return;
+    const mountId = msg?.mountId;
+    if (!mountId || !isMountId(mountId)) return;
+
+    const mountDef = getMountDef(mountId);
+    if (!mountDef) return;
+
+    // Level requirement check.
+    if (player.level < mountDef.levelReq) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: `You need level ${mountDef.levelReq} to ride a ${mountDef.name}.`,
+      });
+      return;
+    }
+
+    // Must own this mount.
+    if (!player.ownedMounts.includes(mountId)) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: `You don't own a ${mountDef.name}.`,
+      });
+      return;
+    }
+
+    // Already riding this mount → dismount.
+    if (player.activeMountId === mountId) {
+      this.dismountPlayer(client, player);
+      return;
+    }
+
+    // Ride the mount.
+    player.activeMountId = mountId;
+    this.broadcast(MessageType.MOUNT_STATE, {
+      sessionId: client.sessionId,
+      mountId,
+    } satisfies MountStatePayload);
+  }
+
+  private handleMountDismount(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.activeMountId) return;
+    this.dismountPlayer(client, player);
+  }
+
+  private dismountPlayer(client: Client, player: Player): void {
+    const mountId = player.activeMountId;
+    player.activeMountId = "";
+    this.broadcast(MessageType.MOUNT_STATE, {
+      sessionId: client.sessionId,
+      mountId: "",
+    } satisfies MountStatePayload);
+    if (mountId) {
+      const mountDef = getMountDef(mountId);
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: `You dismounted your ${mountDef?.name ?? mountId}.`,
+      });
+    }
+  }
+
+  /** Get the mount speed multiplier for a player (1.0 if not mounted). */
+  private getMountSpeedMultiplier(player: Player): number {
+    if (!player.activeMountId) return 1;
+    const def = getMountDef(player.activeMountId);
+    return def?.speedMultiplier ?? 1;
+  }
+
+  /** Award a mount to a player (add to ownedMounts and notify). */
+  private grantMount(player: Player, mountId: string): void {
+    if (player.ownedMounts.includes(mountId)) return;
+    player.ownedMounts.push(mountId);
+    const def = getMountDef(mountId);
+    const client = Array.from(this.clients).find((c) => {
+      const p = this.state.players.get(c.sessionId);
+      return p === player;
+    });
+    if (client) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: `You obtained a mount: ${def?.name ?? mountId}! Press the mount key to ride it.`,
+      });
+    }
+  }
+
+  /** Dismount a player when they attack (MapleStory behavior). */
+  private dismountOnAttack(player: Player): void {
+    if (!player.activeMountId) return;
+    player.activeMountId = "";
+    const client = Array.from(this.clients).find((c) => {
+      const p = this.state.players.get(c.sessionId);
+      return p === player;
+    });
+    if (client) {
+      client.send(MessageType.MOUNT_STATE, {
+        sessionId: client.sessionId,
+        mountId: "",
+      } satisfies MountStatePayload);
     }
   }
 }

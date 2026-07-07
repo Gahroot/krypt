@@ -33,6 +33,7 @@ export * from "./codex.js";
 export * from "./familiars.js";
 export * from "./pets.js";
 export * from "./emotes.js";
+export * from "./mounts.js";
 export {
   type AchievementConditionKind,
   type AchievementCondition,

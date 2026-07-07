@@ -3,6 +3,7 @@ import { NPCS, getNpcsForMap } from "../src/npcs.js";
 import { QUESTS } from "../src/quests.js";
 import { ITEMS } from "../src/items.js";
 import { MOBS } from "../src/mobs.js";
+import { MOUNTS } from "../src/mounts.js";
 
 describe("NPC catalog", () => {
   it("every NPC has a unique id matching its key in NPCS", () => {
@@ -55,10 +56,12 @@ describe("quest catalog integrity", () => {
     }
   });
 
-  it("every quest reward item id resolves to an item in ITEMS", () => {
+  it("every quest reward item id resolves to an item in ITEMS or MOUNTS", () => {
     for (const [key, quest] of Object.entries(QUESTS)) {
       for (const itemId of quest.rewards.items ?? []) {
-        expect(ITEMS[itemId], `quest "${key}" rewards unknown item "${itemId}"`).toBeDefined();
+        const isItem = ITEMS[itemId] !== undefined;
+        const isMount = MOUNTS[itemId] !== undefined;
+        expect(isItem || isMount, `quest "${key}" rewards unknown item "${itemId}"`).toBe(true);
       }
     }
   });

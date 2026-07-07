@@ -30,7 +30,7 @@ import type { Client } from "colyseus";
 import type { Player } from "./rooms/schema/Player";
 import { InventoryItem } from "./rooms/schema/InventoryItem";
 import { accountStore } from "./persistence/store";
-import { getItemDef } from "@maple/shared";
+import { getItemDef, isMountId } from "@maple/shared";
 
 // ---------------------------------------------------------------------------
 // Initialization
@@ -189,6 +189,13 @@ export function turnInQuest(quests: QuestState[], questId: string, player: Playe
   }
 
   for (const itemId of itemsToGrant) {
+    // Grant as a mount if it's a known mount id; otherwise grant as an inventory item.
+    if (isMountId(itemId)) {
+      if (!player.ownedMounts.includes(itemId)) {
+        player.ownedMounts.push(itemId);
+      }
+      continue;
+    }
     if (!getItemDef(itemId)) continue;
     const uid = `quest_${questId}_${itemId}_${Date.now()}`;
     // Add to both in-memory inventory (for live player) and durable store.

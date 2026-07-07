@@ -215,6 +215,8 @@ export interface CharacterRecord {
   lastDailyLoginGiftAt?: number;
   /** Pet state: active pet, fullness, summoned status. */
   pet?: import("@maple/shared").PetState;
+  /** Owned mount def ids (e.g. ["mount.red_snail"]). */
+  ownedMounts?: string[];
   createdAt: number;
 }
 
@@ -295,6 +297,7 @@ const CHAR_COL: Record<keyof CharacterRecord, string> = {
   dailyCompletions: "daily_completions",
   lastDailyLoginGiftAt: "last_daily_login_gift_at",
   pet: "pet",
+  ownedMounts: "owned_mounts",
   createdAt: "created_at",
 };
 
@@ -319,6 +322,7 @@ const JSON_CHAR_KEYS: ReadonlySet<keyof CharacterRecord> = new Set([
   "ownedTitles",
   "dailyCompletions",
   "pet",
+  "ownedMounts",
 ]);
 
 /** Serialize a CharacterRecord row for SQL INSERT/UPDATE. */

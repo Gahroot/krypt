@@ -661,6 +661,37 @@ export function generatePlaceholderTextures(scene: Phaser.Scene): void {
   g.fillEllipse(w / 2, h / 2, w - 2, h - 1);
   g.generateTexture(key, w, h);
   g.destroy();
+
+  // ── Mount placeholder textures ──────────────────────────────────────────
+  generateMountPlaceholder(scene, "mount_red_snail", 28, 18, 0xcc3333, 0x993322);
+  generateMountPlaceholder(scene, "mount_blue_mushroom", 24, 22, 0x3366cc, 0x224488);
+  generateMountPlaceholder(scene, "mount_stone_golem", 32, 26, 0x888888, 0x666666);
+}
+
+/** Generate a simple procedural mount placeholder texture (oval body + eye). */
+function generateMountPlaceholder(
+  scene: Phaser.Scene,
+  key: string,
+  w: number,
+  h: number,
+  bodyColor: number,
+  accentColor: number,
+): void {
+  if (scene.textures.exists(key)) return;
+  const g = scene.make.graphics();
+  // Body (oval).
+  g.fillStyle(bodyColor, 1);
+  g.fillEllipse(w / 2, h / 2 + 2, w - 2, h - 2);
+  // Outline.
+  g.lineStyle(1, accentColor, 1);
+  g.strokeEllipse(w / 2, h / 2 + 2, w - 2, h - 2);
+  // Eye.
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(w / 2 + w * 0.15, h / 2, 2);
+  g.fillStyle(0x111111, 1);
+  g.fillCircle(w / 2 + w * 0.15 + 1, h / 2, 1);
+  g.generateTexture(key, w, h);
+  g.destroy();
 }
 
 // ─── Biome visual palettes ──────────────────────────────────────────────────

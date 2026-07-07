@@ -299,6 +299,14 @@ export const MessageType = {
   EMOTE: 165,
   /** Server → client: broadcast an emote to all clients in the map. */
   EMOTE_DISPLAY: 166,
+
+  // ─── Mount system (rideable companions with speed boost) ─────────────────────
+  /** Client → server: ride the active mount (or toggle ride if already mounted). */
+  MOUNT_RIDE: 167,
+  /** Client → server: dismount the active mount. */
+  MOUNT_DISMOUNT: 168,
+  /** Server → client: mount state changed (ride/dismount broadcast). */
+  MOUNT_STATE: 169,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -2024,6 +2032,22 @@ export interface PetSyncPayload {
 }
 
 // ─── Emote system payloads ─────────────────────────────────────────────────
+
+/** Client → server: ride a mount (by mount def id). */
+export interface MountRidePayload {
+  mountId: string;
+}
+
+/** Client → server: dismount the active mount. */
+export type MountDismountPayload = Record<string, never>;
+
+/** Server → client: mount state changed — broadcast to all clients in the map. */
+export interface MountStatePayload {
+  /** Session id of the mounted player. */
+  sessionId: string;
+  /** Active mount def id (empty string = dismounted). */
+  mountId: string;
+}
 
 /** Client → server: the player triggered an emote by id. */
 export interface EmotePayload {
