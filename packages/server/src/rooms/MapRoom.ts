@@ -4720,6 +4720,46 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.totalItemsCollected = character.totalItemsCollected ?? 0;
     player.quickslots = character.quickslots ?? [];
 
+    // ── Backfill: auto-grant Beginner starter skills (migration + new chars) ──
+    // Beginners get thrown_shell & nimble_feet at Lv1 so the first 9 levels
+    // aren't bare basic-attack-only.  Granted free (no SP cost) at creation.
+    if (player.archetype === ClassArchetype.BEGINNER) {
+      const starterSkillIds = ["beginner.thrown_shell", "beginner.nimble_feet"];
+      let changed = false;
+      const existing = new Set(player.learnedSkills);
+      for (const sid of starterSkillIds) {
+        if (!existing.has(sid)) {
+          player.learnedSkills.push(sid);
+          player.skillBook[sid] = 1;
+          existing.add(sid);
+          changed = true;
+        }
+      }
+      // Auto-assign starter skills to quickslot bar if empty.
+      if (player.quickslots.length === 0) {
+        player.quickslots = [
+          { type: "skill" as const, id: "beginner.thrown_shell" },
+          { type: "skill" as const, id: "beginner.nimble_feet" },
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+        ];
+        changed = true;
+      }
+      if (changed) {
+        accountStore.updateCharacter(player.charId, {
+          learnedSkills: [...player.learnedSkills],
+          skillBook: { ...player.skillBook },
+          quickslots: player.quickslots,
+        });
+      }
+    }
+
     // ── Backfill achievement progress on join (catches pre-system characters) ─
     // Level backfill: ensure level_reached progress reflects current level.
     const currentLevelProgress = player.achievements["level_10"]?.[0] ?? 0;

@@ -115,7 +115,7 @@ describe("skillsAvailableAt", () => {
     const at1 = skillsAvailableAt(ClassArchetype.BEGINNER, 1);
     const ids1 = at1.map((s) => s.id);
     expect(ids1).toContain("beginner.recovery");
-    expect(ids1).toContain("beginner.double_strike");
+    expect(ids1).toContain("beginner.thrown_shell");
     expect(ids1).not.toContain("beginner.nimble_strike");
     expect(ids1).not.toContain("beginner.island_ward");
 

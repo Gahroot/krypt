@@ -42,6 +42,29 @@ describe("Beginner class", () => {
     expect(skills).toHaveLength(6);
   });
 
+  it("has Thrown Shell (active, Lv1, single hit)", () => {
+    const skill = allSkillsForClass(ClassArchetype.BEGINNER).find(
+      (s) => s.id === "beginner.thrown_shell",
+    );
+    expect(skill).toBeDefined();
+    expect(skill!.kind).toBe("active");
+    expect(skill!.jobTier).toBe(1);
+    expect(skill!.levelReq).toBe(1);
+    expect(skill!.hitCount!.base).toBe(1);
+  });
+
+  it("has Nimble Feet (buff, Lv1, speed boost)", () => {
+    const skill = allSkillsForClass(ClassArchetype.BEGINNER).find(
+      (s) => s.id === "beginner.nimble_feet",
+    );
+    expect(skill).toBeDefined();
+    expect(skill!.kind).toBe("buff");
+    expect(skill!.jobTier).toBe(1);
+    expect(skill!.levelReq).toBe(1);
+    expect(skill!.buffEffect).toEqual({ speed: 15 });
+    expect(skill!.buffDurationMs).toBeDefined();
+  });
+
   it("has Recovery (passive, Lv1)", () => {
     const skill = allSkillsForClass(ClassArchetype.BEGINNER).find(
       (s) => s.id === "beginner.recovery",
@@ -53,17 +76,6 @@ describe("Beginner class", () => {
     expect(skill!.buffEffect).toEqual({ hpMpRegen: 5 });
   });
 
-  it("has Double Strike (active, Lv1, 2-hit)", () => {
-    const skill = allSkillsForClass(ClassArchetype.BEGINNER).find(
-      (s) => s.id === "beginner.double_strike",
-    );
-    expect(skill).toBeDefined();
-    expect(skill!.kind).toBe("active");
-    expect(skill!.jobTier).toBe(1);
-    expect(skill!.levelReq).toBe(1);
-    expect(skill!.hitCount!.base).toBe(2);
-  });
-
   it("has Leap (passive, Lv3, jump boost)", () => {
     const skill = allSkillsForClass(ClassArchetype.BEGINNER).find((s) => s.id === "beginner.leap");
     expect(skill).toBeDefined();
@@ -71,17 +83,6 @@ describe("Beginner class", () => {
     expect(skill!.jobTier).toBe(1);
     expect(skill!.levelReq).toBe(3);
     expect(skill!.buffEffect).toEqual({ jump: 15 });
-  });
-
-  it("has Nimble Feet (passive, Lv5, speed boost)", () => {
-    const skill = allSkillsForClass(ClassArchetype.BEGINNER).find(
-      (s) => s.id === "beginner.nimble_feet",
-    );
-    expect(skill).toBeDefined();
-    expect(skill!.kind).toBe("passive");
-    expect(skill!.jobTier).toBe(1);
-    expect(skill!.levelReq).toBe(5);
-    expect(skill!.buffEffect).toEqual({ speed: 10 });
   });
 
   it("has Nimble Strike (active, Lv10) and Island Ward (passive, Lv12)", () => {
@@ -144,11 +145,12 @@ describe("Beginner unlockedJobTier", () => {
 // Skill availability — Beginner gets skills progressively from Lv 1
 // ---------------------------------------------------------------------------
 describe("Beginner skill availability", () => {
-  it("has Recovery and Double Strike available at level 1", () => {
+  it("has Recovery, Thrown Shell, and Nimble Feet available at level 1", () => {
     const available = skillsAvailableAt(ClassArchetype.BEGINNER, 1);
     const ids = available.map((s) => s.id);
     expect(ids).toContain("beginner.recovery");
-    expect(ids).toContain("beginner.double_strike");
+    expect(ids).toContain("beginner.thrown_shell");
+    expect(ids).toContain("beginner.nimble_feet");
   });
 
   it("unlocks Leap at level 3", () => {
@@ -157,14 +159,6 @@ describe("Beginner skill availability", () => {
 
     const at3 = skillsAvailableAt(ClassArchetype.BEGINNER, 3).map((s) => s.id);
     expect(at3).toContain("beginner.leap");
-  });
-
-  it("unlocks Nimble Feet at level 5", () => {
-    const at4 = skillsAvailableAt(ClassArchetype.BEGINNER, 4).map((s) => s.id);
-    expect(at4).not.toContain("beginner.nimble_feet");
-
-    const at5 = skillsAvailableAt(ClassArchetype.BEGINNER, 5).map((s) => s.id);
-    expect(at5).toContain("beginner.nimble_feet");
   });
 
   it("unlocks Nimble Strike at level 10 and Island Ward at level 12", () => {
