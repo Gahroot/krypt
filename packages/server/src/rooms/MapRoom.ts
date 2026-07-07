@@ -102,6 +102,7 @@ import {
   skillStatAt,
   allSkillsForClass,
   getConsumableDef,
+  getPetFoodRestore,
   UPGRADE_SHARD_DEF_ID,
   evaluateCodexMilestones,
   giveFame,
@@ -156,7 +157,6 @@ import {
   PET_SPEED,
   getPetDef,
   isPetFood,
-  petFoodRestore,
   type PetState,
   type PetSummonPayload,
   type PetFeedPayload,
@@ -10152,7 +10152,7 @@ export class MapRoom extends AuthedRoom<TownState> {
       });
       return;
     }
-    const restore = petFoodRestore(item.defId);
+    const restore = getPetFoodRestore(item.defId);
     if (restore <= 0) return;
 
     const count = item.count ?? 1;

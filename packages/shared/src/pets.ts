@@ -39,9 +39,6 @@ export const PET_FOLLOW_RANGE = 80;
 /** Movement speed of the pet (px per tick). */
 export const PET_SPEED = 0.6;
 
-/** Fullness restored per pet food consumed. */
-export const PET_FOOD_FULLNESS = 30;
-
 // ─── Pet definitions ────────────────────────────────────────────────────────
 
 export interface PetDef {
@@ -85,14 +82,6 @@ export function getPetDef(petId: string): PetDef | undefined {
 /** Check whether an item ID is a pet food consumable. */
 export function isPetFood(defId: string): boolean {
   return defId.startsWith("petfood.");
-}
-
-/** Get the fullness restore amount for a pet food item. */
-export function petFoodRestore(defId: string): number {
-  if (defId === "petfood.basic") return 20;
-  if (defId === "petfood.deluxe") return PET_FOOD_FULLNESS;
-  if (defId === "petfood.premium") return 50;
-  return 10; // default fallback
 }
 
 // ─── Persistent pet state (per-character) ──────────────────────────────────
