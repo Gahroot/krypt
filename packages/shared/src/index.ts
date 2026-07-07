@@ -27,6 +27,7 @@ export * from "./progression.js";
 export * from "./guidance.js";
 export * from "./effects.js";
 export * from "./inventory.js";
+export * from "./skillEffects.js";
 export * from "./market.js";
 export * from "./codex.js";
 export * from "./familiars.js";

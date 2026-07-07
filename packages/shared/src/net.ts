@@ -282,6 +282,10 @@ export const MessageType = {
   PET_FEED: 162,
   /** Server → client: full pet state sync (sent on join + after changes). */
   PET_SYNC: 163,
+
+  // ─── Skill VFX (cast animation trigger) ─────────────────────────────────
+  /** Server → client: broadcast a skill VFX event (cast animation, particles). */
+  SKILL_VFX: 164,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -1528,6 +1532,19 @@ export interface SkillCastResultPayload {
   skillId: string;
   cooldownMs: number;
   message: string;
+}
+
+/** Server → client: broadcast a skill VFX event for cast animation rendering. */
+export interface SkillVfxPayload {
+  /** Session id of the caster. */
+  sessionId: string;
+  /** Skill id that was cast. */
+  skillId: string;
+  /** Caster position (x, y). */
+  x: number;
+  y: number;
+  /** Caster facing direction. */
+  facing: number;
 }
 
 /** Client → server: use a consumable from a quickslot. */

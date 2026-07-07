@@ -170,6 +170,8 @@ import {
   utcDateKey,
   TUTORIAL_QUEST_CHAIN,
   getDailyLoginReward,
+  isProjectileSkill,
+  getSkillEffect,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -412,6 +414,8 @@ const PROJECTILE_LIFETIME_MS = 2000;
 const PROJECTILE_HIT_RADIUS = 16; // px — collision sphere for projectile→player
 const CASTER_AOE_RADIUS = 80; // px — AoE radius for caster mobs
 const EXPLODER_AOE_RADIUS = 100; // px — AoE radius for exploder self-destruct
+const PLAYER_PROJECTILE_HIT_RADIUS = 20; // px — collision for player projectile→mob
+const PLAYER_PROJECTILE_LIFETIME_MS = 1500; // ms before forced removal
 const EXPLODER_RUSH_SPEED_MULT = 2.2;
 
 // ─── Action-combat tunables ──────────────────────────────────────────────
@@ -3754,7 +3758,7 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   // ─── Projectile tick ─────────────────────────────────────────────────────
 
-  /** Move all active projectiles, check player collisions, expire stale ones. */
+  /** Move all active projectiles, check collisions, expire stale ones. */
   private tickProjectiles(dt: number): void {
     const toRemove: string[] = [];
     for (const [key, proj] of this.state.projectiles.entries()) {
@@ -3775,49 +3779,122 @@ export class MapRoom extends AuthedRoom<TownState> {
         continue;
       }
 
-      // Collision check: hit the first alive player within radius.
-      let hitSomeone = false;
-      this.state.players.forEach((player, sessionId) => {
-        if (hitSomeone || player.dead) return;
-        if (proj.hitSessionIds.has(sessionId)) return;
-        const dist = Math.hypot(proj.x - player.x, proj.y - player.y);
-        if (dist > PROJECTILE_HIT_RADIUS) return;
+      const isPlayerProj = proj.ownerSession.length > 0;
 
-        // Apply damage through the combat engine.
-        const mobDef = getMobDef(proj.ownerMobId);
-        const attacker: AttackerCombatStats = {
-          atk: proj.damage,
-          mAtk: proj.kind === "caster" ? proj.damage : 0,
-          primaryStat: (mobDef?.level ?? 1) * 2,
-          skillDamagePercent: 100,
-          hitCount: 1,
-          accuracy: (mobDef?.level ?? 1) * 5 + 10,
-          critRate: 0.08,
-          level: mobDef?.level ?? 1,
-        };
-        const defender: DefenderCombatStats = {
-          wDef: this.playerEffectiveWDef(player),
-          mDef: this.playerEffectiveMDef(player),
-          avoid: player.dex + player.luk,
-          level: player.level,
-        };
-        const result = computeDamage(attacker, defender);
-        if (!result.hit || result.total <= 0) return;
+      if (isPlayerProj) {
+        // ── Player projectile → mob collision ──
+        let hitMob = false;
+        this.state.mobs.forEach((mob) => {
+          if (hitMob || mob.dead) return;
+          if (proj.hitMobKeys.has(mob.instanceId)) return;
+          const dist = Math.hypot(proj.x - mob.x, proj.y - mob.y);
+          if (dist > PLAYER_PROJECTILE_HIT_RADIUS) return;
 
-        this.damagePlayer(player, result.total);
-        this.broadcast("mob_hit_player", {
-          mobId: proj.ownerMobId,
-          sessionId,
-          damage: result.total,
-          crit: result.crit,
-          hp: player.hp,
-          dead: player.dead,
+          // Resolve damage for this player's skill.
+          const caster = this.state.players.get(proj.ownerSession);
+          if (!caster || caster.dead) return;
+          const skill = allSkillsForClass(caster.archetype as ClassArchetype).find(
+            (s) => s.id === proj.skillId,
+          );
+          if (!skill) return;
+          const skillLvl = caster.skillBook[skill.id] ?? 1;
+          const skillStats = skillStatAt(skill, Math.max(1, skillLvl));
+          const base = this.buildAttackerStats(caster);
+          const attackerStats = {
+            ...base,
+            skillDamagePercent: skillStats.damagePercent,
+            hitCount: skillStats.hitCount,
+          };
+          const mobDef = getMobDef(mob.mobId);
+          const effectiveDef = getEffectiveMobDef(mobDef, mob.isElite);
+          const defender: DefenderCombatStats = {
+            wDef: effectiveDef?.wDef ?? 0,
+            mDef: effectiveDef?.mDef ?? 0,
+            avoid: effectiveDef?.avoid ?? 0,
+            level: effectiveDef?.level ?? 1,
+          };
+          const result = computeDamage(attackerStats, defender, {
+            element: skill.element,
+            targetElementMods: mobDef?.elementMods,
+          });
+          if (result.hit && result.total > 0) {
+            mob.hp -= result.total;
+            mob.hit = true;
+            mob.hitTimer = 120;
+            if (mob.hp <= 0) this.killMob(mob, caster);
+          }
+          this.broadcast(MessageType.COMBAT_HIT, {
+            targetKey: this.mobKeyByRef.get(mob) ?? "",
+            attackerSession: proj.ownerSession,
+            damage: result.total,
+            crit: result.crit,
+            hit: result.hit,
+            mobHp: Math.max(0, mob.hp),
+            mobMaxHp: mob.maxHp,
+            elementMultiplier: result.elementMultiplier,
+          } satisfies CombatHitPayload);
+
+          // Apply debuff from skill.
+          if (skillStats.debuffEffect && result.hit && !mob.dead) {
+            const debuffs = skillDebuffToStatusEffects(
+              skill.id,
+              skillStats.debuffEffect,
+              caster.name,
+            );
+            for (const debuff of debuffs) {
+              mob.activeEffects = applyEffect(mob.activeEffects, debuff);
+              mob.effectElapsed.set(debuff.id, 0);
+            }
+          }
+          proj.hitMobKeys.add(mob.instanceId);
+          hitMob = true;
+          proj.dead = true;
+          toRemove.push(key);
         });
-        proj.hitSessionIds.add(sessionId);
-        hitSomeone = true;
-        proj.dead = true;
-        toRemove.push(key);
-      });
+      } else {
+        // ── Mob projectile → player collision (original logic) ──
+        let hitSomeone = false;
+        this.state.players.forEach((player, sessionId) => {
+          if (hitSomeone || player.dead) return;
+          if (proj.hitSessionIds.has(sessionId)) return;
+          const dist = Math.hypot(proj.x - player.x, proj.y - player.y);
+          if (dist > PROJECTILE_HIT_RADIUS) return;
+
+          const mobDef = getMobDef(proj.ownerMobId);
+          const attacker: AttackerCombatStats = {
+            atk: proj.damage,
+            mAtk: proj.kind === "caster" ? proj.damage : 0,
+            primaryStat: (mobDef?.level ?? 1) * 2,
+            skillDamagePercent: 100,
+            hitCount: 1,
+            accuracy: (mobDef?.level ?? 1) * 5 + 10,
+            critRate: 0.08,
+            level: mobDef?.level ?? 1,
+          };
+          const defender: DefenderCombatStats = {
+            wDef: this.playerEffectiveWDef(player),
+            mDef: this.playerEffectiveMDef(player),
+            avoid: player.dex + player.luk,
+            level: player.level,
+          };
+          const result = computeDamage(attacker, defender);
+          if (!result.hit || result.total <= 0) return;
+
+          this.damagePlayer(player, result.total);
+          this.broadcast("mob_hit_player", {
+            mobId: proj.ownerMobId,
+            sessionId,
+            damage: result.total,
+            crit: result.crit,
+            hp: player.hp,
+            dead: player.dead,
+          });
+          proj.hitSessionIds.add(sessionId);
+          hitSomeone = true;
+          proj.dead = true;
+          toRemove.push(key);
+        });
+      }
 
       // Remove if out of map bounds.
       if (
@@ -8608,62 +8685,102 @@ export class MapRoom extends AuthedRoom<TownState> {
       // Broadcast status effects for client UI.
       this.syncPlayerEffects(player);
     } else if (skill.kind === "active") {
-      // Attack skill — use skill's damagePercent and hitCount instead of defaults.
-      const base = this.buildAttackerStats(player);
-      const attackerStats = {
-        ...base,
-        skillDamagePercent: stats.damagePercent,
-        hitCount: stats.hitCount,
-      };
-
-      const targetCount = stats.targetCount;
-      let hitCount = 0;
-      // Hoist session lookup out of the mob loop — constant for this caster.
       const casterSession = this.findSessionByPlayer(player);
-      this.state.mobs.forEach((mob) => {
-        if (mob.dead) return;
-        if (hitCount >= targetCount) return;
-        // Use magic range for skill attacks (more generous).
-        if (!this.inRange(mob, player, ATTACK_RANGE_MAGIC)) return;
-        hitCount++;
+      const effMeta = getSkillEffect(skillId, player.archetype as ClassArchetype);
 
-        const mobDef = getMobDef(mob.mobId);
-        const effectiveDef = getEffectiveMobDef(mobDef, mob.isElite);
-        const defender: DefenderCombatStats = {
-          wDef: effectiveDef?.wDef ?? 0,
-          mDef: effectiveDef?.mDef ?? 0,
-          avoid: effectiveDef?.avoid ?? 0,
-          level: effectiveDef?.level ?? 1,
+      if (isProjectileSkill(skillId, player.archetype as ClassArchetype)) {
+        // ── Projectile skill: spawn a travelling projectile entity ──
+        const speed = effMeta.projectileSpeed ?? 4;
+        const facing = player.facing;
+        const proj = new Projectile();
+        proj.id = `pproj_${++this.idCounter}`;
+        proj.ownerId = player.charId;
+        proj.ownerMobId = "";
+        proj.ownerSession = casterSession ?? "";
+        proj.skillId = skillId;
+        proj.x = player.x + facing * 20;
+        proj.y = player.y - 10;
+        proj.vx = facing * speed;
+        proj.vy = 0;
+        proj.facing = facing;
+        proj.damage = 0; // unused — damage re-resolved from caster stats on mob collision
+        proj.kind =
+          effMeta.effectType === "projectile"
+            ? player.archetype === "ARCHER"
+              ? "player_arrow"
+              : player.archetype === "MAGE"
+                ? "player_bolt"
+                : player.archetype === "PIRATE"
+                  ? "player_bullet"
+                  : "player_arrow"
+            : "player_bolt";
+        proj.dead = false;
+        proj.lifetime = PLAYER_PROJECTILE_LIFETIME_MS;
+        this.state.projectiles.set(proj.id, proj);
+      } else {
+        // ── Melee / AoE / beam / dash / circle: instant range-check ──
+        const base = this.buildAttackerStats(player);
+        const attackerStats = {
+          ...base,
+          skillDamagePercent: stats.damagePercent,
+          hitCount: stats.hitCount,
         };
-        const result = computeDamage(attackerStats, defender, {
-          element: skill.element,
-          targetElementMods: mobDef?.elementMods,
-        });
-        if (result.hit && result.total > 0) {
-          mob.hp -= result.total;
-          mob.hit = true;
-          mob.hitTimer = 120;
-          if (mob.hp <= 0) this.killMob(mob, player);
-        }
-        this.broadcast(MessageType.COMBAT_HIT, {
-          targetKey: this.mobKeyByRef.get(mob) ?? "",
-          attackerSession: casterSession,
-          damage: result.total,
-          crit: result.crit,
-          hit: result.hit,
-          mobHp: Math.max(0, mob.hp),
-          mobMaxHp: mob.maxHp,
-          elementMultiplier: result.elementMultiplier,
-        } satisfies CombatHitPayload);
 
-        // Apply debuff from skill to the hit mob.
-        if (stats.debuffEffect && result.hit && !mob.dead) {
-          const debuffs = skillDebuffToStatusEffects(skillId, stats.debuffEffect, player.name);
-          for (const debuff of debuffs) {
-            mob.activeEffects = applyEffect(mob.activeEffects, debuff);
-            mob.effectElapsed.set(debuff.id, 0);
+        const targetCount = stats.targetCount;
+        let hitCount = 0;
+        this.state.mobs.forEach((mob) => {
+          if (mob.dead) return;
+          if (hitCount >= targetCount) return;
+          // Use magic range for skill attacks (more generous).
+          if (!this.inRange(mob, player, ATTACK_RANGE_MAGIC)) return;
+          hitCount++;
+
+          const mobDef = getMobDef(mob.mobId);
+          const effectiveDef = getEffectiveMobDef(mobDef, mob.isElite);
+          const defender: DefenderCombatStats = {
+            wDef: effectiveDef?.wDef ?? 0,
+            mDef: effectiveDef?.mDef ?? 0,
+            avoid: effectiveDef?.avoid ?? 0,
+            level: effectiveDef?.level ?? 1,
+          };
+          const result = computeDamage(attackerStats, defender, {
+            element: skill.element,
+            targetElementMods: mobDef?.elementMods,
+          });
+          if (result.hit && result.total > 0) {
+            mob.hp -= result.total;
+            mob.hit = true;
+            mob.hitTimer = 120;
+            if (mob.hp <= 0) this.killMob(mob, player);
           }
-        }
+          this.broadcast(MessageType.COMBAT_HIT, {
+            targetKey: this.mobKeyByRef.get(mob) ?? "",
+            attackerSession: casterSession,
+            damage: result.total,
+            crit: result.crit,
+            hit: result.hit,
+            mobHp: Math.max(0, mob.hp),
+            mobMaxHp: mob.maxHp,
+            elementMultiplier: result.elementMultiplier,
+          } satisfies CombatHitPayload);
+
+          // Apply debuff from skill to the hit mob.
+          if (stats.debuffEffect && result.hit && !mob.dead) {
+            const debuffs = skillDebuffToStatusEffects(skillId, stats.debuffEffect, player.name);
+            for (const debuff of debuffs) {
+              mob.activeEffects = applyEffect(mob.activeEffects, debuff);
+              mob.effectElapsed.set(debuff.id, 0);
+            }
+          }
+        });
+      }
+      // Broadcast skill VFX event for client-side animation.
+      this.broadcast(MessageType.SKILL_VFX, {
+        sessionId: casterSession ?? "",
+        skillId,
+        x: player.x,
+        y: player.y,
+        facing: player.facing,
       });
     }
 

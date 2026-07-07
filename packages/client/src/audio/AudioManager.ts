@@ -67,6 +67,13 @@ export const SFX_KEYS = [
   "portal",
   "advancement",
   "mob_hit_player",
+  // ── Per-skill / per-category SFX ────────────────────────────────────
+  "skill_slash",
+  "skill_arrow",
+  "skill_bolt",
+  "skill_fireball",
+  "skill_beam",
+  "skill_buff",
 ] as const;
 
 export type BgmKey = (typeof BGM_KEYS)[number];

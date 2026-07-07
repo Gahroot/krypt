@@ -101,6 +101,10 @@ export interface ProjectileView {
   damage: number;
   kind: string;
   dead: boolean;
+  /** Session id of the player who fired this (empty for mob projectiles). */
+  ownerSession: string;
+  /** Skill id that spawned this projectile (empty for mob projectiles). */
+  skillId: string;
 }
 
 export interface LootView {

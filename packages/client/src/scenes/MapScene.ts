@@ -39,6 +39,9 @@ import {
   PROTOCOL_MISMATCH_CODE,
   getItemDef,
   getPetDef,
+  getSkillEffect,
+  type SkillVfxPayload,
+  type SkillEffectDef,
 } from "@maple/shared";
 
 import {
@@ -1846,6 +1849,52 @@ export class MapScene extends Phaser.Scene {
       },
     );
 
+    // ── Skill VFX: play cast animation + per-skill SFX ──
+    room.onMessage(MessageType.SKILL_VFX, (payload: SkillVfxPayload) => {
+      if (!payload.skillId) return;
+
+      // Determine if this is the local player or a remote one.
+      const isLocal = payload.sessionId === this.localSessionId;
+      const casterPlayer = this.room?.state?.players.get(payload.sessionId);
+      const casterArch = (casterPlayer?.archetype ?? "WARRIOR") as Parameters<
+        typeof getSkillEffect
+      >[1];
+      // Re-resolve effect using the actual caster's archetype (not local player's).
+      const casterEff = getSkillEffect(payload.skillId, casterArch);
+      // Play per-skill SFX.
+      const sfxKey = casterEff.sfxKey as import("../audio/AudioManager").SfxKey | undefined;
+      if (sfxKey) getAudioManager().playSfx(sfxKey);
+
+      const sprite = isLocal
+        ? this.playerSprites.get(this.localSessionId)
+        : this.playerSprites.get(payload.sessionId);
+      if (!sprite) return;
+
+      // ── Cast animation based on effect type ──
+      switch (casterEff.effectType) {
+        case "slash":
+          this.playSlashEffect(sprite.x, sprite.y - 10, payload.facing, casterEff);
+          break;
+        case "projectile":
+          // Projectile spawn is handled by the synced state — just play the cast flash.
+          this.playCastFlash(sprite.x, sprite.y - 10, casterEff);
+          break;
+        case "aoe-burst":
+        case "circle":
+          this.playAoeBurstEffect(payload.x, payload.y, casterEff.aoeRadius ?? 80, casterEff);
+          break;
+        case "buff-aura":
+          this.playBuffAuraEffect(sprite.x, sprite.y - 10, casterEff);
+          break;
+        case "beam":
+          this.playBeamEffect(sprite.x, sprite.y - 10, payload.facing, casterEff);
+          break;
+        case "dash":
+          this.playDashEffect(sprite.x, sprite.y, payload.facing, casterEff);
+          break;
+      }
+    });
+
     // ── Combat feedback: floating damage / miss numbers ──
     room.onMessage(MessageType.COMBAT_HIT, (payload: CombatHitPayload) => {
       if (payload.hit) {
@@ -2177,15 +2226,211 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Behavior VFX helpers ───────────────────────────────────────────────
 
-  /** Draw a projectile as a small colored circle. */
+  /** Draw a projectile with skill-specific visuals (colour, shape, trail). */
   private drawProjectile(gfx: Phaser.GameObjects.Graphics, proj: ProjectileView): void {
     gfx.clear();
-    const color = proj.kind === "caster" ? 0xa855f7 : 0xef4444; // purple caster, red ranged
-    const radius = proj.kind === "caster" ? 5 : 4;
-    gfx.fillStyle(color, 0.9);
-    gfx.fillCircle(0, 0, radius);
-    gfx.lineStyle(1, 0xffffff, 0.6);
-    gfx.strokeCircle(0, 0, radius + 1);
+
+    // Resolve effect metadata for player projectiles.
+    let color = 0xef4444;
+    let colorAlt = 0xfca5a5;
+    let radius = 4;
+    if (proj.ownerSession && proj.skillId) {
+      // Look up the actual caster's archetype for correct colours.
+      const caster = this.room?.state?.players.get(proj.ownerSession);
+      const arch = (caster?.archetype ?? "WARRIOR") as Parameters<typeof getSkillEffect>[1];
+      const eff = getSkillEffect(proj.skillId, arch);
+      color = eff.color;
+      colorAlt = eff.colorAlt;
+    } else if (proj.kind === "caster") {
+      color = 0xa855f7;
+      colorAlt = 0xc4b5fd;
+      radius = 5;
+    } else if (proj.kind === "player_arrow") {
+      color = 0x22c55e;
+      colorAlt = 0x86efac;
+      radius = 3;
+    } else if (proj.kind === "player_bolt") {
+      color = 0xa78bfa;
+      colorAlt = 0xc4b5fd;
+      radius = 5;
+    } else if (proj.kind === "player_bullet") {
+      color = 0xf97316;
+      colorAlt = 0xfdba74;
+      radius = 3;
+    }
+
+    const isArrow = proj.kind === "player_arrow" || proj.kind === "ranged";
+    const isBolt = proj.kind === "player_bolt" || proj.kind === "caster";
+    const isPlayer = proj.ownerSession.length > 0;
+
+    if (isArrow) {
+      // Draw an arrow shape (elongated triangle pointing in travel direction).
+      const dir = proj.vx >= 0 ? 1 : -1;
+      gfx.fillStyle(color, 0.95);
+      gfx.fillTriangle(dir * 6, 0, -dir * 4, -2, -dir * 4, 2);
+      gfx.lineStyle(1, colorAlt, 0.7);
+      gfx.strokeTriangle(dir * 6, 0, -dir * 4, -2, -dir * 4, 2);
+      // Trail line.
+      gfx.lineStyle(1, colorAlt, 0.4);
+      gfx.lineBetween(-dir * 4, 0, -dir * 12, 0);
+    } else if (isBolt) {
+      // Draw a magic bolt (glowing circle with ring).
+      gfx.fillStyle(color, 0.9);
+      gfx.fillCircle(0, 0, radius);
+      gfx.lineStyle(1.5, colorAlt, 0.8);
+      gfx.strokeCircle(0, 0, radius + 2);
+      // Outer glow.
+      gfx.lineStyle(1, color, 0.3);
+      gfx.strokeCircle(0, 0, radius + 4);
+    } else {
+      // Default: simple circle (mob ranged, bullets).
+      gfx.fillStyle(color, 0.9);
+      gfx.fillCircle(0, 0, radius);
+      gfx.lineStyle(1, colorAlt, 0.6);
+      gfx.strokeCircle(0, 0, radius + 1);
+    }
+
+    // Player projectile glow pulse.
+    if (isPlayer) {
+      gfx.lineStyle(1, color, 0.35);
+      gfx.strokeCircle(0, 0, radius + 6);
+    }
+  }
+
+  // ─── Skill VFX cast animation helpers ──────────────────────────────────
+
+  /** Play a slash arc effect in front of the caster. */
+  private playSlashEffect(x: number, y: number, facing: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    const dir = facing;
+    // Arc sweep.
+    gfx.lineStyle(3, eff.color, 0.9);
+    const startAngle = dir === 1 ? -60 : 120;
+    const endAngle = dir === 1 ? 60 : 240;
+    gfx.beginPath();
+    gfx.arc(x, y, 30, Phaser.Math.DegToRad(startAngle), Phaser.Math.DegToRad(endAngle), false);
+    gfx.strokePath();
+    // Secondary thinner arc.
+    gfx.lineStyle(1.5, eff.colorAlt, 0.6);
+    gfx.beginPath();
+    gfx.arc(
+      x,
+      y,
+      38,
+      Phaser.Math.DegToRad(startAngle + 10),
+      Phaser.Math.DegToRad(endAngle - 10),
+      false,
+    );
+    gfx.strokePath();
+    gfx.setDepth(y + 5);
+    this.time.delayedCall(200, () => gfx.destroy());
+  }
+
+  /** Flash circle at cast origin (projectile spawn point). */
+  private playCastFlash(x: number, y: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    gfx.fillStyle(eff.color, 0.5);
+    gfx.fillCircle(x, y, 12);
+    gfx.lineStyle(2, eff.colorAlt, 0.8);
+    gfx.strokeCircle(x, y, 12);
+    gfx.setDepth(y + 5);
+    this.tweens.add({
+      targets: gfx,
+      alpha: 0,
+      duration: 200,
+      onComplete: () => gfx.destroy(),
+    });
+  }
+
+  /** Play an AoE burst / ground circle effect. */
+  private playAoeBurstEffect(x: number, y: number, radius: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    gfx.setDepth(y + 5);
+    // Inner fill.
+    gfx.fillStyle(eff.color, 0.3);
+    gfx.fillCircle(x, y, radius);
+    // Outer ring.
+    gfx.lineStyle(2.5, eff.color, 0.85);
+    gfx.strokeCircle(x, y, radius);
+    // Inner ring.
+    gfx.lineStyle(1, eff.colorAlt, 0.5);
+    gfx.strokeCircle(x, y, radius * 0.6);
+    // Expand + fade.
+    this.tweens.add({
+      targets: gfx,
+      scaleX: 1.3,
+      scaleY: 1.3,
+      alpha: 0,
+      duration: 350,
+      ease: "Power2",
+      onComplete: () => gfx.destroy(),
+    });
+  }
+
+  /** Play a buff aura effect around the caster. */
+  private playBuffAuraEffect(x: number, y: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    gfx.setDepth(y + 5);
+    // Outer aura ring.
+    gfx.lineStyle(2, eff.color, 0.7);
+    gfx.strokeCircle(x, y, 20);
+    gfx.lineStyle(1.5, eff.colorAlt, 0.4);
+    gfx.strokeCircle(x, y, 28);
+    // Inner glow.
+    gfx.fillStyle(eff.color, 0.15);
+    gfx.fillCircle(x, y, 28);
+    // Expand + fade.
+    this.tweens.add({
+      targets: gfx,
+      scaleX: 1.6,
+      scaleY: 1.6,
+      alpha: 0,
+      duration: 400,
+      ease: "Power2",
+      onComplete: () => gfx.destroy(),
+    });
+  }
+
+  /** Play a beam / directed ray effect. */
+  private playBeamEffect(x: number, y: number, facing: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    gfx.setDepth(y + 5);
+    const dir = facing;
+    const beamLength = 120;
+    // Main beam line.
+    gfx.lineStyle(4, eff.color, 0.9);
+    gfx.lineBetween(x, y, x + dir * beamLength, y);
+    // Glow line.
+    gfx.lineStyle(2, eff.colorAlt, 0.6);
+    gfx.lineBetween(x, y - 2, x + dir * beamLength, y - 2);
+    gfx.lineBetween(x, y + 2, x + dir * beamLength, y + 2);
+    // Tip glow.
+    gfx.fillStyle(eff.colorAlt, 0.5);
+    gfx.fillCircle(x + dir * beamLength, y, 6);
+    this.tweens.add({
+      targets: gfx,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => gfx.destroy(),
+    });
+  }
+
+  /** Play a dash / lunge trail effect. */
+  private playDashEffect(x: number, y: number, facing: number, eff: SkillEffectDef): void {
+    const gfx = this.add.graphics();
+    gfx.setDepth(y + 5);
+    // Trail line behind the caster.
+    gfx.lineStyle(3, eff.color, 0.8);
+    gfx.lineBetween(x, y, x - facing * 50, y);
+    gfx.lineStyle(1.5, eff.colorAlt, 0.5);
+    gfx.lineBetween(x, y - 3, x - facing * 40, y - 3);
+    gfx.lineBetween(x, y + 3, x - facing * 40, y + 3);
+    this.tweens.add({
+      targets: gfx,
+      alpha: 0,
+      duration: 250,
+      onComplete: () => gfx.destroy(),
+    });
   }
 
   /** Draw a telegraph AoE circle on the ground. */

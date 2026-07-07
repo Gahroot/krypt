@@ -3416,7 +3416,7 @@ export class UIScene extends Phaser.Scene {
       MessageType.SKILL_CAST,
       (payload: { success: boolean; skillId: string; cooldownMs: number; message: string }) => {
         if (payload.success) {
-          getAudioManager().playSfx("skill");
+          // Per-skill SFX is played by MapScene's SKILL_VFX handler.
           if (payload.cooldownMs > 0) {
             this.startQuickslotCooldown(payload.skillId, "skill", payload.cooldownMs);
           }
