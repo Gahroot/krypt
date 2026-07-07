@@ -7,7 +7,7 @@
  * Cash Shop (CashItemDef / CASH_ITEMS).
  */
 
-import { ITEMS, type ItemDef } from "./items.js";
+import { ITEMS, type ItemDef, getAmmoDef } from "./items.js";
 import { CONSUMABLES, type ConsumableDef } from "./consumables.js";
 import { NPCS } from "./npcs.js";
 
@@ -469,6 +469,8 @@ export function getItemSellPrice(itemId: string): number | undefined {
 export function getShopItemName(itemId: string): string {
   const conDef: ConsumableDef | undefined = CONSUMABLES[itemId];
   if (conDef) return conDef.name;
+  const ammoDef = getAmmoDef(itemId);
+  if (ammoDef) return ammoDef.name;
   const itemDef: ItemDef | undefined = ITEMS[itemId];
   if (itemDef) return itemDef.name;
   return itemId;
