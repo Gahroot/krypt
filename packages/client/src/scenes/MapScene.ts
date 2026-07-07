@@ -38,6 +38,7 @@ import {
   PROTOCOL_VERSION,
   PROTOCOL_MISMATCH_CODE,
   getItemDef,
+  getPetDef,
 } from "@maple/shared";
 
 import {
@@ -264,6 +265,9 @@ export class MapScene extends Phaser.Scene {
   private readonly projectileGfx = new Map<string, Phaser.GameObjects.Graphics>();
   private readonly telegraphGfx = new Map<string, Phaser.GameObjects.Graphics>();
   private readonly explosionGfx: Phaser.GameObjects.Graphics[] = [];
+  // ─── Pet sprites ──
+  private petSprite?: Phaser.GameObjects.Sprite;
+  private petFullnessBar?: Phaser.GameObjects.Graphics;
 
   /** Dynamic key refs keyed by action ID — rebuilt on rebind. */
   private readonly actionKeys = new Map<ActionId, Phaser.Input.Keyboard.Key>();
@@ -789,6 +793,16 @@ export class MapScene extends Phaser.Scene {
     // 5) Mobs are server-driven too — interpolate them the same way.
     for (const sprite of this.mobSprites.values()) this.lerpToServer(sprite);
     this.syncMobHpBars();
+
+    // 5b) Pet follows its owner (lerp toward owner position).
+    if (this.petSprite && this.localPlayer) {
+      this.lerpToXY(this.petSprite, this.localPlayer.x + 20, this.localPlayer.y - 8);
+      this.applyDepthAndShadow(this.petSprite);
+      // Update fullness bar position.
+      if (this.petFullnessBar) {
+        this.petFullnessBar.setPosition(this.petSprite.x - 12, this.petSprite.y - 22);
+      }
+    }
 
     // 6) Auto-vacuum the nearest loot drop in range (server re-checks the 60px gate authoritatively).
     this.autoPickupLoot();
@@ -1706,6 +1720,11 @@ export class MapScene extends Phaser.Scene {
     // Clear transport state when leaving the room (teleport, disconnect, etc.).
     room.onLeave(() => {
       uiStore.getState().setTransport(null);
+      // Clean up pet sprites.
+      this.petSprite?.destroy();
+      this.petSprite = undefined;
+      this.petFullnessBar?.destroy();
+      this.petFullnessBar = undefined;
     });
 
     // ── Channel system ──
@@ -2072,6 +2091,11 @@ export class MapScene extends Phaser.Scene {
         c.destroy();
         this.boxSprites.delete(payload.boxId);
       }
+    });
+
+    // ── Pet sync (server pushes pet state on summon/dismiss/feed/decay) ──
+    room.onMessage(MessageType.PET_SYNC, (payload: import("@maple/shared").PetSyncPayload) => {
+      this.handlePetSync(payload);
     });
   }
 
@@ -4277,6 +4301,80 @@ export class MapScene extends Phaser.Scene {
       this.tweens.killTweensOf(this.lowHpVignette);
       this.lowHpVignette.setAlpha(1);
     }
+  }
+
+  // ─── Pet rendering ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Handle pet state sync from the server: create/destroy the pet sprite and update
+   * the fullness bar overlay.
+   */
+  private handlePetSync(payload: import("@maple/shared").PetSyncPayload): void {
+    if (!payload.summoned || !payload.activePetId) {
+      // Pet dismissed or empty — clean up.
+      this.petSprite?.destroy();
+      this.petSprite = undefined;
+      this.petFullnessBar?.destroy();
+      this.petFullnessBar = undefined;
+      return;
+    }
+
+    // Resolve pet family from the mob texture system.
+    const petDef = getPetDef(payload.activePetId);
+    const family = petDef?.family ?? "snail";
+    const texKey = `fam_${family}_0`;
+
+    if (!this.petSprite) {
+      const sprite = this.add.sprite(
+        payload.x,
+        payload.y,
+        this.textures.exists(texKey) ? texKey : "fam_snail_0",
+      );
+      sprite.setScale(0.7);
+      sprite.setDepth(payload.y);
+      sprite.setData("petFullness", payload.fullness);
+      this.attachShadow(sprite);
+      this.petSprite = sprite;
+
+      // Fullness bar (green→red based on fullness).
+      const bar = this.add.graphics();
+      bar.setDepth(9500);
+      this.petFullnessBar = bar;
+      this.updatePetFullnessBar(payload.fullness);
+    } else {
+      // Update existing sprite texture if family changed.
+      if (this.textures.exists(texKey)) this.petSprite.setTexture(texKey);
+      this.petSprite.setData("petFullness", payload.fullness);
+      this.updatePetFullnessBar(payload.fullness);
+    }
+  }
+
+  /** Redraw the small fullness bar above the pet sprite. */
+  private updatePetFullnessBar(fullness: number): void {
+    const bar = this.petFullnessBar;
+    if (!bar) return;
+    bar.clear();
+    const w = 24;
+    const h = 3;
+    // Background (dark).
+    bar.fillStyle(0x000000, 0.6);
+    bar.fillRect(0, 0, w, h);
+    // Fill (green → yellow → red).
+    const ratio = Math.max(0, Math.min(1, fullness / 100));
+    const color = ratio > 0.5 ? 0x2ecc71 : ratio > 0.25 ? 0xf39c12 : 0xe74c3c;
+    bar.fillStyle(color, 1);
+    bar.fillRect(0, 0, Math.ceil(w * ratio), h);
+  }
+
+  /** Smoothly lerp a sprite toward target x/y. */
+  private lerpToXY(
+    sprite: Phaser.GameObjects.Sprite,
+    targetX: number,
+    targetY: number,
+    lerp = 0.12,
+  ): void {
+    sprite.x = Phaser.Math.Linear(sprite.x, targetX, lerp);
+    sprite.y = Phaser.Math.Linear(sprite.y, targetY, lerp);
   }
 
   // ─── Web Audio API sound synthesis (delegated to AudioManager) ──────────────────

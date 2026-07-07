@@ -272,6 +272,16 @@ export const MessageType = {
   TRANSPORT_STATUS: 158,
   /** Server → client: ship has departed — TRAVEL follows immediately. */
   TRANSPORT_DEPARTED: 159,
+
+  // ─── Pet system (MapleStory-style auto-loot companion) ─────────────────────
+  /** Client → server: summon a pet. */
+  PET_SUMMON: 160,
+  /** Client → server: dismiss the active pet. */
+  PET_DISMISS: 161,
+  /** Client → server: feed the active pet from inventory. */
+  PET_FEED: 162,
+  /** Server → client: full pet state sync (sent on join + after changes). */
+  PET_SYNC: 163,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -1912,4 +1922,34 @@ export interface DailyLoginGiftSyncPayload {
 /** Client → server: request server-side sort of an inventory tab. */
 export interface InventorySortPayload {
   tab: InventoryTab;
+}
+
+// ─── Pet system payloads ─────────────────────────────────────────────────
+
+/** Client → server: summon a pet by its def id. */
+export interface PetSummonPayload {
+  petId: string;
+}
+
+/** Client → server: dismiss the currently active pet. */
+export type PetDismissPayload = Record<string, never>;
+
+/** Client → server: feed the active pet with a consumable from inventory. */
+export interface PetFeedPayload {
+  /** The uid of the pet food consumable item in inventory. */
+  itemUid: string;
+}
+
+/** Server → client: full pet state sync (sent on join and after changes). */
+export interface PetSyncPayload {
+  /** Active pet def id (empty string = no pet). */
+  activePetId: string;
+  /** Current fullness (0–100). */
+  fullness: number;
+  /** Whether the pet is currently summoned. */
+  summoned: boolean;
+  /** Pet x position (if summoned). */
+  x: number;
+  /** Pet y position (if summoned). */
+  y: number;
 }

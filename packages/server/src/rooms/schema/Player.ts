@@ -181,4 +181,12 @@ export class Player extends Schema {
   // ─── Exploration Dispatch (idle Monster Collection, server-only) ──────────
   /** Active exploration dispatch slots. */
   exploration: ExplorationState = { slots: [] };
+
+  // ─── Pet system (server-only, not synced) ────────────────────────────────
+  /** Active pet def id ("" = none). */
+  activePetId = "";
+  /** Pet fullness (0–100). */
+  petFullness = 100;
+  /** Whether the pet is currently summoned this session. */
+  petSummoned = false;
 }

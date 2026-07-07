@@ -213,6 +213,8 @@ export interface CharacterRecord {
   dailyCompletions?: Record<string, number>;
   /** Epoch-ms of the last daily login gift claim. */
   lastDailyLoginGiftAt?: number;
+  /** Pet state: active pet, fullness, summoned status. */
+  pet?: import("@maple/shared").PetState;
   createdAt: number;
 }
 
@@ -292,6 +294,7 @@ const CHAR_COL: Record<keyof CharacterRecord, string> = {
   lastDailyResetAt: "last_daily_reset_at",
   dailyCompletions: "daily_completions",
   lastDailyLoginGiftAt: "last_daily_login_gift_at",
+  pet: "pet",
   createdAt: "created_at",
 };
 
@@ -315,6 +318,7 @@ const JSON_CHAR_KEYS: ReadonlySet<keyof CharacterRecord> = new Set([
   "exploration",
   "ownedTitles",
   "dailyCompletions",
+  "pet",
 ]);
 
 /** Serialize a CharacterRecord row for SQL INSERT/UPDATE. */
@@ -1599,7 +1603,7 @@ export class AccountStore {
   }
 
   /** List all invite codes (most recent first). */
-  listInviteCodes(limit = 100): Array<{
+  listInviteCodes(limit = 100): {
     code: string;
     note: string;
     createdAt: number;
@@ -1608,10 +1612,10 @@ export class AccountStore {
     useCount: number;
     usedBy: string[];
     revoked: boolean;
-  }> {
+  }[] {
     const rows = this.db
       .prepare("SELECT * FROM invite_codes ORDER BY created_at DESC LIMIT ?")
-      .all(limit) as Array<{
+      .all(limit) as {
       code: string;
       note: string;
       created_at: number;
@@ -1620,7 +1624,7 @@ export class AccountStore {
       use_count: number;
       used_by: string;
       revoked: number;
-    }>;
+    }[];
     return rows.map((r) => ({
       code: r.code,
       note: r.note,

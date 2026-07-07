@@ -148,6 +148,19 @@ import {
   FAMILIAR_CARD_DROP_CHANCE,
   type FamiliarCollection,
   EMPTY_FAMILIAR_COLLECTION,
+  PET_ENABLED,
+  PET_FULLNESS_MAX,
+  PET_DECAY_INTERVAL_MS,
+  PET_AUTO_LOOT_RANGE,
+  PET_FOLLOW_RANGE,
+  PET_SPEED,
+  getPetDef,
+  isPetFood,
+  petFoodRestore,
+  type PetState,
+  type PetSummonPayload,
+  type PetFeedPayload,
+  type PetSyncPayload,
   isCombatMap,
   deathExpLoss,
   getDeathReturnMapId,
@@ -165,6 +178,7 @@ import { Mob } from "./schema/Mob";
 import { Projectile } from "./schema/Projectile";
 import { LootDrop } from "./schema/LootDrop";
 import { Familiar } from "./schema/Familiar";
+import { Pet } from "./schema/Pet";
 import { InventoryItem } from "./schema/InventoryItem";
 import { SpawnManager } from "../spawnManager";
 import { BossManager } from "../bossManager";
@@ -1481,6 +1495,20 @@ export class MapRoom extends AuthedRoom<TownState> {
       this.handleFamiliarDismiss(client, msg);
     },
 
+    // ─── Pet system (MapleStory-style auto-loot companion) ────────────────
+    [MessageType.PET_SUMMON]: (client: Client, msg: PetSummonPayload) => {
+      if (!PET_ENABLED) return;
+      this.handlePetSummon(client, msg);
+    },
+    [MessageType.PET_DISMISS]: (client: Client) => {
+      if (!PET_ENABLED) return;
+      this.handlePetDismiss(client);
+    },
+    [MessageType.PET_FEED]: (client: Client, msg: PetFeedPayload) => {
+      if (!PET_ENABLED) return;
+      this.handlePetFeed(client, msg);
+    },
+
     // ─── GM / Admin commands (server-validated, admin-only) ──────────────
     [MessageType.GM_COMMAND]: (client: Client, msg: { command?: string }) => {
       const player = this.state.players.get(client.sessionId);
@@ -1651,6 +1679,11 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Familiar AI tick (follow owner, chase mobs, attack).
     if (FAMILIAR_ENABLED) {
       this.state.familiars.forEach((fam) => this.tickFamiliar(fam, timeStep));
+    }
+
+    // Pet AI tick (follow owner, hunger decay, auto-loot).
+    if (PET_ENABLED) {
+      this.state.pets.forEach((pet) => this.tickPet(pet, timeStep));
     }
 
     // Boss encounter tick (timed spawns, multi-phase attacks, add summoning).
@@ -2956,7 +2989,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     return partyManager.areInSameParty(charId, ownerPlayer.charId);
   }
 
-  private handlePickup(client: Client, msg: { uid: string }): void {
+  private handlePickup(client: Client, msg: { uid: string; silent?: boolean }): void {
     const player = this.state.players.get(client.sessionId);
     const drop = msg && this.state.loot.get(msg.uid);
     if (!player || !drop || player.dead) return;
@@ -4854,6 +4887,42 @@ export class MapRoom extends AuthedRoom<TownState> {
       } satisfies FamiliarSyncPayload);
     }
 
+    // Restore pet state from durable character.
+    if (PET_ENABLED) {
+      const petState = (character as unknown as Record<string, unknown>).pet as
+        | PetState
+        | undefined;
+      if (
+        petState &&
+        petState.summoned &&
+        petState.activePetId &&
+        getPetDef(petState.activePetId)
+      ) {
+        player.activePetId = petState.activePetId;
+        player.petFullness = petState.fullness ?? PET_FULLNESS_MAX;
+        player.petSummoned = true;
+        const pet = new Pet();
+        pet.petId = petState.activePetId;
+        pet.ownerSession = client.sessionId;
+        pet.x = player.x + (Math.random() - 0.5) * 30;
+        pet.y = player.y - 10;
+        pet.fullness = player.petFullness;
+        pet.speed = PET_SPEED;
+        pet.facing = 1;
+        pet.instanceId = `pet_${++this.idCounter}`;
+        pet.petKey = petState.activePetId;
+        pet.nextDecayAt = Date.now() + PET_DECAY_INTERVAL_MS;
+        this.state.pets.set(client.sessionId, pet);
+      }
+      client.send(MessageType.PET_SYNC, {
+        activePetId: player.activePetId,
+        fullness: player.petFullness,
+        summoned: player.petSummoned,
+        x: player.x,
+        y: player.y,
+      } satisfies PetSyncPayload);
+    }
+
     // Send the quickslot layout to the client.
     client.send(MessageType.QUICKSLOT_LAYOUT, {
       slots: player.quickslots,
@@ -5238,6 +5307,8 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Dismiss all familiars for this player.
     this.dismissAllFamiliars(client.sessionId);
     this.familiarCollections.delete(client.sessionId);
+    // Dismiss all pets for this player.
+    this.dismissAllPets(client.sessionId);
 
     if (player) {
       this.persistPlayer(player);
@@ -9979,6 +10050,309 @@ export class MapRoom extends AuthedRoom<TownState> {
         fam.attackCooldown = FAMILIAR_ATTACK_COOLDOWN_MS;
         fam.aiState = "chase";
         break;
+      }
+    }
+  }
+
+  // ─── Pet system ──────────────────────────────────────────────────────────
+
+  private handlePetSummon(client: Client, msg: PetSummonPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || player.dead) return;
+    const petId = msg?.petId;
+    if (!petId || !getPetDef(petId)) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "Unknown pet.",
+      });
+      return;
+    }
+    if (player.petSummoned && player.activePetId === petId) return;
+    if (player.petSummoned) {
+      this.dismissAllPets(client.sessionId);
+    }
+
+    player.activePetId = petId;
+    player.petFullness = player.petFullness > 0 ? player.petFullness : PET_FULLNESS_MAX;
+    player.petSummoned = true;
+
+    const pet = new Pet();
+    pet.petId = petId;
+    pet.ownerSession = client.sessionId;
+    pet.x = player.x + (Math.random() - 0.5) * 30;
+    pet.y = player.y - 10;
+    pet.fullness = player.petFullness;
+    pet.speed = PET_SPEED;
+    pet.facing = 1;
+    pet.instanceId = `pet_${++this.idCounter}`;
+    pet.petKey = petId;
+    pet.nextDecayAt = Date.now() + PET_DECAY_INTERVAL_MS;
+    this.state.pets.set(client.sessionId, pet);
+
+    accountStore.updateCharacter(player.charId, {
+      pet: { activePetId: petId, fullness: player.petFullness, summoned: true },
+    });
+
+    client.send(MessageType.PET_SYNC, {
+      activePetId: petId,
+      fullness: player.petFullness,
+      summoned: true,
+      x: pet.x,
+      y: pet.y,
+    } satisfies PetSyncPayload);
+
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: `You summoned ${getPetDef(petId)?.name ?? petId}.`,
+    });
+  }
+
+  private handlePetDismiss(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.petSummoned) return;
+    const petId = player.activePetId;
+    this.dismissAllPets(client.sessionId);
+    accountStore.updateCharacter(player.charId, {
+      pet: { activePetId: "", fullness: player.petFullness, summoned: false },
+    });
+    client.send(MessageType.PET_SYNC, {
+      activePetId: "",
+      fullness: player.petFullness,
+      summoned: false,
+      x: player.x,
+      y: player.y,
+    } satisfies PetSyncPayload);
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: `You dismissed ${getPetDef(petId)?.name ?? petId}.`,
+    });
+  }
+
+  private handlePetFeed(client: Client, msg: PetFeedPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.petSummoned) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "You don't have a pet summoned.",
+      });
+      return;
+    }
+    const itemUid = msg?.itemUid;
+    if (!itemUid) return;
+    const item = player.inventory.get(itemUid);
+    if (!item || !isPetFood(item.defId)) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "That's not pet food.",
+      });
+      return;
+    }
+    const restore = petFoodRestore(item.defId);
+    if (restore <= 0) return;
+
+    const count = item.count ?? 1;
+    if (count <= 1) {
+      player.inventory.delete(itemUid);
+      accountStore.removeItem(player.charId, itemUid);
+    } else {
+      item.count = count - 1;
+      const rec = accountStore.getItem(player.charId, itemUid);
+      if (rec) {
+        rec.count = item.count;
+        const char = accountStore.getCharacter(player.charId);
+        if (char) {
+          accountStore.updateCharacter(player.charId, { inventory: { ...char.inventory } });
+        }
+      }
+    }
+
+    player.petFullness = Math.min(PET_FULLNESS_MAX, player.petFullness + restore);
+    const pet = this.state.pets.get(client.sessionId);
+    if (pet) {
+      pet.fullness = player.petFullness;
+      if (pet.aiState === "idle") pet.aiState = "follow";
+    }
+
+    accountStore.updateCharacter(player.charId, {
+      pet: { activePetId: player.activePetId, fullness: player.petFullness, summoned: true },
+    });
+
+    client.send(MessageType.PET_SYNC, {
+      activePetId: player.activePetId,
+      fullness: player.petFullness,
+      summoned: true,
+      x: pet?.x ?? player.x,
+      y: pet?.y ?? player.y,
+    } satisfies PetSyncPayload);
+
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: `Your pet's fullness is now ${player.petFullness}/${PET_FULLNESS_MAX}.`,
+    });
+  }
+
+  private dismissAllPets(sessionId: string): void {
+    this.state.pets.delete(sessionId);
+    const player = this.state.players.get(sessionId);
+    if (player) {
+      player.activePetId = "";
+      player.petSummoned = false;
+    }
+  }
+
+  private tickPet(pet: Pet, _dt: number): void {
+    const owner = this.state.players.get(pet.ownerSession);
+    if (!owner || owner.dead) {
+      pet.aiState = "idle";
+      return;
+    }
+
+    // ── Hunger decay ──
+    const now = Date.now();
+    if (now >= pet.nextDecayAt && pet.fullness > 0) {
+      pet.fullness = Math.max(0, pet.fullness - 1);
+      owner.petFullness = pet.fullness;
+      pet.nextDecayAt = now + PET_DECAY_INTERVAL_MS;
+      const ownerClient = Array.from(this.clients).find((c) => c.sessionId === pet.ownerSession);
+      if (ownerClient) {
+        ownerClient.send(MessageType.PET_SYNC, {
+          activePetId: pet.petId,
+          fullness: pet.fullness,
+          summoned: true,
+          x: pet.x,
+          y: pet.y,
+        } satisfies PetSyncPayload);
+      }
+      accountStore.updateCharacter(owner.charId, {
+        pet: { activePetId: pet.petId, fullness: pet.fullness, summoned: true },
+      });
+    }
+
+    if (pet.fullness <= 0) {
+      pet.aiState = "idle";
+    }
+
+    // ── Follow owner ──
+    const dx = owner.x - pet.x;
+    const dy = owner.y - pet.y;
+    const dist = Math.hypot(dx, dy);
+    const speed = pet.speed || PET_SPEED;
+
+    if (dist > PET_FOLLOW_RANGE) {
+      pet.x += Math.sign(dx) * speed;
+      pet.facing = dx >= 0 ? 1 : -1;
+    }
+    if (Math.abs(dy) > 40) {
+      pet.y += Math.sign(dy) * speed * 0.6;
+    }
+    pet.grounded = true;
+
+    // ── Auto-loot (only when fullness > 0) ──
+    if (pet.fullness > 0) {
+      const lootUids: string[] = [];
+      this.state.loot.forEach((drop, uid) => {
+        const dropDist = Math.hypot(drop.x - pet.x, drop.y - pet.y);
+        if (dropDist <= PET_AUTO_LOOT_RANGE) lootUids.push(uid);
+      });
+      for (const uid of lootUids) {
+        const drop = this.state.loot.get(uid);
+        if (!drop) continue;
+        if (!this.canLoot(pet.ownerSession, owner.charId, drop)) continue;
+        if (!partyManager.canPickup(owner.charId)) continue;
+        const targetTab = tabForItem(drop.defId);
+        const maxStack = MAX_STACK[targetTab];
+        if (maxStack === 1) {
+          const used = this.countTabEntries(owner, targetTab);
+          if (used >= TAB_CAPACITY[targetTab]) continue;
+        } else {
+          let spaceAvailable = 0;
+          owner.inventory.forEach((existing) => {
+            if (existing.defId === drop.defId) spaceAvailable += maxStack - (existing.count || 1);
+          });
+          const used = this.countTabEntries(owner, targetTab);
+          spaceAvailable += (TAB_CAPACITY[targetTab] - used) * maxStack;
+          if (spaceAvailable < 1) continue;
+        }
+
+        if (maxStack > 1) {
+          let stacked = false;
+          owner.inventory.forEach((existing) => {
+            if (stacked) return;
+            if (existing.defId === drop.defId && (existing.count || 1) < maxStack) {
+              existing.count = (existing.count || 1) + 1;
+              const rec = accountStore.getItem(owner.charId, existing.uid);
+              if (rec) {
+                rec.count = existing.count;
+                const char = accountStore.getCharacter(owner.charId);
+                if (char) {
+                  accountStore.updateCharacter(owner.charId, { inventory: { ...char.inventory } });
+                }
+              }
+              stacked = true;
+            }
+          });
+          if (stacked) {
+            this.state.loot.delete(drop.uid);
+            partyManager.onPickup(owner.charId);
+            if (progressObjectives(owner.questState, "collect", drop.defId, 1)) {
+              const ownerClient = Array.from(this.clients).find(
+                (c) => c.sessionId === pet.ownerSession,
+              );
+              if (ownerClient) sendQuestUpdate(ownerClient, owner.questState);
+            }
+            owner.totalItemsCollected += 1;
+            accountStore.incrementLifetimeCounter(owner.charId, "totalItemsCollected", 1);
+            continue;
+          }
+        }
+
+        const item = new InventoryItem();
+        item.uid = `item_${++this.idCounter}`;
+        item.defId = drop.defId;
+        item.potentialTier = drop.potentialTier;
+        item.lines = drop.lines;
+        item.baseRank = "NORMAL";
+        const potentials = rollPotentialLines(
+          drop.potentialTier as import("@maple/shared").PotentialTier,
+        );
+        item.potentialLines = JSON.stringify(potentials);
+        item.count = 1;
+        owner.inventory.set(item.uid, item);
+        accountStore.addItem(owner.charId, {
+          uid: item.uid,
+          defId: item.defId,
+          baseRank: item.baseRank,
+          potentialTier: item.potentialTier,
+          lines: item.lines,
+          minted: false,
+          potentialLines: potentials,
+        });
+
+        if (drop.legendary) {
+          this.pendingMints.push({
+            session: pet.ownerSession,
+            itemUid: item.uid,
+            defId: item.defId,
+            tier: drop.potentialTier,
+          });
+        }
+
+        this.state.loot.delete(drop.uid);
+        partyManager.onPickup(owner.charId);
+        if (progressObjectives(owner.questState, "collect", item.defId, 1)) {
+          const ownerClient = Array.from(this.clients).find(
+            (c) => c.sessionId === pet.ownerSession,
+          );
+          if (ownerClient) sendQuestUpdate(ownerClient, owner.questState);
+        }
+        owner.totalItemsCollected += 1;
+        accountStore.incrementLifetimeCounter(owner.charId, "totalItemsCollected", 1);
       }
     }
   }

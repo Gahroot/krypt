@@ -41,7 +41,13 @@ export interface RecallEffect {
   readonly toSpawnId: string;
 }
 
-export type ConsumableEffect = HealEffect | ConsumableBuffEffect | RecallEffect;
+export interface PetFoodEffect {
+  readonly kind: "pet_food";
+  /** How much fullness this food restores. */
+  readonly fullnessRestore: number;
+}
+
+export type ConsumableEffect = HealEffect | ConsumableBuffEffect | RecallEffect | PetFoodEffect;
 
 export interface ConsumableDef {
   readonly id: string;
@@ -217,7 +223,44 @@ export const CONSUMABLES: Record<string, ConsumableDef> = {
     cooldownMs: 0,
     mesos: 0,
   },
+  // ── Pet food ────────────────────────────────────────────────────
+  "petfood.basic": {
+    id: "petfood.basic",
+    name: "Basic Pet Snack",
+    description: "Restores 20 pet fullness.",
+    effect: { kind: "pet_food", fullnessRestore: 20 },
+    cooldownMs: 0,
+    mesos: 50,
+  },
+  "petfood.deluxe": {
+    id: "petfood.deluxe",
+    name: "Deluxe Pet Treat",
+    description: "Restores 30 pet fullness.",
+    effect: { kind: "pet_food", fullnessRestore: 30 },
+    cooldownMs: 0,
+    mesos: 150,
+  },
+  "petfood.premium": {
+    id: "petfood.premium",
+    name: "Premium Pet Cuisine",
+    description: "Restores 50 pet fullness.",
+    effect: { kind: "pet_food", fullnessRestore: 50 },
+    cooldownMs: 0,
+    mesos: 500,
+  },
 };
+
+/** Check if a consumable defId is pet food. */
+export function isPetFoodConsumable(defId: string): boolean {
+  return defId.startsWith("petfood.");
+}
+
+/** Get the fullness restore amount for a pet food consumable defId. */
+export function getPetFoodRestore(defId: string): number {
+  const def = CONSUMABLES[defId];
+  if (def && def.effect.kind === "pet_food") return def.effect.fullnessRestore;
+  return 0;
+}
 
 /**
  * Apply a heal consumable's effect to current HP/MP, clamped to max.
