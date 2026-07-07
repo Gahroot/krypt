@@ -195,4 +195,44 @@ export class Player extends Schema {
   @type("string") activeMountId = "";
   /** Owned mount def ids (server-only, not synced). */
   ownedMounts: string[] = [];
+
+  // ─── Chair / Sit system ──────────────────────────────────────────────────
+  /** The chair item def id the player is sitting on ("" = standing). Synced to all clients. */
+  @type("string") sittingChairId = "";
+
+  // ─── Fishing minigame ────────────────────────────────────────────────────
+  /** Whether the player is currently fishing. Synced to all clients. */
+  @type("boolean") fishing = false;
+
+  // ─── Chair / Sit (server-only) ──────────────────────────────────────────
+  /** Epoch (ms) when the player sat down. Used for regen calculations. */
+  sittingSince = 0;
+
+  // ─── Fishing (server-only) ──────────────────────────────────────────────
+  /** Epoch (ms) when fishing started. */
+  fishingStartAt = 0;
+  /** Fishing spot id the player is fishing at ("" = none). */
+  fishingSpotId = "";
+  /** Epoch (ms) when the fish bite timer fires. */
+  fishingBiteAt = 0;
+  /** Consecutive successful catches (drives difficulty scaling). */
+  fishingStreak = 0;
+  /** Epoch (ms) of the last fishing cast (rate limit). */
+  lastFishingCastAt = 0;
+
+  // ─── Town minigame (server-only) ────────────────────────────────────────
+  /** Active minigame id ("" = not in a minigame). */
+  activeMinigameId = "";
+  /** Current minigame round (0-indexed). */
+  minigameRound = 0;
+  /** Epoch (ms) when the current minigame started. */
+  minigameStartAt = 0;
+  /** Epoch (ms) of the last minigame (rate limit). */
+  lastMinigameAt = 0;
+  /** Target color for the current round. */
+  minigameTargetColor = "";
+  /** Number of correct answers in the current game. */
+  minigameCorrect = 0;
+  /** Round id for the current challenge (to prevent stale answers). */
+  minigameRoundId = "";
 }

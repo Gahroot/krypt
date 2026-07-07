@@ -846,6 +846,18 @@ export class MapScene extends Phaser.Scene {
     // 5c) Mount sprites follow their owner player sprites.
     this.updateMountSprites();
 
+    // 5d) Chair sprites stay positioned under seated players.
+    for (const [sessionId, chairSprite] of this.chairSprites) {
+      const playerSprite = this.playerSprites.get(sessionId);
+      if (!playerSprite) {
+        chairSprite.destroy();
+        this.chairSprites.delete(sessionId);
+        continue;
+      }
+      chairSprite.x = playerSprite.x;
+      chairSprite.y = playerSprite.y + 12;
+    }
+
     // 6) Auto-vacuum the nearest loot drop in range (server re-checks the 60px gate authoritatively).
     this.autoPickupLoot();
 
@@ -1800,6 +1812,12 @@ export class MapScene extends Phaser.Scene {
       this.petFullnessBar = undefined;
       // Clean up mount sprites.
       this.destroyAllMountSprites();
+      // Clean up chair sprites.
+      for (const sprite of this.chairSprites.values()) sprite.destroy();
+      this.chairSprites.clear();
+      // Clean up fishing/minigame overlays.
+      this.hideFishingBar();
+      this.hideMinigameOverlay();
     });
 
     // ── Channel system ──
@@ -2346,6 +2364,42 @@ export class MapScene extends Phaser.Scene {
       MessageType.MOUNT_STATE,
       (payload: import("@maple/shared").MountStatePayload) => {
         this.handleMountState(payload);
+      },
+    );
+
+    // ── Chair / Sit state sync ──
+    room.onMessage(
+      MessageType.CHAIR_SIT_STATE,
+      (payload: import("@maple/shared").ChairSitStatePayload) => {
+        this.handleChairSitState(payload);
+      },
+    );
+
+    // ── Fishing minigame ──
+    room.onMessage(
+      MessageType.FISHING_BITE,
+      (payload: import("@maple/shared").FishingBitePayload) => {
+        this.handleFishingBite(payload);
+      },
+    );
+    room.onMessage(
+      MessageType.FISHING_RESULT,
+      (payload: import("@maple/shared").FishingResultPayload) => {
+        this.handleFishingResult(payload);
+      },
+    );
+
+    // ── Town minigame ──
+    room.onMessage(
+      MessageType.TOWN_MINIGAME_CHALLENGE,
+      (payload: import("@maple/shared").TownMinigameChallengePayload) => {
+        this.handleMinigameChallenge(payload);
+      },
+    );
+    room.onMessage(
+      MessageType.TOWN_MINIGAME_RESULT,
+      (payload: import("@maple/shared").TownMinigameResultPayload) => {
+        this.handleMinigameResult(payload);
       },
     );
   }
@@ -3084,6 +3138,34 @@ export class MapScene extends Phaser.Scene {
       if (this.registry.get(DIALOG_OPEN_KEY) === true) return;
       if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
       this.toggleMountRide();
+    });
+
+    // F toggles chair sit/stand (or cast fishing line when near water).
+    keyboard.on("keydown-F", () => {
+      if (this.registry.get("settingsOpen") === true) return;
+      if (this.registry.get(DIALOG_OPEN_KEY) === true) return;
+      if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
+      if (this.localFishing) {
+        this.respondToFishBite();
+      } else if (this.fishingBiteActive) {
+        this.respondToFishBite();
+      } else if (this.localChairId) {
+        this.toggleChairSit();
+      } else {
+        this.toggleChairSit();
+      }
+    });
+
+    // X starts the town minigame (or casts fishing line when near water).
+    keyboard.on("keydown-X", () => {
+      if (this.registry.get("settingsOpen") === true) return;
+      if (this.registry.get(DIALOG_OPEN_KEY) === true) return;
+      if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
+      if (this.localFishing) {
+        this.cancelFishing();
+      } else {
+        this.castFishingLine();
+      }
     });
   }
 
@@ -5043,6 +5125,329 @@ export class MapScene extends Phaser.Scene {
   private destroyAllMountSprites(): void {
     for (const sprite of this.mountSprites.values()) sprite.destroy();
     this.mountSprites.clear();
+  }
+
+  // ─── Chair / Sit rendering ────────────────────────────────────────────────────
+
+  /** Chair sprites for seated players (sessionId → sprite). */
+  private readonly chairSprites = new Map<string, Phaser.GameObjects.Sprite>();
+
+  /** Local player's active chair id (client-tracked for toggle). */
+  private localChairId = "";
+
+  /** Handle chair sit state broadcast from the server. */
+  private handleChairSitState(payload: import("@maple/shared").ChairSitStatePayload): void {
+    if (payload.sessionId === this.localSessionId) {
+      this.localChairId = payload.chairId;
+    }
+    const playerSprite = this.playerSprites.get(payload.sessionId);
+    if (!playerSprite) return;
+
+    // Clean up existing chair sprite.
+    const existing = this.chairSprites.get(payload.sessionId);
+    if (existing) {
+      existing.destroy();
+      this.chairSprites.delete(payload.sessionId);
+    }
+
+    if (!payload.chairId) return; // stood up
+
+    // Render a simple colored rectangle as the chair placeholder.
+    // In a real game, this would be a spritesheet animation.
+    const chairColor = payload.chairId.includes("golden")
+      ? 0xffd700
+      : payload.chairId.includes("blue")
+        ? 0x3498db
+        : payload.chairId.includes("cloud")
+          ? 0xecf0f1
+          : 0xe74c3c;
+
+    const chairGfx = this.add.graphics();
+    chairGfx.fillStyle(chairColor, 1);
+    chairGfx.fillRect(-12, 0, 24, 10);
+    chairGfx.fillRect(-14, -8, 4, 18);
+    chairGfx.fillRect(10, -8, 4, 18);
+    chairGfx.x = payload.x;
+    chairGfx.y = payload.y;
+    chairGfx.setDepth(playerSprite.depth - 0.01);
+
+    // Store as a sprite-like object with destroy method.
+    const wrapper = {
+      x: payload.x,
+      y: payload.y,
+      destroy: () => chairGfx.destroy(),
+      setDepth: (d: number) => chairGfx.setDepth(d),
+    } as unknown as Phaser.GameObjects.Sprite;
+    this.chairSprites.set(payload.sessionId, wrapper);
+  }
+
+  /** Toggle chair sit for the local player. */
+  private toggleChairSit(): void {
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+    if (this.localChairId) {
+      room.send(MessageType.CHAIR_STAND);
+    } else {
+      // Find a chair item in inventory (simplified: use the first chair found).
+      const player = this.room?.state?.players?.get(this.localSessionId);
+      if (!player) return;
+      let chairUid = "";
+      for (const [uid, item] of player.inventory.entries()) {
+        if (item.defId.startsWith("chair.")) {
+          chairUid = uid;
+          break;
+        }
+      }
+      if (chairUid) {
+        room.send(MessageType.CHAIR_SIT, { chairUid });
+      } else {
+        // No chair in inventory — inform the player.
+        this.showSystemMessage("You need a chair in your inventory to sit!");
+      }
+    }
+  }
+
+  // ─── Fishing minigame rendering ───────────────────────────────────────────────
+
+  /** Whether the local player is currently fishing. */
+  private localFishing = false;
+
+  /** Fishing timing bar overlay graphics. */
+  private fishingBar: Phaser.GameObjects.Graphics | null = null;
+
+  /** Fishing bite active flag. */
+  private fishingBiteActive = false;
+
+  /** Handle fish bite event from server. */
+  private handleFishingBite(payload: import("@maple/shared").FishingBitePayload): void {
+    this.fishingBiteActive = true;
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+
+    // Show a timing bar that shrinks over reactionWindowMs.
+    // The player must press the interaction key before it expires.
+    this.showFishingBar(payload.reactionWindowMs);
+  }
+
+  /** Handle fishing result from server. */
+  private handleFishingResult(payload: import("@maple/shared").FishingResultPayload): void {
+    this.fishingBiteActive = false;
+    this.hideFishingBar();
+    this.localFishing = false;
+
+    if (payload.success && payload.fishName) {
+      this.showSystemMessage(
+        `Caught a ${payload.fishName}! +${payload.mesos ?? 0} mesos, +${payload.exp ?? 0} exp`,
+      );
+    }
+  }
+
+  /** Cast fishing line. */
+  private castFishingLine(): void {
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room || this.localFishing) return;
+    this.localFishing = true;
+    room.send(MessageType.FISHING_CAST);
+    this.showSystemMessage("Casting line...");
+  }
+
+  /** Respond to a fish bite (catch or miss). */
+  private respondToFishBite(): void {
+    if (!this.fishingBiteActive) return;
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+    this.fishingBiteActive = false;
+    this.hideFishingBar();
+    // Send reaction time (simplified: always 0ms for now — client trusts server timing).
+    room.send(MessageType.FISHING_CATCH, { reactionTimeMs: 0 });
+  }
+
+  /** Cancel fishing. */
+  private cancelFishing(): void {
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+    this.localFishing = false;
+    this.fishingBiteActive = false;
+    this.hideFishingBar();
+    room.send(MessageType.FISHING_CANCEL);
+  }
+
+  /** Show a shrinking timing bar for the fishing minigame. */
+  private showFishingBar(durationMs: number): void {
+    this.hideFishingBar();
+    const bar = this.add.graphics();
+    bar.setDepth(1000);
+    bar.setScrollFactor(0);
+    this.fishingBar = bar;
+
+    const startX = 20;
+    const y = 50;
+    const width = 200;
+    const height = 12;
+
+    // Animate the bar shrinking over time.
+    const startTime = Date.now();
+    const updateBar = (): void => {
+      if (!this.fishingBar) return;
+      const elapsed = Date.now() - startTime;
+      const ratio = Math.max(0, 1 - elapsed / durationMs);
+      bar.clear();
+      // Background
+      bar.fillStyle(0x333333, 0.8);
+      bar.fillRect(startX - 2, y - 2, width + 4, height + 4);
+      // Fill bar (green → yellow → red as time runs out)
+      const color = ratio > 0.5 ? 0x2ecc71 : ratio > 0.25 ? 0xf39c12 : 0xe74c3c;
+      bar.fillStyle(color, 1);
+      bar.fillRect(startX, y, Math.ceil(width * ratio), height);
+      // Label
+      if (ratio <= 0) {
+        this.hideFishingBar();
+        this.showSystemMessage("Too slow! The fish got away.");
+        return;
+      }
+      // Continue updating.
+      this.time.delayedCall(16, updateBar);
+    };
+    updateBar();
+  }
+
+  /** Hide the fishing timing bar. */
+  private hideFishingBar(): void {
+    if (this.fishingBar) {
+      this.fishingBar.destroy();
+      this.fishingBar = null;
+    }
+  }
+
+  // ─── Town minigame rendering ─────────────────────────────────────────────────
+
+  /** Current minigame challenge overlay. */
+  private minigameOverlay: Phaser.GameObjects.Container | null = null;
+
+  /** Handle minigame challenge from server. */
+  private handleMinigameChallenge(
+    payload: import("@maple/shared").TownMinigameChallengePayload,
+  ): void {
+    this.showMinigameChallenge(payload);
+  }
+
+  /** Handle minigame result from server. */
+  private handleMinigameResult(payload: import("@maple/shared").TownMinigameResultPayload): void {
+    this.hideMinigameOverlay();
+    if (payload.success) {
+      this.showSystemMessage(
+        `${payload.message} (+${payload.mesos ?? 0} mesos, +${payload.exp ?? 0} exp)`,
+      );
+    }
+  }
+
+  /** Show a color-match challenge overlay. */
+  private showMinigameChallenge(
+    payload: import("@maple/shared").TownMinigameChallengePayload,
+  ): void {
+    this.hideMinigameOverlay();
+    const container = this.add.container(0, 0);
+    container.setDepth(1000);
+    container.setScrollFactor(0);
+
+    // Semi-transparent background.
+    const bg = this.add.graphics();
+    bg.fillStyle(0x000000, 0.6);
+    bg.fillRect(0, 0, 800, 600);
+    container.add(bg);
+
+    // Target color label.
+    const targetText = this.add
+      .text(400, 180, `Click: ${payload.targetColor.toUpperCase()}`, {
+        fontSize: "28px",
+        color: "#ffffff",
+        fontFamily: "monospace",
+      })
+      .setOrigin(0.5);
+    container.add(targetText);
+
+    // Round indicator.
+    const roundText = this.add
+      .text(400, 220, `Round ${payload.round + 1}/${payload.maxRounds}`, {
+        fontSize: "18px",
+        color: "#cccccc",
+        fontFamily: "monospace",
+      })
+      .setOrigin(0.5);
+    container.add(roundText);
+
+    // Color buttons.
+    const colorMap: Record<string, number> = {
+      red: 0xe74c3c,
+      blue: 0x3498db,
+      green: 0x2ecc71,
+      yellow: 0xf1c40f,
+      purple: 0x9b59b6,
+      orange: 0xe67e22,
+    };
+    const buttonSize = 60;
+    const startX = 400 - (payload.options.length * (buttonSize + 10)) / 2 + buttonSize / 2;
+
+    payload.options.forEach((color, i) => {
+      const bx = startX + i * (buttonSize + 10);
+      const by = 300;
+      const btn = this.add.graphics();
+      btn.fillStyle(colorMap[color] ?? 0xffffff, 1);
+      btn.fillRoundedRect(bx - buttonSize / 2, by - buttonSize / 2, buttonSize, buttonSize, 8);
+      btn.setInteractive(
+        new Phaser.Geom.Rectangle(bx - buttonSize / 2, by - buttonSize / 2, buttonSize, buttonSize),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      btn.on("pointerdown", () => {
+        this.respondToMinigame(payload.roundId, color);
+      });
+      container.add(btn);
+    });
+
+    this.minigameOverlay = container;
+  }
+
+  /** Respond to a minigame challenge. */
+  private respondToMinigame(roundId: string, chosenColor: string): void {
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+    room.send(MessageType.TOWN_MINIGAME_ANSWER, {
+      roundId,
+      chosenColor,
+      reactionTimeMs: 0, // simplified: always immediate
+    });
+  }
+
+  /** Hide the minigame overlay. */
+  private hideMinigameOverlay(): void {
+    if (this.minigameOverlay) {
+      this.minigameOverlay.destroy();
+      this.minigameOverlay = null;
+    }
+  }
+
+  /** Show a short system message (floating text). */
+  private showSystemMessage(text: string): void {
+    const cam = this.cameras.main;
+    const msg = this.add
+      .text(cam.width / 2, cam.height - 80, text, {
+        fontSize: "16px",
+        color: "#ffdd57",
+        fontFamily: "monospace",
+        backgroundColor: "#000000aa",
+        padding: { x: 8, y: 4 },
+      })
+      .setOrigin(0.5)
+      .setDepth(999)
+      .setScrollFactor(0);
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      y: msg.y - 30,
+      duration: 2500,
+      ease: "Power2",
+      onComplete: () => msg.destroy(),
+    });
   }
 
   /** Smoothly lerp a sprite toward target x/y. */

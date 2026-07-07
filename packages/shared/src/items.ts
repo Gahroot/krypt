@@ -53,6 +53,7 @@ export enum EquipSlot {
   RING_2 = "RING_2",
   RING_3 = "RING_3",
   RING_4 = "RING_4",
+  CHAIR = "CHAIR",
 }
 
 export enum WeaponType {
@@ -6567,6 +6568,44 @@ export const ITEMS: Record<string, ItemDef> = {
     mDef: 70,
     hpBonus: 360,
   },
+
+  // ── Chairs (social idle items — equip to sit, boost HP/MP regen) ─────
+  "chair.red_wooden": {
+    id: "chair.red_wooden",
+    name: "Red Wooden Chair",
+    slot: EquipSlot.CHAIR,
+    levelReq: 1,
+    primaryStat: "STR",
+    baseStatBonus: 0,
+    baseAttack: 0,
+  },
+  "chair.blue_wooden": {
+    id: "chair.blue_wooden",
+    name: "Blue Wooden Chair",
+    slot: EquipSlot.CHAIR,
+    levelReq: 1,
+    primaryStat: "STR",
+    baseStatBonus: 0,
+    baseAttack: 0,
+  },
+  "chair.golden_throne": {
+    id: "chair.golden_throne",
+    name: "Golden Throne",
+    slot: EquipSlot.CHAIR,
+    levelReq: 30,
+    primaryStat: "STR",
+    baseStatBonus: 0,
+    baseAttack: 0,
+  },
+  "chair.cloud_cushion": {
+    id: "chair.cloud_cushion",
+    name: "Cloud Cushion",
+    slot: EquipSlot.CHAIR,
+    levelReq: 10,
+    primaryStat: "STR",
+    baseStatBonus: 0,
+    baseAttack: 0,
+  },
 };
 
 export function getItemDef(defId: string): ItemDef | undefined {
@@ -7157,6 +7196,43 @@ export const ETC_ITEMS: Record<string, EtcItemDef> = {
     id: "etc.viper_fang",
     name: "Viper Fang",
     description: "A venom-slick fang pulled from a Jungle Viper. Drips with toxin.",
+  },
+
+  // ── Fish (fishing minigame rewards) ──────────────────────────────────
+  "fish.sardine": {
+    id: "fish.sardine",
+    name: "Sardine",
+    description: "A small silver sardine. Common catch at the harbor docks.",
+  },
+  "fish.silver_bass": {
+    id: "fish.silver_bass",
+    name: "Silver Bass",
+    description: "A medium-sized bass with shimmering scales. Decent eating.",
+  },
+  "fish.rainbow_trout": {
+    id: "fish.rainbow_trout",
+    name: "Rainbow Trout",
+    description: "A colorful trout with a rainbow stripe. Sought after by anglers.",
+  },
+  "fish.golden_carp": {
+    id: "fish.golden_carp",
+    name: "Golden Carp",
+    description: "A gleaming golden carp. Rare and valuable.",
+  },
+  "fish.crystal_pike": {
+    id: "fish.crystal_pike",
+    name: "Crystal Pike",
+    description: "A translucent pike that refracts light. Extremely rare.",
+  },
+  "fish.old_boot": {
+    id: "fish.old_boot",
+    name: "Old Boot",
+    description: "Someone's lost boot. Not quite what you were fishing for...",
+  },
+  "fish.tin_can": {
+    id: "fish.tin_can",
+    name: "Tin Can",
+    description: "An empty tin can. The sea provides... eventually.",
   },
 };
 

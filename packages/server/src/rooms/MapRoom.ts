@@ -181,6 +181,24 @@ import {
   isMountId,
   type MountRidePayload,
   type MountStatePayload,
+  getChairByItemId,
+  getChairDef,
+  type ChairSitPayload,
+  type ChairSitStatePayload,
+  getFishingSpotsForMap,
+  rollFish,
+  type FishingCatchPayload,
+  type FishingResultPayload,
+  type FishingBitePayload,
+  FISHING_CAST_COOLDOWN_MS,
+  FISHING_WINDOW_SHRINK_PERCENT,
+  FISHING_MIN_REACTION_WINDOW_MS,
+  FISHING_MAX_STREAK,
+  type TownMinigameAnswerPayload,
+  type TownMinigameChallengePayload,
+  type TownMinigameResultPayload,
+  getMinigameDef,
+  MINIGAME_COLORS,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -1593,6 +1611,33 @@ export class MapRoom extends AuthedRoom<TownState> {
     [MessageType.MOUNT_DISMOUNT]: (client: Client) => {
       this.handleMountDismount(client);
     },
+
+    // ─── Chair / Sit system ──────────────────────────────────────────────
+    [MessageType.CHAIR_SIT]: (client: Client, msg: ChairSitPayload) => {
+      this.handleChairSit(client, msg);
+    },
+    [MessageType.CHAIR_STAND]: (client: Client) => {
+      this.handleChairStand(client);
+    },
+
+    // ─── Fishing minigame ─────────────────────────────────────────────────
+    [MessageType.FISHING_CAST]: (client: Client) => {
+      this.handleFishingCast(client);
+    },
+    [MessageType.FISHING_CATCH]: (client: Client, msg: FishingCatchPayload) => {
+      this.handleFishingCatch(client, msg);
+    },
+    [MessageType.FISHING_CANCEL]: (client: Client) => {
+      this.handleFishingCancel(client);
+    },
+
+    // ─── Town minigame ────────────────────────────────────────────────────
+    [MessageType.TOWN_MINIGAME_START]: (client: Client) => {
+      this.handleMinigameStart(client);
+    },
+    [MessageType.TOWN_MINIGAME_ANSWER]: (client: Client, msg: TownMinigameAnswerPayload) => {
+      this.handleMinigameAnswer(client, msg);
+    },
   };
 
   onCreate(options: { mapId?: string; channel?: number } = {}): void {
@@ -2329,11 +2374,18 @@ export class MapRoom extends AuthedRoom<TownState> {
         mpRate *= REGEN_MAGE_MP_MULTIPLIER;
       }
 
+      // Chair sitting boost: multiply regen rates by the chair's multiplier.
+      let chairMultiplier = 1;
+      if (player.sittingChairId) {
+        const chairDef = getChairDef(player.sittingChairId);
+        chairMultiplier = chairDef?.regenMultiplier ?? 1.5;
+      }
+
       // Accumulate fractional regen; apply only when ≥ 1 HP/MP.
       const dtSec = dt / 1000;
       let changed = false;
       if (player.hp < player.maxHp) {
-        player._regenAccumHp += player.maxHp * hpRate * dtSec;
+        player._regenAccumHp += player.maxHp * hpRate * chairMultiplier * dtSec;
         if (player._regenAccumHp >= 1) {
           const heal = Math.floor(player._regenAccumHp);
           player.hp = Math.min(player.maxHp, player.hp + heal);
@@ -2344,7 +2396,7 @@ export class MapRoom extends AuthedRoom<TownState> {
         player._regenAccumHp = 0;
       }
       if (player.mp < player.maxMp) {
-        player._regenAccumMp += player.maxMp * mpRate * dtSec;
+        player._regenAccumMp += player.maxMp * mpRate * chairMultiplier * dtSec;
         if (player._regenAccumMp >= 1) {
           const heal = Math.floor(player._regenAccumMp);
           player.mp = Math.min(player.maxMp, player.mp + heal);
@@ -2365,6 +2417,43 @@ export class MapRoom extends AuthedRoom<TownState> {
             mp: player.mp,
             resting: isResting,
           });
+        }
+      }
+    }
+
+    // ── Fishing bite timer ──
+    if (player.fishing && player.fishingBiteAt > 0) {
+      const nowTick = Date.now();
+      if (nowTick >= player.fishingBiteAt) {
+        // Fish is biting! Notify the client to show the timing bar.
+        const sess = this.findSessionByPlayer(player);
+        if (sess) {
+          // Calculate reaction window with difficulty scaling.
+          const spots = getFishingSpotsForMap(this.state.mapId);
+          const spot = spots.find((s) => s.id === player.fishingSpotId);
+          const baseWindow = spot?.baseReactionWindowMs ?? 2500;
+          const streakMultiplier = Math.max(
+            0,
+            1 - player.fishingStreak * FISHING_WINDOW_SHRINK_PERCENT,
+          );
+          const reactionWindow = Math.max(
+            FISHING_MIN_REACTION_WINDOW_MS,
+            baseWindow * streakMultiplier,
+          );
+
+          this.broadcast(MessageType.FISHING_BITE, {
+            reactionWindowMs: reactionWindow,
+            rarityHint:
+              player.fishingStreak > 5 ? "rare" : player.fishingStreak > 2 ? "uncommon" : "common",
+          } satisfies FishingBitePayload);
+
+          // Auto-fail if client doesn't respond within the window (server-side timeout).
+          // We give a generous extra buffer (2s) for network latency.
+          player.fishingBiteAt = nowTick + reactionWindow + 2000;
+        } else {
+          // No client found, cancel fishing.
+          player.fishing = false;
+          player.fishingBiteAt = 0;
         }
       }
     }
@@ -10785,6 +10874,296 @@ export class MapRoom extends AuthedRoom<TownState> {
         mountId: "",
       } satisfies MountStatePayload);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ─── Chair / Sit system handlers ────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private handleChairSit(client: Client, msg: ChairSitPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !msg?.chairUid) return;
+
+    // Cannot sit while dead, mounted, fishing, or already sitting.
+    if (player.dead || player.activeMountId || player.fishing || player.sittingChairId) return;
+
+    // Look up the chair item in inventory.
+    const invItem = player.inventory.get(msg.chairUid);
+    if (!invItem) return;
+    const chairDef = getChairByItemId(invItem.defId);
+    if (!chairDef) return;
+
+    // Set sitting state.
+    player.sittingChairId = chairDef.id;
+    player.sittingSince = Date.now();
+
+    // Broadcast to all clients.
+    this.broadcast(MessageType.CHAIR_SIT_STATE, {
+      sessionId: client.sessionId,
+      chairId: chairDef.id,
+      x: player.x,
+      y: player.y,
+    } satisfies ChairSitStatePayload);
+
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: `You sit on the ${chairDef.name}. HP/MP regen boosted!`,
+    });
+  }
+
+  private handleChairStand(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.sittingChairId) return;
+
+    player.sittingChairId = "";
+    player.sittingSince = 0;
+
+    this.broadcast(MessageType.CHAIR_SIT_STATE, {
+      sessionId: client.sessionId,
+      chairId: "",
+      x: player.x,
+      y: player.y,
+    } satisfies ChairSitStatePayload);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ─── Fishing minigame handlers ──────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private handleFishingCast(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    // Cannot fish while dead, mounted, sitting, or already fishing.
+    if (player.dead || player.activeMountId || player.sittingChairId || player.fishing) return;
+
+    // Rate-limit casts.
+    const now = Date.now();
+    if (now - player.lastFishingCastAt < FISHING_CAST_COOLDOWN_MS) return;
+    player.lastFishingCastAt = now;
+
+    // Find a fishing spot near the player.
+    const spots = getFishingSpotsForMap(this.state.mapId);
+    const spot = spots.find(
+      (s) =>
+        Math.abs(s.x - player.x) < s.interactRange && Math.abs(s.y - player.y) < s.interactRange,
+    );
+    if (!spot) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "No fishing spot nearby. Look for a pier or dock.",
+      });
+      return;
+    }
+
+    // Start fishing.
+    player.fishing = true;
+    player.fishingStartAt = now;
+    player.fishingSpotId = spot.id;
+    player.fishingBiteAt = 0;
+
+    // Schedule the bite (randomized ±30% of base delay).
+    const delay = spot.baseBiteDelayMs * (0.7 + Math.random() * 0.6);
+    player.fishingBiteAt = now + delay;
+
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: "You cast your line into the water...",
+    });
+  }
+
+  private handleFishingCatch(client: Client, msg: FishingCatchPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.fishing || player.fishingBiteAt === 0) return;
+
+    const reactionTimeMs = msg?.reactionTimeMs ?? 0;
+
+    // Find the fishing spot for the reaction window.
+    const spots = getFishingSpotsForMap(this.state.mapId);
+    const spot = spots.find((s) => s.id === player.fishingSpotId);
+    const baseWindow = spot?.baseReactionWindowMs ?? 2500;
+
+    // Difficulty scaling: shrink window by 5% per streak (min 800ms).
+    const streakMultiplier = Math.max(0, 1 - player.fishingStreak * FISHING_WINDOW_SHRINK_PERCENT);
+    const reactionWindow = Math.max(FISHING_MIN_REACTION_WINDOW_MS, baseWindow * streakMultiplier);
+
+    // Determine success: reaction time must be within the window.
+    const success = reactionTimeMs <= reactionWindow;
+
+    // Reset fishing state.
+    player.fishing = false;
+    player.fishingBiteAt = 0;
+    player.fishingSpotId = "";
+
+    if (!success) {
+      player.fishingStreak = 0;
+      client.send(MessageType.FISHING_RESULT, {
+        success: false,
+        message: "The fish got away! Too slow.",
+      } satisfies FishingResultPayload);
+      return;
+    }
+
+    // Server-authoritative reward roll.
+    const fish = rollFish();
+    player.fishingStreak = Math.min(player.fishingStreak + 1, FISHING_MAX_STREAK);
+
+    // Award rewards.
+    player.mesos += fish.mesos;
+    player.exp += fish.exp;
+
+    // Grant the fish item to inventory.
+    const fishUid = `fish_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    player.inventory.set(fishUid, {
+      uid: fishUid,
+      defId: fish.id,
+      baseRank: "NORMAL",
+      potentialTier: "NONE",
+      count: 1,
+    } as InventoryItem);
+
+    client.send(MessageType.FISHING_RESULT, {
+      success: true,
+      fishId: fish.id,
+      fishName: fish.name,
+      mesos: fish.mesos,
+      exp: fish.exp,
+      rarity: fish.rarity,
+      message: `You caught a ${fish.name}! (+${fish.mesos} mesos, +${fish.exp} exp)`,
+    } satisfies FishingResultPayload);
+  }
+
+  private handleFishingCancel(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.fishing) return;
+
+    player.fishing = false;
+    player.fishingBiteAt = 0;
+    player.fishingSpotId = "";
+    player.fishingStreak = 0;
+
+    client.send(MessageType.CHAT, {
+      sessionId: "",
+      name: "System",
+      text: "You reel in your line.",
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // ─── Town minigame handlers ─────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private handleMinigameStart(client: Client): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player) return;
+
+    // Cannot start while dead, in combat, fishing, or sitting.
+    if (player.dead || player.fishing || player.sittingChairId) return;
+    if (player.activeMinigameId) return; // already in a minigame
+
+    // Rate-limit.
+    const now = Date.now();
+    const minigameDef = getMinigameDef("color_crush");
+    if (!minigameDef) return;
+    if (now - player.lastMinigameAt < minigameDef.cooldownMs) {
+      client.send(MessageType.CHAT, {
+        sessionId: "",
+        name: "System",
+        text: "Wait a moment before playing again.",
+      });
+      return;
+    }
+
+    // Start the minigame.
+    player.activeMinigameId = minigameDef.id;
+    player.minigameRound = 0;
+    player.minigameStartAt = now;
+    player.minigameCorrect = 0;
+    player.lastMinigameAt = now;
+
+    // Send the first challenge.
+    this.sendMinigameChallenge(client, player, minigameDef);
+  }
+
+  private sendMinigameChallenge(
+    client: Client,
+    player: Player,
+    minigameDef: { rounds: number; reactionWindowMs: number },
+  ): void {
+    // Pick a random target color.
+    const idx = Math.floor(Math.random() * MINIGAME_COLORS.length);
+    const targetColor = MINIGAME_COLORS[idx] ?? "red";
+    const roundId = `round_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+
+    player.minigameTargetColor = targetColor;
+    player.minigameRoundId = roundId;
+
+    // Shuffle options for display.
+    const options = [...MINIGAME_COLORS].sort(() => Math.random() - 0.5);
+
+    client.send(MessageType.TOWN_MINIGAME_CHALLENGE, {
+      roundId,
+      targetColor,
+      options,
+      reactionWindowMs: minigameDef.reactionWindowMs,
+      round: player.minigameRound,
+      maxRounds: minigameDef.rounds,
+    } satisfies TownMinigameChallengePayload);
+  }
+
+  private handleMinigameAnswer(client: Client, msg: TownMinigameAnswerPayload): void {
+    const player = this.state.players.get(client.sessionId);
+    if (!player || !player.activeMinigameId) return;
+    if (!msg?.roundId || msg.roundId !== player.minigameRoundId) return; // stale answer
+
+    const minigameDef = getMinigameDef(player.activeMinigameId);
+    if (!minigameDef) return;
+
+    const reactionTimeMs = msg?.reactionTimeMs ?? 0;
+
+    // Check if the answer is correct and within the time window.
+    const correct =
+      msg.chosenColor === player.minigameTargetColor &&
+      reactionTimeMs <= minigameDef.reactionWindowMs;
+
+    if (correct) {
+      player.minigameCorrect++;
+      player.mesos += minigameDef.mesosPerRound;
+      player.exp += minigameDef.expPerRound;
+    }
+
+    player.minigameRound++;
+
+    // More rounds? Send next challenge.
+    if (player.minigameRound < minigameDef.rounds) {
+      this.sendMinigameChallenge(client, player, minigameDef);
+      return;
+    }
+
+    // Game over — calculate final rewards.
+    const perfect = player.minigameCorrect === minigameDef.rounds;
+    if (perfect) {
+      player.mesos += minigameDef.perfectBonusMesos;
+      player.exp += minigameDef.perfectBonusExp;
+    }
+
+    player.activeMinigameId = "";
+    player.minigameRound = 0;
+    player.minigameCorrect = 0;
+
+    const score = player.minigameCorrect;
+    client.send(MessageType.TOWN_MINIGAME_RESULT, {
+      success: true,
+      score,
+      mesos: minigameDef.mesosPerRound * score + (perfect ? minigameDef.perfectBonusMesos : 0),
+      exp: minigameDef.expPerRound * score + (perfect ? minigameDef.perfectBonusExp : 0),
+      message: perfect
+        ? `Perfect! ${score}/${minigameDef.rounds} — bonus mesos and exp!`
+        : `Game over! ${score}/${minigameDef.rounds} correct.`,
+    } satisfies TownMinigameResultPayload);
   }
 }
 

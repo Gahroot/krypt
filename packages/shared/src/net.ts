@@ -307,6 +307,36 @@ export const MessageType = {
   MOUNT_DISMOUNT: 168,
   /** Server → client: mount state changed (ride/dismount broadcast). */
   MOUNT_STATE: 169,
+
+  // ─── Chair / Sit system (social idle + regen boost) ──────────────────────
+  /** Client → server: sit down on a chair (equipped from inventory). */
+  CHAIR_SIT: 170,
+  /** Server → client: player sat down on a chair (broadcast). */
+  CHAIR_SIT_STATE: 171,
+  /** Client → server: stand up from chair. */
+  CHAIR_STAND: 172,
+
+  // ─── Fishing minigame (downtime activity at dock maps) ────────────────────
+  /** Client → server: cast a fishing line at a fishing spot. */
+  FISHING_CAST: 173,
+  /** Server → client: fish is biting — client shows timing bar. */
+  FISHING_BITE: 174,
+  /** Client → server: player reacted to bite (timing result). */
+  FISHING_CATCH: 175,
+  /** Client → server: cancel fishing. */
+  FISHING_CANCEL: 176,
+  /** Server → client: fishing result (reward or failure). */
+  FISHING_RESULT: 177,
+
+  // ─── Town minigame (simple reaction game with small reward) ────────────────
+  /** Client → server: start the town minigame at a spot. */
+  TOWN_MINIGAME_START: 178,
+  /** Server → client: minigame challenge (e.g. color to click). */
+  TOWN_MINIGAME_CHALLENGE: 179,
+  /** Client → server: player's answer to the minigame challenge. */
+  TOWN_MINIGAME_ANSWER: 180,
+  /** Server → client: minigame result (reward or failure). */
+  TOWN_MINIGAME_RESULT: 181,
 } as const;
 
 export type MessageTypeValue = (typeof MessageType)[keyof typeof MessageType];
@@ -2058,4 +2088,100 @@ export interface EmotePayload {
 export interface EmoteDisplayPayload {
   sessionId: string;
   emoteId: string;
+}
+
+// ─── Chair / Sit system payloads ───────────────────────────────────────────
+
+/** Client → server: sit on a chair (equipped in inventory). */
+export interface ChairSitPayload {
+  /** The item uid of the chair from the player's inventory. */
+  chairUid: string;
+}
+
+/** Server → client: a player's sitting state changed (broadcast). */
+export interface ChairSitStatePayload {
+  sessionId: string;
+  /** The chair def id (empty string = stood up). */
+  chairId: string;
+  /** X position of the chair (where the player sits). */
+  x: number;
+  /** Y position of the chair. */
+  y: number;
+}
+
+// ─── Fishing minigame payloads ─────────────────────────────────────────────
+
+/** Client → server: cast a fishing line at a fishing spot. */
+export type FishingCastPayload = Record<string, never>;
+
+/** Server → client: a fish is biting — start the timing minigame. */
+export interface FishingBitePayload {
+  /** Milliseconds the player has to react (difficulty scales with attempt). */
+  reactionWindowMs: number;
+  /** Visual hint (rarity tier) so the client can show excitement. */
+  rarityHint: "common" | "uncommon" | "rare";
+}
+
+/** Client → server: player reacted to the fish bite. */
+export interface FishingCatchPayload {
+  /** Milliseconds elapsed since the bite (server validates against reactionWindowMs). */
+  reactionTimeMs: number;
+}
+
+/** Server → client: fishing result (reward or failure). */
+export interface FishingResultPayload {
+  success: boolean;
+  /** Fish item def id caught (only on success). */
+  fishId?: string;
+  /** Fish display name (only on success). */
+  fishName?: string;
+  /** Mesos reward (only on success). */
+  mesos?: number;
+  /** EXP reward (only on success). */
+  exp?: number;
+  /** Rarity tier of the catch. */
+  rarity?: "common" | "uncommon" | "rare";
+  /** Player message (e.g. "Nothing bit..." or "You caught a Rainbow Trout!"). */
+  message: string;
+}
+
+// ─── Town minigame payloads ───────────────────────────────────────────────
+
+/** Client → server: start the town minigame at a spot. */
+export type TownMinigameStartPayload = Record<string, never>;
+
+/** Server → client: a minigame challenge (color-matching reaction game). */
+export interface TownMinigameChallengePayload {
+  /** Unique id for this challenge round. */
+  roundId: string;
+  /** The target color/shape the player must click. */
+  targetColor: string;
+  /** All possible colors shown. */
+  options: string[];
+  /** Milliseconds to react. */
+  reactionWindowMs: number;
+  /** Current score (for multi-round display). */
+  round: number;
+  /** Max rounds in this game session. */
+  maxRounds: number;
+}
+
+/** Client → server: player's answer to the minigame challenge. */
+export interface TownMinigameAnswerPayload {
+  roundId: string;
+  chosenColor: string;
+  /** Milliseconds elapsed since the challenge was sent. */
+  reactionTimeMs: number;
+}
+
+/** Server → client: minigame result (after all rounds). */
+export interface TownMinigameResultPayload {
+  success: boolean;
+  /** Score achieved. */
+  score: number;
+  /** Mesos reward. */
+  mesos?: number;
+  /** EXP reward. */
+  exp?: number;
+  message: string;
 }

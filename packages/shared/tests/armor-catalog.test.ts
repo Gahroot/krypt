@@ -133,7 +133,9 @@ describe("armor catalog — class-flavored items have classReq", () => {
 });
 
 describe("armor catalog — no zero-stat or placeholder items", () => {
-  const ALL_ARMOR = Object.values(ITEMS).filter((i) => i.slot !== EquipSlot.WEAPON);
+  const ALL_ARMOR = Object.values(ITEMS).filter(
+    (i) => i.slot !== EquipSlot.WEAPON && i.slot !== EquipSlot.CHAIR,
+  );
 
   it("every armor item has baseStatBonus > 0", () => {
     for (const item of ALL_ARMOR) {

@@ -92,3 +92,6 @@ export {
   type ActiveEvent,
   type EventsSyncPayload,
 } from "./events.js";
+export * from "./fishing.js";
+export * from "./chairs.js";
+export * from "./townminigame.js";
