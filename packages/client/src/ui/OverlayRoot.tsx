@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, type ComponentType } from "react";
 import { toast } from "sonner";
 
 import { installPanelEscHandler } from "@/ui/panelEsc";
+import { slotItemIcon, isImageIcon } from "@/ui/item-icon";
 
 import { InventoryPanel } from "@/ui/InventoryPanel";
 import { CharacterCreatePanel } from "@/ui/CharacterCreatePanel";
@@ -117,8 +118,29 @@ export function OverlayRoot() {
         toast.success(`🏆 ${payload.name}`, { description: parts.join(" · ") });
       };
       game.events.on("achievement-unlock", handler);
+
+      // MapleStory-style item-get toast when loot is picked up.
+      const itemHandler = (payload: { defId: string; name: string; legendary: boolean }) => {
+        const icon = slotItemIcon(payload.defId);
+        const iconEl = icon
+          ? isImageIcon(icon)
+            ? `<img src="${icon}" width="24" height="24" style="vertical-align:middle;margin-right:6px;border-radius:3px" />`
+            : `<span style="font-size:18px;margin-right:4px">${icon}</span>`
+          : "";
+        const tier = payload.legendary ? "Legendary" : "";
+        toast.success(`${iconEl} Acquired: ${payload.name}`, {
+          description: tier ? `${tier} item` : undefined,
+          duration: 2500,
+          style: payload.legendary
+            ? { borderColor: "#ffc847", background: "rgba(255,200,71,0.08)" }
+            : undefined,
+        });
+      };
+      game.events.on("item-acquired", itemHandler);
+
       unsub = () => {
         game.events.off("achievement-unlock", handler);
+        game.events.off("item-acquired", itemHandler);
       };
     });
     return () => {

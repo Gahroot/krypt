@@ -3293,8 +3293,11 @@ export class UIScene extends Phaser.Scene {
     room.onMessage(
       MessageType.USE_CONSUMABLE,
       (payload: { success: boolean; defId: string; cooldownMs: number; message: string }) => {
-        if (payload.success && payload.cooldownMs > 0) {
-          this.startQuickslotCooldown(payload.defId, "consumable", payload.cooldownMs);
+        if (payload.success) {
+          getAudioManager().playSfx("heal");
+          if (payload.cooldownMs > 0) {
+            this.startQuickslotCooldown(payload.defId, "consumable", payload.cooldownMs);
+          }
         }
         // Republish the skill bar (inventory changed).
         this.publishHudSkills();

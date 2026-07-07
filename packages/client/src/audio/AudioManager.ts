@@ -74,6 +74,10 @@ export const SFX_KEYS = [
   "skill_fireball",
   "skill_beam",
   "skill_buff",
+  // ── Locomotion / healing ────────────────────────────────────────────
+  "footstep",
+  "jump",
+  "heal",
 ] as const;
 
 export type BgmKey = (typeof BGM_KEYS)[number];

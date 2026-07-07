@@ -310,6 +310,15 @@ export class MapScene extends Phaser.Scene {
   private swingCooldown = 0;
   /** Last time (scene-clock ms) we asked the server to pick up each loot uid — throttles requests. */
   private readonly pickupRequestedAt = new Map<string, number>();
+  /** Last time a footstep SFX was played — throttles the sound to one per step cycle. */
+  private lastFootstepAt = 0;
+  /** Interval in ms between footstep SFX when walking. */
+  private static readonly FOOTSTEP_INTERVAL_MS = 220;
+  /** Loot metadata cached on add so we can show item-get toasts on pickup. */
+  private readonly lootMeta = new Map<
+    string,
+    { defId: string; name: string; legendary: boolean }
+  >();
   // ── NPC interaction state ─────────────────────────────────────────
   private readonly npcSprites = new Map<string, Phaser.GameObjects.Sprite>();
   private readonly npcLabels = new Map<string, Phaser.GameObjects.Text>();
@@ -657,6 +666,15 @@ export class MapScene extends Phaser.Scene {
           }
           player.x = Phaser.Math.Clamp(player.x, 0, this.map.width);
 
+          // ── Footstep SFX (throttled, grounded only) ─────────────────────────────────
+          if (this.localGrounded && (left || right) && Math.abs(this.localVx) > 0.5) {
+            const now = this.time.now;
+            if (now - this.lastFootstepAt >= MapScene.FOOTSTEP_INTERVAL_MS) {
+              this.lastFootstepAt = now;
+              getAudioManager().playSfx("footstep");
+            }
+          }
+
           // ── Grounded re-check after horizontal movement (slope follow + walk-off-edge) ──
           if (this.localGrounded) {
             const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
@@ -674,6 +692,7 @@ export class MapScene extends Phaser.Scene {
             if (jump && !this.lastJumpHeld) {
               this.localVy = SWIM_VELOCITY;
               this.localGrounded = false;
+              getAudioManager().playSfx("jump");
             }
             // Hold up to swim upward, hold down to dive
             if (up) {
@@ -696,6 +715,7 @@ export class MapScene extends Phaser.Scene {
               } else {
                 this.localVy = JUMP_VELOCITY;
                 this.localGrounded = false;
+                getAudioManager().playSfx("jump");
               }
             }
           }
@@ -1616,8 +1636,9 @@ export class MapScene extends Phaser.Scene {
       sprite.setDepth(loot.y);
       this.lootSprites.set(uid, sprite);
 
-      // Item name label above the gem.
+      // Cache metadata for the item-get toast on pickup.
       const itemName = getItemDef(loot.defId)?.name ?? loot.defId;
+      this.lootMeta.set(uid, { defId: loot.defId, name: itemName, legendary: loot.legendary });
       const color = loot.legendary ? "#ffc847" : (tierColor[loot.potentialTier] ?? "#ffffff");
       const label = this.add
         .text(loot.x, loot.y - 18, itemName, {
@@ -1661,6 +1682,16 @@ export class MapScene extends Phaser.Scene {
     });
 
     $(room.state).loot.onRemove((_loot: LootView, uid: string) => {
+      // Emit item-get event before cleaning up so the React overlay can show the toast.
+      const meta = this.lootMeta.get(uid);
+      if (meta && this.game?.events) {
+        this.game.events.emit("item-acquired", {
+          defId: meta.defId,
+          name: meta.name,
+          legendary: meta.legendary,
+        });
+      }
+      this.lootMeta.delete(uid);
       this.pickupRequestedAt.delete(uid);
       this.destroyTracked(this.lootSprites, uid);
       const label = this.lootLabels.get(uid);
@@ -3697,6 +3728,7 @@ export class MapScene extends Phaser.Scene {
       if (Math.abs(player.y - lad.yTop) < FOOTHOLD_SNAP_PX + 4) {
         this.localVy = JUMP_VELOCITY * 0.6; // smaller hop off ladder
         this.localGrounded = false;
+        getAudioManager().playSfx("jump");
       }
       return;
     }
