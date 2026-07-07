@@ -39,12 +39,18 @@ export const AnalyticsEventType = {
   DEATH: "death",
   /** Player disconnected / left a room, keyed by map. */
   DISCONNECT_BY_MAP: "disconnect_by_map",
+  /** Player purchased from the Free Market for the first time. */
+  MARKET_FIRST_BUY: "market_first_buy",
   /** A buy order was placed or auto-filled. */
   MARKET_BUY_ORDER: "market_buy_order",
   /** A bid was placed on an auction listing. */
   MARKET_AUCTION_BID: "market_auction_bid",
   /** An auction listing ended (settlement or expiry). */
   MARKET_AUCTION_END: "market_auction_end",
+  /** Player completed a tutorial step (Dawn Isle chain). */
+  TUTORIAL_STEP: "tutorial_step",
+  /** Player-to-player direct trade completed. */
+  TRADE_COMPLETE: "trade_complete",
 } as const;
 
 export type AnalyticsEventType = (typeof AnalyticsEventType)[keyof typeof AnalyticsEventType];
@@ -167,6 +173,13 @@ export interface DisconnectByMapPayload {
   level: number;
 }
 
+export interface MarketFirstBuyPayload {
+  /** defId of the item purchased. */
+  itemDefId: string;
+  /** Purchase price in mesos. */
+  price: number;
+}
+
 export interface MarketBuyOrderPayload {
   /** defId of the item the buy order is for. */
   itemDefId: string;
@@ -194,6 +207,32 @@ export interface MarketAuctionEndPayload {
   sold: boolean;
 }
 
+export interface TutorialStepPayload {
+  /** Quest id that constitutes this tutorial step. */
+  questId: string;
+  /** Zero-based index in the tutorial chain. */
+  stepIndex: number;
+  /** Total number of steps in the tutorial chain. */
+  totalSteps: number;
+  /** Player level when this step was completed. */
+  level: number;
+  /** Whether this was the final step (tutorial complete). */
+  completed: boolean;
+}
+
+export interface TradeCompletePayload {
+  /** Number of items player A gave. */
+  itemCountA: number;
+  /** Number of items player B gave. */
+  itemCountB: number;
+  /** Mesos player A sent. */
+  mesosA: number;
+  /** Mesos player B sent. */
+  mesosB: number;
+  /** Player level at time of trade. */
+  level: number;
+}
+
 // ─── Discriminated union for type-safe tracking ─────────────────────────────
 
 export type AnalyticsPayload =
@@ -211,6 +250,9 @@ export type AnalyticsPayload =
   | { type: typeof AnalyticsEventType.PARTY_QUEST_RUN; payload: PartyQuestRunPayload }
   | { type: typeof AnalyticsEventType.DEATH; payload: DeathPayload }
   | { type: typeof AnalyticsEventType.DISCONNECT_BY_MAP; payload: DisconnectByMapPayload }
+  | { type: typeof AnalyticsEventType.MARKET_FIRST_BUY; payload: MarketFirstBuyPayload }
   | { type: typeof AnalyticsEventType.MARKET_BUY_ORDER; payload: MarketBuyOrderPayload }
   | { type: typeof AnalyticsEventType.MARKET_AUCTION_BID; payload: MarketAuctionBidPayload }
-  | { type: typeof AnalyticsEventType.MARKET_AUCTION_END; payload: MarketAuctionEndPayload };
+  | { type: typeof AnalyticsEventType.MARKET_AUCTION_END; payload: MarketAuctionEndPayload }
+  | { type: typeof AnalyticsEventType.TUTORIAL_STEP; payload: TutorialStepPayload }
+  | { type: typeof AnalyticsEventType.TRADE_COMPLETE; payload: TradeCompletePayload };

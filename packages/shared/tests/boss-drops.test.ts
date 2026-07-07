@@ -3,11 +3,24 @@ import { MOBS, rollItemDrops } from "../src/mobs.js";
 import { ITEMS } from "../src/items.js";
 import { PotentialTier } from "../src/rarity.js";
 
-// ── Boss mob ids that live in dungeon / field-boss spawn zones ──────────
+// ── Boss mob ids that live in dungeon / field-boss / raid spawn zones ──
 const BOSS_IDS = [
+  // Dungeon bosses
   "mob.bogmaw", // Mirefen Ruins
-  "mob.glacius_prime", // Frosthold Slopes
+  "mob.subway_curse_eye", // Dusk Ward Subway PQ
   "mob.glacial_abomination", // Frosthold Icecave
+  // Field bosses
+  "mob.glacius_prime", // Frosthold Slopes
+  "mob.tempest_lord", // Skyhaven Driftpeaks
+  "mob.kraken", // Tideways Abyss
+  // Heartland field bosses
+  "mob.tidemaw",
+  "mob.rotwood",
+  "mob.gelatinarch",
+  "mob.sporemother",
+  "mob.void_wisp",
+  // Raid boss
+  "mob.pyroclasm", // Drakemoor
 ] as const;
 
 describe("boss tier", () => {
@@ -64,6 +77,7 @@ describe("boss tier", () => {
 
 describe("rollItemDrops on bosses", () => {
   const bogmaw = MOBS["mob.bogmaw"]!;
+  const pyroclasm = MOBS["mob.pyroclasm"]!;
 
   it("drops every entry when rng=0 (all chances pass)", () => {
     const drops = rollItemDrops(bogmaw, () => 0);

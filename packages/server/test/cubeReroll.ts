@@ -92,6 +92,21 @@ async function testCubeRerollSuccess(colyseus: Awaited<ReturnType<typeof bootAut
   assert.ok(typeof result.rollCommitment === "string", "rollCommitment should be a hex string");
   console.log(`[cubeReroll] after: ${result.prevTier} → ${result.newTier}, mesos=${result.mesos}`);
 
+  // ── Verify mintPending flag on Legendary ──
+  if (result.newTier === "LEGENDARY") {
+    assert.strictEqual(result.mintPending, true, "Legendary reroll should flag mintPending");
+    const persistedAfter = accountStore.getItem(rec.charId, swordUid);
+    assert.ok(persistedAfter, "persisted item should exist");
+    assert.strictEqual(
+      persistedAfter.mintPending,
+      true,
+      "persisted item should have mintPending=true",
+    );
+    console.log("[cubeReroll] ✔ Legendary mintPending flag verified");
+  } else {
+    assert.strictEqual(result.mintPending, undefined, "non-Legendary should not have mintPending");
+  }
+
   // ── Verify mesos deducted ──
   assert.strictEqual(
     result.mesos,

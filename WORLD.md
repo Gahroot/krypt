@@ -19,9 +19,19 @@ Tutorial isle → pastoral hub continent → snow → ocean → toy/clock → de
    Lv 1–10         Lv 10–30            Lv 30 ───────────────────────────────────────────► Lv 100+
 ```
 
-The emotional arc: a new player starts in a safe, cozy, green tutorial. They pick a class, land in a warm
-pastoral hub, and the world slowly reveals it's *enormous and varied* — every region a totally different
-vibe. That escalating variety is the retention engine. Build the calm core first; the variety is the payoff.
+The emotional arc opens with a brief cinematic — stillness, then light, then the promise of scale:
+
+```
+Silence → Dawn breaks → "this is only the beginning" → Guide Iris → gameplay
+```
+
+A new character sees this once (skippable), then lands on Dawn Isle with a clear first objective.
+The hook: *this small island is the calm before something enormous.* Every region past the
+Heartland is a totally different biome, palette, and vibe — snow mountains, open ocean, sky
+kingdoms, dragon jungles, neon cities, clockwork towns. That escalating variety is the retention
+engine. The intro plants the seed; the Far Reaches pay it off.
+
+**Build the calm core first; the variety is the payoff.**
 
 ---
 
@@ -77,14 +87,65 @@ everything" lives.
 
 ## Connective Tissue (parity these systems too)
 - **Hub + spokes:** a central crossroads (Crossway) links the Heartland towns; the Free Market is attached to it.
-- **Inter-continent travel:** ships / trains / sky-rides on timers between Heartland ↔ Far Reaches (the
-  scheduled-boat ritual is iconic and cheap to build).
+- **Inter-continent travel:** ships / trains / sky-rides on timers between Heartland ↔ Far Reaches —
+  **built and live.** Boarding windows, live countdown banner, group departure. Data-driven schedule via
+  `schedule.intervalMs` / `windowMs` per portal in `world.ts`.
 - **Class home towns:** each starter class "lives" in a themed town — gives every biome an identity + reason to visit.
 - **Dungeons & party content:** swamp/ruins (Mirefen) as the first instanced dungeon; party-quest style group content later.
 
 ---
 
-## Build status (June 2026) — slice shipped, world expanding
+## Verified Difficulty Curve (July 2026)
+
+Every combat map's mob levels verified against the intended zone bands. A player can grind
+zone-to-zone without hitting an over- or under-leveled wall.
+
+| Zone | Map | Mob Levels | Band |
+|---|---|---|---|
+| **Dawn Isle** | Dawn Isle | 1, 2, 3 | 1–10 |
+| **Tidewatch Harbor** | Harbor Docks | 4, 5, 6, 8, 10 | 4–10 |
+| **Meadowfield** | Meadowfield | 10, 12, 14, 16, 18 | 10–20 |
+| **Sylvanreach** | Canopy | 10, 12, 14 | 10–15 |
+| | Roots | 14, 15, 17 | 15–20 |
+| **Craghold** | Cliffs | 10, 12, 14 | 10–15 |
+| | Quarry | 16, 18 | 15–20 |
+| **Dusk Ward** | Subway | 10, 11, 13, 15 | 10–15 |
+| | Backalleys | 16, 17, 19 | 15–20 |
+| | Subway PQ | 20, 22, 24, boss 28 | 20–30 |
+| **Mirefen** | Ruins | 20, 22, 25, 27, 28, 29, boss 30 | 20–30 |
+| **Skyhaven** | Driftpeaks | 30, 34, 38, boss 40 | 30–45 |
+| **Frosthold** | Slopes | 35, 38, 42, boss 45 | 35–45 |
+| | Icecave | 40, 44, 48, 50, boss 50 | 40–50 |
+| **Tideways** | Reef | 35, 38, 40, 45 | 35–45 |
+| | Abyss | 45, 50, 55, boss 55 | 45–60 |
+| **Drakemoor** | Jungle Floor | 90, 95, 100, 105, 110 | 90–110 |
+| | Dragon Abyss | 110, 115, 118, 120, boss 120 | 110–120 |
+
+**Class home towns** — each has appropriate Lv 10+ entry content:
+- **Meadowfield (Archer):** green_mushroom 10 → mushroom 12 → meadow_beetle 16 → thornback_hopper 18
+- **Sylvanreach (Mage):** forest_wisp 10 → canopy_moth 12 → bark_spider 14 → root_crawler 15 → sylvan_sprite 17
+- **Craghold (Warrior):** rock_lizard 10 → fossil_beetle 12 → cliff_hawk 14 → quarry_crab 16 → boulder_golem 18
+- **Dusk Ward (Thief):** neon_rat 10 → tunnel_bat 11 → spark_drone 13 → rail_sentinel 15 → shadow_thug 16 → arc_wraith 19
+- **Tidewatch Harbor (Pirate):** dock_rat 4 → barnacle_crab 5 → harbor_gull 6 → deckhand_specter 8 → bilge_rat 10
+
+**Grind path progression** (no gaps or spikes):
+```
+Lv 1-3   Dawn Isle → Lv 4-10 Harbor Docks
+Lv 10-18 Meadowfield / Sylvanreach / Craghold / Dusk Ward (parallel Heartland zones)
+Lv 20-30 Mirefen Ruins + Subway PQ
+Lv 30-40 Skyhaven Driftpeaks
+Lv 35-45 Frosthold Slopes / Tideways Reef (parallel Far Reaches zones)
+Lv 40-50 Frosthold Icecave
+Lv 45-55 Tideways Abyss
+Lv 90-120 Drakemoor (endgame)
+```
+
+> Gap at Lv 60–90 is intentional — Cogtown, Sector Zero, Sunmarch/Alkest, Long Vale (planned)
+> will fill this range.
+
+---
+
+## Build status (July 2026) — slice shipped, world expanding
 The original MVP slice (one town, one class, one mob) is **done and surpassed**. Where the map stands now:
 
 - **Authored & live (joinable rooms):** **all 33 maps in `world.ts` are registered as Colyseus rooms**
@@ -96,11 +157,69 @@ The original MVP slice (one town, one class, one mob) is **done and surpassed**.
 - **All five classes** (Warrior, Mage, Archer, Thief, Pirate) are specced with branching job trees; **74
   mobs (12 bosses)**, two-layer rarity loot, the Free Market, quests, parties, guilds and party quests are
   all in. Buffs/passives, status effects, and the elemental damage triangle are wired into live combat.
-- **Not built yet (the backlog):** the back half of the arc — the Tideways (underwater), Cogtown, Sector
-  Zero, Sunmarch/Alkest, Long Vale, Drakemoor (endgame) and the Timeless Spire, plus the faction isles.
+- **Scheduled transport (airship/boat/sky-ride) — LIVE:** The Heartland ↔ Far Reaches ferry ritual
+  is fully implemented. Scheduled portals (Crossway↔Skyhaven airship, Skyhaven↔Frosthold airship, etc.)
+  enforce boarding windows server-side: players board during the 60-second window, see a live countdown
+  banner on the client, and are teleported together when the window closes. Timing is data-driven via
+  `schedule.intervalMs` and `schedule.windowMs` in `world.ts` portal definitions. **Ferrymaster Cole**
+  NPC on Dawn Isle handles the tutorial ferry (NPC dialog-based, not scheduled). Automated test coverage
+  in `test/scheduledTransport.ts`.
+- **Not built yet (the backlog):** Cogtown, Sector Zero, Sunmarch/Alkest, Long Vale,
+  the Timeless Spire, and the faction isles.
 
 > Rule: every new region added later must bring a *genuinely different* vibe (movement, palette, enemies).
 > Variety is the product. Sameness is death.
+
+---
+
+## Alpha Test — Shipped vs Coming Soon (July 2026)
+
+Testers can only reach **content-complete zones**. Incomplete zones are gated via
+`comingSoon` portals and excluded from direct room joins (`EXCLUDED_MAPS` in
+`app.config.ts`). Portal gating is enforced server-side in both `checkPortalProximity`
+and the `MAP_TRAVEL` handler.
+
+### ✅ Shipped (27 maps — testers can reach all of these)
+
+| Region | Maps | Level Band |
+|---|---|---|
+| **Dawn Isle** | `dawn_isle` | 1–10 |
+| **Heartland** | `heartland_harbor`, `harbor_docks`, `crossway`, `meadowfield`, `sylvanreach`, `sylvanreach_canopy`, `sylvanreach_roots`, `craghold`, `craghold_cliffs`, `craghold_quarry`, `dusk_ward`, `dusk_ward_subway`, `dusk_ward_backalley`, `mirefen`, `mirefen_ruins` | 10–30 |
+| **Dusk Subway PQ** | `dusk_subway_pq_staging`, `dusk_subway_pq_stage1`–`stage4` | 20–30 |
+| **Free Market** | `free_market` | — |
+| **Far Reaches (partial)** | `skyhaven`, `skyhaven_driftpeaks`, `frosthold`, `frosthold_slopes`, `frosthold_icecave` | 30–50 |
+
+### 🚧 Coming Soon (6 maps — portal-gated, not joinable)
+
+| Region | Maps | Level Band | Gated from |
+|---|---|---|---|
+| **The Tideways** | `tideways`, `tideways_reef`, `tideways_abyss` | 35–60 | Skyhaven (boat) |
+| **Drakemoor** | `drakemoor`, `drakemoor_jungle_floor`, `drakemoor_dragon_abyss` | 90–120 | Crossway (airship) |
+
+### ❌ Not yet built (5 zones — no map definitions in `MAPS` registry)
+
+| Zone | Planned Level Band | Notes |
+|---|---|---|
+| **Cogtown** | 40–70 | Toy/clockwork biome |
+| **Sector Zero** | 50–70 | Alien/UFO biome |
+| **Sunmarch → Alkest** | 40–70 | Desert + alchemy city |
+| **Long Vale** | 50–70 | Wuxia/martial arts |
+| **The Timeless Spire** | 120+ | Cosmic endgame |
+
+### Enforcement points
+
+1. **`Portal.comingSoon` flag** (`packages/shared/src/world.ts`) — all 10 portals
+   targeting gated zones are marked `comingSoon: true`.
+2. **Server `checkPortalProximity`** (`MapRoom.ts`) — blocks physical portal use
+   with "🚧 Coming Soon" message.
+3. **Server `MAP_TRAVEL` handler** (`MapRoom.ts`) — blocks world-map quick-travel
+   to gated zones.
+4. **`EXCLUDED_MAPS`** (`app.config.ts`) — 6 gated map IDs prevent direct room
+   joins via matchmaking.
+5. **Client portal rendering** (`MapScene.ts`) — coming-soon portals render as
+   amber orbs with "🚧 Coming Soon" prompt.
+6. **Client world map** (`UI.ts`) — coming-soon nodes show as warm gray,
+   non-clickable, with "🚧 Coming Soon" label.
 
 ---
 

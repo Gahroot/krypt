@@ -15,7 +15,7 @@ export class PreloadScene extends Phaser.Scene {
   preload(): void {
     const { width, height } = this.scale;
 
-    const label = this.add
+    const pctLabel = this.add
       .text(width / 2, height / 2 - 20, "Loading…", {
         fontFamily: "ui-monospace, Menlo, monospace",
         fontSize: "18px",
@@ -35,11 +35,12 @@ export class PreloadScene extends Phaser.Scene {
 
     this.load.on("progress", (p: number) => {
       fill.width = barW * p;
+      pctLabel.setText(`Loading… ${Math.round(p * 100)}%`);
     });
     this.load.once("complete", () => {
       track.destroy();
       fill.destroy();
-      label.destroy();
+      pctLabel.destroy();
     });
 
     queueTextureLoads(this);

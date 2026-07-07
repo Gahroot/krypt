@@ -8,14 +8,17 @@ import {
   type PotentialTier,
 } from "@maple/shared";
 
+import { Button } from "@/ui/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/ui/components/ui/tabs";
 import { TooltipProvider } from "@/ui/components/ui/tooltip";
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { ItemGrid } from "@/ui/components/ItemGrid";
 import { ItemCell } from "@/ui/components/ItemCell";
 import { CurrencyDisplay } from "@/ui/components/CurrencyDisplay";
 import { ItemTooltip } from "@/ui/ItemTooltip";
+import { RARITY_SHORT_LABELS } from "@/ui/theme";
 import { useUIStore, type InvItemSnapshot } from "@/ui/store";
+import { slotItemIcon } from "@/ui/item-icon";
 
 /**
  * InventoryPanel — the REFERENCE overlay panel.
@@ -23,16 +26,12 @@ import { useUIStore, type InvItemSnapshot } from "@/ui/store";
  * This is the canonical example every new panel is copied from. Note the shape:
  *   1. read a snapshot + the action registry from the bridge store (`useUIStore`)
  *   2. bail when closed (`if (!open) return null`)
- *   3. render with the shared kit only (Panel / ItemGrid / ItemCell / …)
+ *   3. render with the shared kit only (DraggableWindow / ItemGrid / ItemCell / …)
  *   4. drive the game exclusively through `actions.*` (never touch Phaser)
  *
- * It is also the reference for RESPONSIVE ANCHORING: the panel is pinned to a
- * viewport corner with the clamp()-based HUD tokens
- * (`fixed top-[var(--hud-top)] right-[var(--hud-edge)]`) rather than magic pixel
- * offsets, so it keeps a comfortable gutter from ~1280px up to large displays
- * and survives window resize. Width comes from the `--panel-w` token and the
- * body scrolls internally past `--panel-max-h` — both handled by `Panel`. See
- * src/ui/README.md → "Adding a new panel" and "Responsive anchoring".
+ * It uses DraggableWindow for drag-to-move, auto z-order, bounds clamping,
+ * and Esc-to-close. Width comes from the `--panel-w` token and the body
+ * scrolls internally past `--panel-max-h` — both handled by Panel.
  */
 
 const TABS: InventoryTab[] = ["EQUIP", "USE", "ETC", "CASH"];
@@ -55,15 +54,26 @@ export function InventoryPanel() {
 
   return (
     <TooltipProvider delayDuration={120}>
-      <Panel
+      <DraggableWindow
         title="Inventory"
         hotkey="I"
         onClose={() => actions?.close()}
-        className="fixed top-[var(--hud-top)] right-[var(--hud-edge)]"
+        defaultPosition={{ x: 960, y: 72 }}
         headerExtra={
-          <span className="text-[10px] text-muted-foreground tabular-nums">
-            {items.length} / {GRID_SLOTS}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {items.length} / {GRID_SLOTS}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={() => actions?.sort(tab)}
+              title="Sort inventory"
+            >
+              <span className="text-[10px]">↑↓</span>
+            </Button>
+          </div>
         }
       >
         <Tabs value={tab} onValueChange={(v) => setTab(v as InventoryTab)}>
@@ -84,12 +94,16 @@ export function InventoryPanel() {
           renderCell={(item) => {
             if (!item) return <ItemCell />;
             const def = getItemDef(item.defId);
+            const tierInfo = getPotentialTierInfo(item.potentialTier as PotentialTier);
             return (
               <ItemCell
                 key={item.uid}
+                icon={slotItemIcon(item.defId)}
                 label={def?.name ?? item.defId}
-                borderColor={getPotentialTierInfo(item.potentialTier as PotentialTier).color}
+                borderColor={tierInfo.color}
                 labelColor={getBaseRankInfo(item.baseRank as BaseRank).color}
+                rarityLabel={RARITY_SHORT_LABELS[item.potentialTier]}
+                rarityColor={tierInfo.color}
                 count={tab !== "EQUIP" ? item.count : undefined}
                 draggable
                 onDragStart={(e) => e.dataTransfer.setData("text/uid", item.uid)}
@@ -119,7 +133,7 @@ export function InventoryPanel() {
         <div className="mt-3 flex items-center justify-end border-t border-border pt-2.5">
           <CurrencyDisplay amount={inventory.mesos} label="mesos" />
         </div>
-      </Panel>
+      </DraggableWindow>
     </TooltipProvider>
   );
 }

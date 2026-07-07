@@ -2,10 +2,17 @@
 
 Foundry (Solidity) package for CryptoMaple's **Phase 2** on-chain layer. Target chain: **Base** (Ethereum L2).
 
-> **Status: stubs + passing unit tests only.** This is the deliberately-deferred crypto layer (see
-> [`PLANNING.md`](../../PLANNING.md) §11 Roadmap). There are **no deploy scripts, no testnet/mainnet
-> broadcasts, no RPC endpoints, and no keys** here. Deployment is a later, separate milestone behind a
-> security review. The live game runs entirely off-chain today (`@maple/server` + `@maple/client`).
+> **⚠️  Phase 2 — explicitly OUT OF SCOPE for the game alpha.**
+>
+> This package is the deliberately-deferred crypto layer (see [`PLANNING.md`](../../PLANNING.md) §11 Roadmap).
+> It contains **stubs + passing unit tests only** (17 tests across 5 suites).
+>
+> - **No deploy scripts, no testnet/mainnet broadcasts, no RPC endpoints, no private keys.**
+> - **No on-chain deployment is planned or required for the alpha.**
+> - The live game runs entirely off-chain today (`@maple/server` + `@maple/client`).
+> - Deployment is a later, separate milestone behind a full security audit.
+>
+> Do not add deploy tooling, key management, or broadcast commands to this package.
 
 ## Contracts (`src/`)
 

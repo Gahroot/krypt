@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Shield, Crown, Star, MoreVertical, UserPlus, LogOut, Trash2 } from "lucide-react";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { EmptyState } from "@/ui/components/EmptyState";
 import { ConfirmDialog } from "@/ui/components/ConfirmDialog";
 import { Button } from "@/ui/components/ui/button";
@@ -194,11 +194,11 @@ export function GuildPanel() {
 
   return (
     <>
-      <Panel
+      <DraggableWindow
         title="Guild"
         hotkey="G"
         onClose={() => actions?.close()}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[340px]"
+        defaultPosition={{ x: 460, y: 180 }}
         headerExtra={
           inGuild ? (
             <span className="text-[10px] tabular-nums text-muted-foreground">
@@ -296,7 +296,7 @@ export function GuildPanel() {
             </div>
           </>
         )}
-      </Panel>
+      </DraggableWindow>
 
       <ConfirmDialog
         open={confirmLeave}

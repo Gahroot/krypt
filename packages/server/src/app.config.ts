@@ -32,6 +32,11 @@ import { MarketRoom } from "./rooms/MarketRoom";
 import { PartyQuestRoom } from "./rooms/PartyQuestRoom";
 import { channelRegistry } from "./channelRegistry";
 import { feedbackStore, moderationStore, accountStore } from "./persistence/store";
+import { getEventsPayload, reloadEvents } from "./events";
+
+// ─── Alpha gating ──────────────────────────────────────────────────────────
+/** When set, new account creation requires a valid invite code. */
+const ALPHA_ENABLED = !!process.env.ALPHA_ENABLED;
 import {
   signToken,
   verifyToken,
@@ -42,6 +47,7 @@ import {
   isValidEmail,
   loginRateLimited,
   resetLoginRate,
+  TOS_VERSION,
 } from "./auth";
 
 // ─── Uptime tracking ────────────────────────────────────────────────────────
@@ -54,9 +60,19 @@ export const CHANNELS_PER_MAP = 3;
 /**
  * Maps intentionally kept OUT of the room registry. Add an id here (with a
  * reason) only if a map must never be joinable as a standalone channelled room.
- * Empty by default — every authored zone in `@maple/shared` is joinable.
+ * Alpha-gated zones (Tideways, Drakemoor) are listed here so testers cannot
+ * join them directly. Add an id here (with a reason) only if a map must never
+ * be joinable as a standalone channelled room.
  */
-const EXCLUDED_MAPS = new Set<string>([]);
+const EXCLUDED_MAPS = new Set<string>([
+  // Alpha-gated zones ("Coming Soon") — testers cannot join these rooms.
+  "tideways",
+  "tideways_reef",
+  "tideways_abyss",
+  "drakemoor",
+  "drakemoor_jungle_floor",
+  "drakemoor_dragon_abyss",
+]);
 
 /**
  * All maps that support channels — derived from the shared GAME_MAPS registry
@@ -140,6 +156,35 @@ const server = defineServer({
       res.json({ status: "ok" });
     });
 
+    // ─── Alpha gate status ──────────────────────────────────────────────────
+    // Public endpoint so the client knows whether to show the invite-code field.
+    app.get("/auth/alpha-gate", (_req, res) => {
+      res.json({ enabled: ALPHA_ENABLED });
+    });
+
+    // Helper: validate + consume an invite code when alpha is enabled.
+    // Returns null on success, or sends an error response and returns a sentinel.
+    const requireInviteCode = (req: Request, res: Response, accountId?: string): boolean => {
+      if (!ALPHA_ENABLED) return true;
+      const body = (req.body ?? {}) as { inviteCode?: string };
+      const code = body.inviteCode?.trim();
+      if (!code) {
+        res.status(403).json({ error: "An invite code is required to join the alpha." });
+        return false;
+      }
+      const result = accountStore.validateInviteCode(code);
+      if (!result.valid) {
+        res.status(403).json({ error: result.reason });
+        return false;
+      }
+      // Consume the code if an accountId is provided (post-creation).
+      // For pre-validation (guest flow), the caller consumes after success.
+      if (accountId) {
+        accountStore.consumeInviteCode(code, accountId);
+      }
+      return true;
+    };
+
     // ─── Auth: issue server-signed session tokens ────────────────────────────
     // Identity (accountId) is ALWAYS server-issued. Clients authenticate here,
     // store the returned token, and present it on every room join (onAuth verifies
@@ -147,9 +192,23 @@ const server = defineServer({
 
     // Guest sign-in — mint a brand-new server-issued account so new testers get in
     // fast. The accountId is random (64-bit) and bound into the signed token.
-    app.post("/auth/guest", (_req, res) => {
+    // When alpha gating is enabled, a valid invite code is required.
+    // The client must send tosAccepted: true to confirm the alpha ToS/Privacy notice.
+    app.post("/auth/guest", (req, res) => {
+      const body = (req.body ?? {}) as { inviteCode?: string; tosAccepted?: boolean };
+      if (!body.tosAccepted) {
+        res.status(400).json({ error: "You must accept the Terms of Service to play." });
+        return;
+      }
+      if (!requireInviteCode(req, res)) return;
       const accountId = newGuestAccountId();
       accountStore.getOrCreate(accountId);
+      accountStore.recordTosAcceptance(accountId, TOS_VERSION);
+      // Consume the invite code now that the account exists.
+      if (ALPHA_ENABLED) {
+        const code = body.inviteCode?.trim();
+        if (code) accountStore.consumeInviteCode(code, accountId);
+      }
       res.json({ token: signToken(accountId), accountId });
     });
 
@@ -166,9 +225,20 @@ const server = defineServer({
     // Register — create a NEW credentialed account from an email + password. The
     // accountId is server-generated; the client stores the returned token. Passwords
     // are salted + bcrypt-hashed in the store; we never log them.
+    // When alpha gating is enabled, a valid invite code is required.
+    // The client must send tosAccepted: true to confirm the alpha ToS/Privacy notice.
     app.post("/auth/register", (req, res) => {
       void (async () => {
-        const body = (req.body ?? {}) as { email?: string; password?: string };
+        const body = (req.body ?? {}) as {
+          email?: string;
+          password?: string;
+          inviteCode?: string;
+          tosAccepted?: boolean;
+        };
+        if (!body.tosAccepted) {
+          res.status(400).json({ error: "You must accept the Terms of Service to register." });
+          return;
+        }
         if (!body.email || !isValidEmail(body.email)) {
           res.status(400).json({ error: "a valid email is required" });
           return;
@@ -177,13 +247,20 @@ const server = defineServer({
           res.status(400).json({ error: "a password is required" });
           return;
         }
+        // Pre-validate the invite code before creating the account.
+        if (!requireInviteCode(req, res)) return;
         const result = await accountStore.createAuthAccount({
           email: body.email,
           password: body.password,
+          tosVersion: TOS_VERSION,
         });
         if (!result.ok || !result.accountId) {
           res.status(409).json({ error: result.reason ?? "could not register" });
           return;
+        }
+        // Consume the invite code now that the account exists.
+        if (ALPHA_ENABLED && body.inviteCode?.trim()) {
+          accountStore.consumeInviteCode(body.inviteCode.trim(), result.accountId);
         }
         res.json({ token: signToken(result.accountId), accountId: result.accountId });
       })();
@@ -268,9 +345,15 @@ const server = defineServer({
     // Wallet sign-in — step 2: verify the signature, then find-or-create the account
     // bound to that wallet and issue a token. Same wallet ⇒ same account ⇒ same
     // characters. Rate-limited per ip+address.
+    // The client must send tosAccepted: true for new wallet accounts.
     app.post("/auth/wallet/verify", (req, res) => {
       void (async () => {
-        const body = (req.body ?? {}) as { address?: string; signature?: string };
+        const body = (req.body ?? {}) as {
+          address?: string;
+          signature?: string;
+          inviteCode?: string;
+          tosAccepted?: boolean;
+        };
         const rateKey = `${req.ip ?? "?"}:${(body.address ?? "").toLowerCase()}`;
         if (loginRateLimited(rateKey)) {
           res.status(429).json({ error: "too many attempts, try again later" });
@@ -287,12 +370,26 @@ const server = defineServer({
         }
         let accountId = accountStore.findByWallet(body.address)?.accountId;
         if (!accountId) {
-          const created = await accountStore.createAuthAccount({ wallet: body.address });
+          // New wallet account — ToS acceptance required.
+          if (!body.tosAccepted) {
+            res.status(400).json({ error: "You must accept the Terms of Service to play." });
+            return;
+          }
+          // Alpha gate applies.
+          if (!requireInviteCode(req, res)) return;
+          const created = await accountStore.createAuthAccount({
+            wallet: body.address,
+            tosVersion: TOS_VERSION,
+          });
           if (!created.ok || !created.accountId) {
             res.status(409).json({ error: created.reason ?? "could not link wallet" });
             return;
           }
           accountId = created.accountId;
+          // Consume the invite code.
+          if (ALPHA_ENABLED && body.inviteCode?.trim()) {
+            accountStore.consumeInviteCode(body.inviteCode.trim(), accountId);
+          }
         }
         if (denyIfBanned(accountId, res)) return;
         resetLoginRate(rateKey);
@@ -355,6 +452,19 @@ const server = defineServer({
       })();
     });
 
+    // ─── Live-ops events ──────────────────────────────────────────────────
+    // Public endpoint so the client (and load balancers) can check active events.
+    app.get("/events", (_req, res) => {
+      res.json(getEventsPayload());
+    });
+
+    // Admin: reload events config without a server restart.
+    app.post("/admin/reload-events", (req, res) => {
+      if (!requireAdmin(req, res)) return;
+      const count = reloadEvents();
+      res.json({ ok: true, events: count });
+    });
+
     // ─── Metrics ─────────────────────────────────────────────────────────────
     app.get("/metrics", (_req, res) => {
       const stats = matchMaker.stats.local;
@@ -362,6 +472,42 @@ const server = defineServer({
         ccu: stats.ccu,
         roomCount: stats.roomCount,
         uptimeMs: Date.now() - STARTED_AT,
+      });
+    });
+
+    // ─── Admin: invite codes ────────────────────────────────────────────────
+    app.get("/admin/invite-codes", (req, res) => {
+      if (!requireAdmin(req, res)) return;
+      const limit = Math.min(Number(req.query.limit) || 100, 500);
+      res.json({ codes: accountStore.listInviteCodes(limit) });
+    });
+    app.post("/admin/invite-codes", (req, res) => {
+      if (!requireAdmin(req, res)) return;
+      const { note, count, maxUses, expiresAt } = req.body as {
+        note?: string;
+        count?: number;
+        maxUses?: number;
+        expiresAt?: number;
+      };
+      const n = Math.min(Math.max(Math.floor(count ?? 1), 1), 100);
+      const codes = accountStore.createInviteCodes(n, {
+        note: note ?? "",
+        maxUses: maxUses ?? 1,
+        expiresAt: expiresAt ?? 0,
+      });
+      res.json({ ok: true, codes });
+    });
+    app.post("/admin/invite-codes/revoke", (req, res) => {
+      if (!requireAdmin(req, res)) return;
+      const { code } = req.body as { code?: string };
+      if (!code?.trim()) {
+        res.status(400).json({ error: "code required" });
+        return;
+      }
+      const revoked = accountStore.revokeInviteCode(code);
+      res.json({
+        ok: revoked,
+        message: revoked ? `Revoked ${code}.` : "Code not found or already revoked.",
       });
     });
 

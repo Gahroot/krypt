@@ -1,0 +1,39 @@
+{
+  "opts": {
+    "sizes": [3],
+    "map": "meadowfield",
+    "warmupMs": 1200,
+    "durationMs": 2500,
+    "inputHz": 60,
+    "outPath": "test/load-smoke.json",
+    "maxClientsOverride": 256
+  },
+  "results": [
+    {
+      "N": 3,
+      "players": 3,
+      "mobs": 15,
+      "tickCount": 150,
+      "tickMeanMs": 0.33,
+      "tickP50Ms": 0.25,
+      "tickP95Ms": 0.69,
+      "tickP99Ms": 1.54,
+      "tickMaxMs": 1.62,
+      "budgetMs": 16.67,
+      "budgetUtilPct": 2,
+      "ticksOverBudget": 0,
+      "observedHz": 60,
+      "patchBytesPerClient": 115.9,
+      "patchKbpsAll": 53.4,
+      "bcastPerSecPerClient": 61.2,
+      "bcastKbpsAll": 115,
+      "cpuPct": 8.9,
+      "overrun": false
+    }
+  ],
+  "recommendation": {
+    "safeCap": 4,
+    "cleanN": 3,
+    "reason": "Highest N with no tick overruns and p95 < 70% of the 16.67ms budget was 3 (p95=0.69ms, max=1.62ms, 60Hz). Derated ~25% → 4 per room for real-world variance (GC, slower hosts, the single-threaded event loop)."
+  }
+}

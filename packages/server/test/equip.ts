@@ -54,7 +54,7 @@ async function accumulateMeleeDamage(
       interact: false,
       tick: i,
     });
-    await sleep(120);
+    await sleep(480);
   }
   await sleep(200);
   return startHp - mob.hp;

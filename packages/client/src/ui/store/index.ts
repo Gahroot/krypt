@@ -25,6 +25,9 @@ import { createChannelSelectSlice, type ChannelSelectSlice } from "./channelSele
 import { createCoachMarksSlice, type CoachMarksSlice } from "./coachMarks";
 import { createIntroSlice, type IntroSlice } from "./intro";
 import { createLoginSlice, type LoginSlice } from "./login";
+import { createHelpSlice, type HelpSlice } from "./help";
+import { createEventsSlice, type EventsSlice } from "./events";
+import { createTransportSlice, type TransportSlice } from "./transport";
 
 /**
  * The React-overlay bridge store (root).
@@ -129,6 +132,7 @@ export type {
   HudQuest,
   HudBonusHunt,
   HudMinimap,
+  HudToggles,
   HudSnapshot,
   HudActions,
   HudSlice,
@@ -170,6 +174,9 @@ export type {
 export type { CoachMarkPosition, CoachMarkSnapshot, CoachMarksSlice } from "./coachMarks";
 export type { IntroLineSnapshot, IntroSnapshot, IntroActions, IntroSlice } from "./intro";
 export type { LoginSnapshot, LoginActions, LoginSlice } from "./login";
+export type { HelpSlice } from "./help";
+export type { EventSnapshot, EventsSlice } from "./events";
+export type { TransportSnapshot, TransportSlice } from "./transport";
 
 /**
  * Imperative actions the Phaser scene wires up so React can drive the game.
@@ -183,6 +190,8 @@ export interface UIActions {
   use(defId: string): void;
   /** Reorder within a tab by swapping two item uids (persisted client-side). */
   reorder(tab: InventoryTab, fromUid: string, toUid: string): void;
+  /** Server-authoritative sort of a tab (sends INVENTORY_SORT message). */
+  sort(tab: InventoryTab): void;
   /** Close the inventory (keeps Phaser's own open-flag in sync). */
   close(): void;
 }
@@ -217,6 +226,9 @@ export type UIState = InventorySlice &
   CoachMarksSlice &
   IntroSlice &
   LoginSlice &
+  HelpSlice &
+  EventsSlice &
+  TransportSlice &
   ActionsSlice;
 
 export const uiStore = createStore<UIState>((...args) => {
@@ -245,6 +257,9 @@ export const uiStore = createStore<UIState>((...args) => {
     ...createCoachMarksSlice(...args),
     ...createIntroSlice(...args),
     ...createLoginSlice(...args),
+    ...createHelpSlice(...args),
+    ...createEventsSlice(...args),
+    ...createTransportSlice(...args),
 
     // ── Actions registry (cross-cutting) ──
     actions: null,

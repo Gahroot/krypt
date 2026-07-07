@@ -5,6 +5,9 @@
  *   3. Unequip it (appearance reverts)
  *   4. Unaffordable purchase is rejected
  *   5. Equipping an unowned item is rejected
+ *   6. Timed cosmetic expires (expireCashItems)
+ *   7. Purchases persist across room reconnection
+ *   8. No real-money path (test currency only)
  *
  * Run: npx tsx test/cashshop.ts
  */
@@ -29,6 +32,7 @@ const watchdog = setTimeout(() => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const RAINBOW_HAIR = "cash_hair_rainbow"; // price 500
+const LONG_WHITE_HAIR = "cash_hair_long_white"; // price 450, durationDays: 30
 const PHOENIX_ROBE = "cash_outfit_phoenix_robe"; // price 2000
 const MINI_DRAGON = "cash_pet_mini_dragon"; // price 3000
 
@@ -167,14 +171,138 @@ async function main() {
   );
   console.log(`[cashshop] ✔ equip of unowned item rejected: "${failEquip.message}"`);
 
-  // ── Cleanup ──
+  // ── Phase 7: Timed cosmetic expires ──
+  // Give enough balance for a timed item.
+  acc.cash += 5000;
+
+  // Buy the timed hair (long white, 450 MC, 30-day duration).
+  const buyTimedPromise = waitForNumericMessage(sdkRoom, MessageType.BUY_CASH_ITEM);
+  sdkRoom.send(MessageType.BUY_CASH_ITEM, { itemId: LONG_WHITE_HAIR });
+  const buyTimedResult = await buyTimedPromise;
+  assert.strictEqual(buyTimedResult.success, true, "buy timed item should succeed");
+  console.log(`[cashshop] ✔ bought timed ${LONG_WHITE_HAIR} (30d)`);
+
+  // Equip it.
+  const equipTimedPromise = waitForNumericMessage(sdkRoom, MessageType.EQUIP_CASH_ITEM);
+  sdkRoom.send(MessageType.EQUIP_CASH_ITEM, { itemId: LONG_WHITE_HAIR, charId: charRec.charId });
+  const equipTimedResult = await equipTimedPromise;
+  assert.strictEqual(equipTimedResult.success, true, "equip timed item should succeed");
+  await sleep(150);
+
+  // Verify appearance changed.
+  const timedDef = getCashItem(LONG_WHITE_HAIR)!;
+  assert.strictEqual(
+    me().hairId,
+    timedDef.appearanceOverride!.hairId,
+    "hairId overridden by timed cash item",
+  );
+  console.log("[cashshop] ✔ timed cosmetic applied");
+
+  // Fake the equippedAt to 31 days ago so expireCashItems will remove it.
+  // charRec is the same in-memory reference used by accountStore, so mutating
+  // it directly is enough — expireCashItems reads from this.characters.get().
+  const equippedCash = (charRec as any).equippedCash;
+  assert.ok(equippedCash?.hair, "equippedCash should have hair entry");
+  equippedCash.hair.equippedAt = Date.now() - 31 * 86_400_000;
+  console.log("[cashshop] ✔ backdated equippedAt to 31 days ago");
+
+  // Leave the room — expireCashItems fires on rejoin.
   await sdkRoom.leave();
+  await sleep(500);
+
+  // Rejoin the same room.
+  const sdkRoom2 = await colyseus.connectTo(serverRoom, {
+    accountId: acctId,
+    charId: charRec.charId,
+  });
+  sdkRoom2.onMessage("map_npcs", () => {
+    /* suppress */
+  });
+  sdkRoom2.onMessage(MessageType.QUEST_UPDATE, () => {
+    /* suppress */
+  });
+  await sleep(500);
+
+  const sessionId2 = sdkRoom2.sessionId;
+  const me2 = () => (sdkRoom2.state as any).players.get(sessionId2) as any;
+  assert.ok(me2(), "player should exist after rejoin");
+
+  // Appearance should have reverted to base (timed item expired).
+  assert.strictEqual(me2().hairId, "hair_short", "hairId reverted after timed expiry");
+  assert.strictEqual(me2().hairColorId, "color_black", "hairColorId reverted after timed expiry");
+  console.log("[cashshop] ✔ timed cosmetic expired → appearance reverted");
+
+  // ── Phase 8: Purchases persist across reconnection ──
+  // The rainbow hair bought in phase 2 should still be owned.
+  const infoPromise = waitForNumericMessage(sdkRoom2, MessageType.CASH_INFO);
+  sdkRoom2.send(MessageType.CASH_INFO, {});
+  const cashInfo = await infoPromise;
+  assert.ok(
+    cashInfo.owned.includes(RAINBOW_HAIR),
+    "rainbow hair should still be owned after rejoin",
+  );
+  console.log("[cashshop] ✔ purchase persisted across reconnection");
+
+  // Re-equip the permanent rainbow hair — verify it still works after reconnect.
+  const reEquipPromise = waitForNumericMessage(sdkRoom2, MessageType.EQUIP_CASH_ITEM);
+  sdkRoom2.send(MessageType.EQUIP_CASH_ITEM, { itemId: RAINBOW_HAIR, charId: charRec.charId });
+  const reEquipResult = await reEquipPromise;
+  assert.strictEqual(reEquipResult.success, true, "re-equip after reconnect should succeed");
+  await sleep(150);
+
+  const rainbowDef = getCashItem(RAINBOW_HAIR)!;
+  assert.strictEqual(
+    me2().hairId,
+    rainbowDef.appearanceOverride!.hairId,
+    "hairId overridden after re-equip",
+  );
+  assert.strictEqual(
+    me2().hairColorId,
+    rainbowDef.appearanceOverride!.hairColorId,
+    "hairColorId overridden after re-equip",
+  );
+  console.log("[cashshop] ✔ cosmetic equip persists across reconnection");
+
+  // ── Phase 9: No real-money path (test currency only) ──
+  // Verify all purchases flow through the internal test-balance system.
+  // spendCash only deducts from the in-memory/SQLite account.cash field —
+  // there is no Stripe, PayPal, checkout, or external payment API.
+  const balanceAfter = accountStore.getCash(acctId);
+  assert.ok(typeof balanceAfter === "number", "balance is a number");
+  assert.ok(balanceAfter >= 0, "balance is non-negative");
+  // Verify that the balance is consistent with test-currency-only deductions.
+  // Starting: 600, spent: 500 (rainbow) + 450 (long white) = 950, plus 5000 top-up.
+  // Current balance should be 600 - 500 - 450 + 5000 = 4650.
+  assert.strictEqual(
+    balanceAfter,
+    4650,
+    `balance should be 4650 (test currency only), got ${balanceAfter}`,
+  );
+  console.log("[cashshop] ✔ all purchases used test currency only (no real-money path)");
+
+  // Verify no external payment objects exist in the account store module.
+  const storeModule = await import("../src/persistence/store");
+  const storeKeys = Object.keys(storeModule);
+  for (const key of storeKeys) {
+    const lower = key.toLowerCase();
+    assert.ok(
+      !lower.includes("stripe") &&
+        !lower.includes("paypal") &&
+        !lower.includes("payment") &&
+        !lower.includes("checkout"),
+      `store module should not export payment API: ${key}`,
+    );
+  }
+  console.log("[cashshop] ✔ no real-money APIs in persistence layer");
+
+  // ── Cleanup ──
+  await sdkRoom2.leave();
   await sleep(300);
   await colyseus.shutdown();
   clearTimeout(watchdog);
   rmSync(TEST_DIR, { recursive: true, force: true });
 
-  console.log("[cashshop] PASS ✔  all tests passed");
+  console.log("[cashshop] PASS ✔  all 9 tests passed");
   process.exit(0);
 }
 

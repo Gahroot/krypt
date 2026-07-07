@@ -53,8 +53,21 @@ const TIER_INFO: Record<PotentialTier, PotentialTierInfo> = Object.fromEntries(
   POTENTIAL_TIERS.map((t) => [t.tier, t]),
 ) as Record<PotentialTier, PotentialTierInfo>;
 
+/**
+ * Neutral fallback for items with no rolled potential (server stores these as the
+ * sentinel tier `"NONE"`, which isn't a real {@link PotentialTier}). Returning this
+ * instead of `undefined` keeps every UI that reads `.color`/`.label` crash-safe.
+ */
+const NONE_TIER_INFO: PotentialTierInfo = {
+  tier: "NONE" as PotentialTier,
+  label: "None",
+  color: "#6B7280",
+  weight: 0,
+  lines: 0,
+};
+
 export function getPotentialTierInfo(tier: PotentialTier): PotentialTierInfo {
-  return TIER_INFO[tier];
+  return TIER_INFO[tier] ?? NONE_TIER_INFO;
 }
 
 /** Sum of all weights — exported so callers/tests can reason about odds. */

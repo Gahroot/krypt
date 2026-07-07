@@ -620,44 +620,44 @@ export const CODEX_ENTRIES: Record<string, MobCodexEntry> = {
       "50 Frost Titans — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
-  "mob.mano": {
-    mobId: "mob.mano",
+  "mob.tidemaw": {
+    mobId: "mob.tidemaw",
     milestones: bossMilestones([
-      "Slay Mano 5 times — +3 STR, +3% EXP",
-      "20 Mano kills — +3 LUK, +3% EXP",
-      "50 Mano kills — +1 STR, +1 LUK, +3% EXP",
+      "Slay Tidemaw 5 times — +3 STR, +3% EXP",
+      "20 Tidemaw kills — +3 LUK, +3% EXP",
+      "50 Tidemaw kills — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
-  "mob.stumpy": {
-    mobId: "mob.stumpy",
+  "mob.rotwood": {
+    mobId: "mob.rotwood",
     milestones: bossMilestones([
-      "Fell Stumpy 5 times — +3 STR, +3% EXP",
-      "20 Stumpy kills — +3 LUK, +3% EXP",
-      "50 Stumpy kills — +1 STR, +1 LUK, +3% EXP",
+      "Fell Rotwood 5 times — +3 STR, +3% EXP",
+      "20 Rotwood kills — +3 LUK, +3% EXP",
+      "50 Rotwood kills — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
-  "mob.king_slime": {
-    mobId: "mob.king_slime",
+  "mob.gelatinarch": {
+    mobId: "mob.gelatinarch",
     milestones: bossMilestones([
-      "Defeat King Slime x5 — +3 STR, +3% EXP",
-      "20 King Slimes — +3 LUK, +3% EXP",
-      "50 King Slimes — +1 STR, +1 LUK, +3% EXP",
+      "Defeat Gelatinarch x5 — +3 STR, +3% EXP",
+      "20 Gelatinarch kills — +3 LUK, +3% EXP",
+      "50 Gelatinarch kills — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
-  "mob.mushmom": {
-    mobId: "mob.mushmom",
+  "mob.sporemother": {
+    mobId: "mob.sporemother",
     milestones: bossMilestones([
-      "Crush Mushmom 5 times — +3 STR, +3% EXP",
-      "20 Mushmom kills — +3 LUK, +3% EXP",
-      "50 Mushmom kills — +1 STR, +1 LUK, +3% EXP",
+      "Crush Sporemother 5 times — +3 STR, +3% EXP",
+      "20 Sporemother kills — +3 LUK, +3% EXP",
+      "50 Sporemother kills — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
-  "mob.jr_balrog": {
-    mobId: "mob.jr_balrog",
+  "mob.void_wisp": {
+    mobId: "mob.void_wisp",
     milestones: bossMilestones([
-      "Banish Jr. Balrog x5 — +3 STR, +3% EXP",
-      "20 Jr. Balrog kills — +3 LUK, +3% EXP",
-      "50 Jr. Balrog kills — +1 STR, +1 LUK, +3% EXP",
+      "Banish Void Wisp x5 — +3 STR, +3% EXP",
+      "20 Void Wisp kills — +3 LUK, +3% EXP",
+      "50 Void Wisp kills — +1 STR, +1 LUK, +3% EXP",
     ]),
   },
 };

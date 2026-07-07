@@ -5,6 +5,11 @@ import {
   getConsumableDef,
   getPotentialTierInfo,
   getBaseRankInfo,
+  resolveEquippedBonus,
+  computeSetBonuses,
+  passiveEffectBonus,
+  buffEffectToSecondary,
+  deriveSecondary,
   MEADOWFIELD,
   EquipSlot,
   ClassArchetype,
@@ -27,11 +32,13 @@ import {
   travelFee,
   CODEX_ENTRIES,
   MOBS,
+  QUESTS,
   type PotentialTier,
   type BaseRank,
   type PotentialLine,
   type GameMap,
   type InventoryTab,
+  type SecondaryStats,
 } from "@maple/shared";
 
 import type {
@@ -52,6 +59,7 @@ import { keybindings } from "../keybindings";
 import { isTextInputFocused, subscribeInputFocus } from "../ui/inputFocus";
 import type { ActionId } from "@maple/shared";
 import { getAudioManager } from "../audio/AudioManager";
+import { loadScene } from "./lazyScene";
 import {
   MessageType,
   expForLevel,
@@ -79,6 +87,7 @@ import {
   type FamiliarSyncPayload,
   type FamiliarCardDropPayload,
   FAMILIAR_MAX_SUMMONED,
+  FAMILIAR_ENABLED,
 } from "@maple/shared";
 
 /**
@@ -162,6 +171,7 @@ const WORLD_MAP_LINE_COLOR = 0x4a6a4a;
 const WORLD_MAP_CURRENT_COLOR = 0xfacc15;
 const WORLD_MAP_CONNECTED_COLOR = 0x3b82f6; // bright blue — eligible to travel
 const WORLD_MAP_LOCKED_COLOR = 0x6b4c3b; // dim brown — connected but level-gated
+const WORLD_MAP_COMING_SOON_COLOR = 0x78716c; // warm gray — coming soon
 const WORLD_MAP_UNDISCOVERED_COLOR = 0x1a1a2e; // dark — never visited, not connected
 
 /** Display order for equipment slots (classic MapleStory paper-doll layout). */
@@ -424,11 +434,22 @@ export class UIScene extends Phaser.Scene {
   private feedbackStatusText!: Phaser.GameObjects.Text;
   private feedbackPending = false;
   private _feedbackKeyHandler!: (event: KeyboardEvent) => void;
+  private _feedbackEventHandler!: () => void;
 
   // Player context menu (right-click on player sprite).
   private contextMenuContainer!: Phaser.GameObjects.Container;
   private contextMenuBg!: Phaser.GameObjects.Graphics;
   private readonly contextMenuElements: Phaser.GameObjects.GameObject[] = [];
+
+  // NPC context menu (right-click on NPC sprite).
+  private npcContextMenuContainer!: Phaser.GameObjects.Container;
+  private npcContextMenuBg!: Phaser.GameObjects.Graphics;
+  private readonly npcContextMenuElements: Phaser.GameObjects.GameObject[] = [];
+
+  // Player stats tooltip (shown from context menu "View Stats").
+  private statsTooltipContainer!: Phaser.GameObjects.Container;
+  private statsTooltipBg!: Phaser.GameObjects.Graphics;
+  private readonly statsTooltipElements: Phaser.GameObjects.GameObject[] = [];
 
   // Blocked list panel (toggled with Shift+B).
   private blockedOpen = false;
@@ -476,6 +497,27 @@ export class UIScene extends Phaser.Scene {
   private explorationRegisteredCount = 0;
   private codexTab: "collection" | "exploration" = "collection";
 
+  // Achievement panel (toggled with J).
+  private achievePanelOpen = false;
+  private achievePanelContainer!: Phaser.GameObjects.Container;
+  private achievePanelBg!: Phaser.GameObjects.Graphics;
+  private readonly achievePanelElements: Phaser.GameObjects.GameObject[] = [];
+  private achieveData: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    completed: boolean;
+    progress: { current: number; target: number }[];
+    rewards: {
+      mesos?: number;
+      exp?: number;
+      title?: string;
+      statBonus?: Record<string, number>;
+      expBonus?: number;
+    };
+  }[] = [];
+
   // Title system (owned titles + equipped title).
   private ownedTitles: string[] = [];
   private equippedTitle = "";
@@ -516,9 +558,12 @@ export class UIScene extends Phaser.Scene {
     this.buildWorldMap();
     this.buildFeedbackPanel();
     this.buildPlayerContextMenu();
+    this.buildNpcContextMenu();
+    this.buildStatsTooltip();
     this.buildBlockedListPanel();
     this.buildFamiliarPanel();
     this.buildCodexPanel();
+    this.buildAchievePanel();
     this.buildAnnouncementBanner();
 
     this.setupInventoryToggle();
@@ -539,13 +584,17 @@ export class UIScene extends Phaser.Scene {
     this.setupWorldMapToggle();
     this.setupFeedbackToggle();
     this.setupPlayerContextMenu();
+    this.setupNpcContextMenu();
     this.setupBlockedListToggle();
     this.setupFamiliarPanelToggle();
     this.setupCodexPanelToggle();
+    this.setupAchievePanelToggle();
     this.buildQuickslots();
     this.setupQuickslotKeyboard();
     this.buildMuteButton();
     this.setupSettingsToggle();
+    this.setupHelpToggle();
+    this.setupReplayEvents();
 
     // Re-anchor the right/bottom-aligned pieces whenever the window (RESIZE scale mode) changes.
     this.scale.on(Phaser.Scale.Events.RESIZE, this.layout, this);
@@ -563,9 +612,11 @@ export class UIScene extends Phaser.Scene {
     const existing = this.registry.get(ROOM_REGISTRY_KEY) as
       | Room<unknown, TownStateView>
       | undefined;
-    // `room.state` is populated on the first sync, a beat after the room lands in the registry.
-    // bindRoom reads `room.state.players`, so wait for both before binding.
-    if (existing?.state) {
+    // `room.state` and its nested `players` MapSchema are populated on the first
+    // sync, a beat after the room lands in the registry. bindRoom reads
+    // `room.state.players`, so wait until that MapSchema exists before binding —
+    // otherwise a `.get` on an undefined map throws and the HUD never mounts.
+    if (existing?.state?.players) {
       this.bindRoom(existing);
       return;
     }
@@ -576,7 +627,7 @@ export class UIScene extends Phaser.Scene {
         const room = this.registry.get(ROOM_REGISTRY_KEY) as
           | Room<unknown, TownStateView>
           | undefined;
-        if (!room?.state) return;
+        if (!room?.state?.players) return;
         this.roomPoll?.remove();
         this.roomPoll = undefined;
         this.bindRoom(room);
@@ -647,6 +698,14 @@ export class UIScene extends Phaser.Scene {
       if (this.statPanelOpen) this.publishCharacter();
     });
 
+    // Live-ops events sync.
+    room.onMessage(
+      MessageType.EVENTS_SYNC,
+      (payload: import("@maple/shared").EventsSyncPayload) => {
+        uiStore.getState().setEvents(payload.events);
+      },
+    );
+
     // Title fame-blocked notification.
     room.onMessage("title_fame_blocked" as string, (payload: { message: string }) => {
       this.addChatLine("System", payload.message, "system");
@@ -686,6 +745,24 @@ export class UIScene extends Phaser.Scene {
         this.codexStatBonus = payload.statBonus;
         this.codexExpBonus = payload.expBonus;
         if (this.codexPanelOpen) this.renderCodexPanel();
+      },
+    );
+
+    // Achievement sync.
+    room.onMessage(
+      MessageType.ACHIEVEMENT_SYNC,
+      (payload: {
+        achievements: {
+          id: string;
+          name: string;
+          description: string;
+          category: string;
+          completed: boolean;
+          progress: { current: number; target: number }[];
+        }[];
+      }) => {
+        this.achieveData = payload.achievements;
+        if (this.achievePanelOpen) this.renderAchievePanel();
       },
     );
 
@@ -765,6 +842,11 @@ export class UIScene extends Phaser.Scene {
       this.localBound = true;
       this.localPlayer = player;
 
+      // GM role comes from the synced schema (reliable, unlike the onJoin message).
+      // Read it now; the onChange subscription below also keeps it current if the
+      // field syncs a beat after bind.
+      if (player.role) this.playerRole = player.role;
+
       // Register React-overlay action handlers (equip/use/reorder/close) now that
       // we have an authoritative room to send messages on.
       this.registerUIActions(room);
@@ -775,8 +857,14 @@ export class UIScene extends Phaser.Scene {
       this.registerReportActions();
       this.publishChat();
 
-      // Any field change (hp, mp, level, exp, mesos, name, …) refreshes the bottom HUD.
-      this.unsubscribers.push($(player).onChange(() => this.updateHud()));
+      // Any field change (hp, mp, level, exp, mesos, name, role, …) refreshes the
+      // bottom HUD and keeps the GM role current.
+      this.unsubscribers.push(
+        $(player).onChange(() => {
+          if (player.role) this.playerRole = player.role;
+          this.updateHud();
+        }),
+      );
 
       // The inventory is a nested MapSchema — its add/remove drives the item panel.
       this.unsubscribers.push(
@@ -838,6 +926,7 @@ export class UIScene extends Phaser.Scene {
       this.questData = payload;
       this.renderQuestTracker();
       this.publishQuestLog();
+      this.publishMinimap(); // refresh quest markers on NPCs
     });
 
     // Guided progression sync.
@@ -846,6 +935,7 @@ export class UIScene extends Phaser.Scene {
       (payload: import("@maple/shared").GuidanceSyncPayload) => {
         this.guideData = payload;
         if (this.guidePanelOpen) this.renderGuidePanel();
+        this.publishMinimap(); // refresh guide objective marker
       },
     );
 
@@ -1508,11 +1598,119 @@ export class UIScene extends Phaser.Scene {
       uiStore.getState().setCharacter(null);
       return;
     }
+
+    const cls = getClass(p.archetype as ClassArchetype);
+    const primary = cls.primaryStat;
+
+    // ── Equipment bonus (primary + secondary stats from gear) ─────
+    const equipBonus = this.computeEquipBonus();
+
+    // ── Equipped defIds → set bonuses ─────────────────────────────
+    const equippedRec = Object.fromEntries(p.equipped.entries());
+    const equippedDefIds = Object.values(equippedRec)
+      .map((uid) => {
+        const item = p.inventory.get(uid);
+        return item ? getItemDef(item.defId)?.id : undefined;
+      })
+      .filter((id): id is string => id !== undefined);
+    const setBonus = computeSetBonuses(equippedDefIds);
+
+    // ── Passive skill bonuses (secondary stats) ───────────────────
+    const _passiveRaw = passiveEffectBonus(p.archetype as ClassArchetype, this.localSkillBook);
+    const passiveBonus: SecondaryStats = {
+      atk: _passiveRaw.atk ?? 0,
+      mAtk: _passiveRaw.mAtk ?? 0,
+      wDef: _passiveRaw.wDef ?? 0,
+      mDef: _passiveRaw.mDef ?? 0,
+      critRate: _passiveRaw.critRate ?? 0,
+      speed: _passiveRaw.speed ?? 0,
+      jump: _passiveRaw.jump ?? 0,
+      accuracy: _passiveRaw.accuracy ?? 0,
+      avoid: _passiveRaw.avoid ?? 0,
+    };
+
+    // ── Active buff bonuses (reverse-lookup from status effect IDs) ──
+    const buffAcc: Record<string, number> = {};
+    const allSkills = allSkillsForClass(p.archetype as ClassArchetype);
+    const skillById = new Map(allSkills.map((s) => [s.id, s]));
+    for (const effect of this.statusEffects) {
+      if (effect.kind !== "buff") continue;
+      const skill = skillById.get(effect.id);
+      if (skill?.buffEffect) {
+        const sec = buffEffectToSecondary(skill.buffEffect);
+        for (const [k, v] of Object.entries(sec)) {
+          if (v === undefined || v === 0) continue;
+          buffAcc[k] = (buffAcc[k] ?? 0) + v * effect.stacks;
+        }
+        continue;
+      }
+      // Try consumable buff
+      const consDef = getConsumableDef(effect.id);
+      if (consDef?.effect.kind === "buff") {
+        for (const [k, v] of Object.entries(consDef.effect.secondary)) {
+          if (v === undefined || v === 0) continue;
+          buffAcc[k] = (buffAcc[k] ?? 0) + (v as number) * effect.stacks;
+        }
+      }
+    }
+    const buffBonus: SecondaryStats = {
+      atk: buffAcc.atk ?? 0,
+      mAtk: buffAcc.mAtk ?? 0,
+      wDef: buffAcc.wDef ?? 0,
+      mDef: buffAcc.mDef ?? 0,
+      critRate: buffAcc.critRate ?? 0,
+      speed: buffAcc.speed ?? 0,
+      jump: buffAcc.jump ?? 0,
+      accuracy: buffAcc.accuracy ?? 0,
+      avoid: buffAcc.avoid ?? 0,
+    };
+
+    // ── Total effective primary stats (base + gear + set) ──────────
+    const totalStats = {
+      STR: p.str + equipBonus.str + setBonus.STR,
+      DEX: p.dex + equipBonus.dex + setBonus.DEX,
+      INT: p.intel + equipBonus.int + setBonus.INT,
+      LUK: p.luk + equipBonus.luk + setBonus.LUK,
+      HP: p.hp + equipBonus.hp + setBonus.HP,
+      MP: p.mp + equipBonus.mp + setBonus.MP,
+    };
+
+    // ── Merged effect bonus (passive + buff) for deriveSecondary ───
+    const effectBonus: SecondaryStats = {
+      atk: passiveBonus.atk + buffBonus.atk,
+      mAtk: passiveBonus.mAtk + buffBonus.mAtk,
+      wDef: passiveBonus.wDef + buffBonus.wDef,
+      mDef: passiveBonus.mDef + buffBonus.mDef,
+      critRate: passiveBonus.critRate + buffBonus.critRate,
+      speed: passiveBonus.speed + buffBonus.speed,
+      jump: passiveBonus.jump + buffBonus.jump,
+      accuracy: passiveBonus.accuracy + buffBonus.accuracy,
+      avoid: passiveBonus.avoid + buffBonus.avoid,
+    };
+
+    // ── Merge set secondary stats into equipBonus (matches server) ──
+    const equipWithSet: Partial<SecondaryStats> = {
+      atk: equipBonus.atk + setBonus.atk,
+      mAtk: setBonus.mAtk,
+      wDef: equipBonus.wDef + setBonus.wDef,
+      mDef: equipBonus.mDef + setBonus.mDef,
+      critRate: setBonus.critRate,
+      speed: equipBonus.speed + setBonus.speed,
+      jump: equipBonus.jump + setBonus.jump,
+      accuracy: setBonus.accuracy,
+      avoid: setBonus.avoid,
+    };
+
+    // ── Final derived secondary stats (same as server combat math) ──
+    const derived = deriveSecondary(totalStats, primary, equipWithSet, effectBonus);
+
     uiStore.getState().setCharacter({
       name: p.name || "Adventurer",
       level: p.level,
       archetype: p.archetype,
+      branchId: p.branchId || "",
       jobTitle: this.getJobTitle(),
+      primaryStat: primary,
       str: p.str,
       dex: p.dex,
       intel: p.intel,
@@ -1527,7 +1725,27 @@ export class UIScene extends Phaser.Scene {
       fame: p.displayFame ?? 0,
       equippedTitle: this.equippedTitle,
       ownedTitles: [...this.ownedTitles],
-      equipBonus: this.computeEquipBonus(),
+      equipBonus,
+      setBonus: {
+        STR: setBonus.STR,
+        DEX: setBonus.DEX,
+        INT: setBonus.INT,
+        LUK: setBonus.LUK,
+        HP: setBonus.HP,
+        MP: setBonus.MP,
+        atk: setBonus.atk,
+        mAtk: setBonus.mAtk,
+        wDef: setBonus.wDef,
+        mDef: setBonus.mDef,
+        speed: setBonus.speed,
+        jump: setBonus.jump,
+        accuracy: setBonus.accuracy,
+        avoid: setBonus.avoid,
+        critRate: setBonus.critRate,
+      },
+      passiveBonus,
+      buffBonus,
+      derived,
       appearance: {
         gender: (p.gender as "M" | "F") || "M",
         skinId: p.skinId,
@@ -1592,32 +1810,53 @@ export class UIScene extends Phaser.Scene {
     });
   }
 
-  private computeEquipBonus(): {
-    atk: number;
-    wDef: number;
-    mDef: number;
-    speed: number;
-    jump: number;
-  } {
+  private computeEquipBonus(): import("@maple/shared").EquippedBonuses {
     const p = this.localPlayer;
-    if (!p) return { atk: 0, wDef: 0, mDef: 0, speed: 0, jump: 0 };
-    let atk = 0,
-      wDef = 0,
-      mDef = 0,
-      speed = 0,
-      jump = 0;
-    p.equipped.forEach((uid) => {
-      const item = p.inventory.get(uid);
-      if (!item) return;
-      const def = getItemDef(item.defId);
-      if (!def) return;
-      atk += def.baseAttack ?? 0;
-      wDef += def.wDef ?? 0;
-      mDef += def.mDef ?? 0;
-      speed += def.speed ?? 0;
-      jump += def.jump ?? 0;
-    });
-    return { atk, wDef, mDef, speed, jump };
+    if (!p)
+      return {
+        atk: 0,
+        str: 0,
+        dex: 0,
+        int: 0,
+        luk: 0,
+        wDef: 0,
+        mDef: 0,
+        speed: 0,
+        jump: 0,
+        hp: 0,
+        mp: 0,
+      };
+    const equippedRec = Object.fromEntries(p.equipped.entries());
+    return resolveEquippedBonus(
+      equippedRec,
+      (uid) => {
+        const item = p.inventory.get(uid);
+        return item ? getItemDef(item.defId) : undefined;
+      },
+      (uid) => {
+        const item = p.inventory.get(uid);
+        return (item?.baseRank ?? "NORMAL") as import("@maple/shared").BaseRank;
+      },
+      (uid) => {
+        const item = p.inventory.get(uid);
+        if (!item?.potentialLines) return [];
+        try {
+          return JSON.parse(item.potentialLines) as import("@maple/shared").PotentialLine[];
+        } catch {
+          return [];
+        }
+      },
+      (uid) => {
+        const item = p.inventory.get(uid);
+        if (!item?.bonusStats) return [];
+        try {
+          const parsed = JSON.parse(item.bonusStats) as import("@maple/shared").BonusStatLine[];
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      },
+    );
   }
 
   private getJobTitle(): string {
@@ -1777,6 +2016,13 @@ export class UIScene extends Phaser.Scene {
       },
       reorder: (tab: InventoryTab, fromUid: string, toUid: string) =>
         this.reorderInvByUid(tab, fromUid, toUid),
+      sort: (tab: InventoryTab) => {
+        getAudioManager().playSfx("button_click");
+        room.send(MessageType.INVENTORY_SORT, { tab });
+        // Optimistic client-side sort of the display order for instant feedback.
+        this.sortInvClientOrder(tab);
+        this.renderInventory();
+      },
       close: () => this.setInventoryOpen(false),
     });
 
@@ -1813,6 +2059,9 @@ export class UIScene extends Phaser.Scene {
         uiStore.getState().setQuestTurnin(null);
       },
       closeLog: () => uiStore.getState().setQuestLogOpen(false),
+      abandonQuest: (questId: string) => {
+        room.send(MessageType.QUEST_ABANDON, { questId });
+      },
     });
 
     // Push the initial dialog + quest-log snapshots in case state already exists.
@@ -1845,12 +2094,15 @@ export class UIScene extends Phaser.Scene {
       visible: true,
       name: p.name || "Adventurer",
       level: p.level,
+      archetype: p.archetype || "BEGINNER",
+      mesos: p.mesos,
       hp: Math.max(0, p.hp),
       maxHp: p.maxHp,
       mp: Math.max(0, p.mp),
       maxMp: p.maxMp,
       expRatio,
       expPct: (expRatio * 100).toFixed(1),
+      dead: p.dead,
     });
   }
 
@@ -1971,7 +2223,37 @@ export class UIScene extends Phaser.Scene {
         footholds: map.footholds.map((f) => ({ x1: f.x1, y1: f.y1, x2: f.x2, y2: f.y2 })),
         ladders: map.ladders.map((l) => ({ x: l.x, yTop: l.yTop, yBottom: l.yBottom })),
         portals: map.portals.map((pt) => ({ x: pt.x, y: pt.y })),
-        npcs: getNpcsForMap(this.currentMapId).map((n) => ({ x: n.x, y: n.y })),
+        npcs: getNpcsForMap(this.currentMapId).map((n) => {
+          // Compute quest marker for this NPC from the live quest log.
+          let quest: "available" | "active" | "turnin" | "guide" | undefined;
+          // Guidance target takes top priority — the player should always see
+          // where the current objective NPC is.
+          if (
+            this.guideData &&
+            !this.guideData.allComplete &&
+            this.guideData.targetNpcId === n.id &&
+            this.guideData.mapId === this.currentMapId
+          ) {
+            quest = "guide";
+          } else {
+            // Walk quest log for this NPC (uses QUESTS[].giverNpcId).
+            let hasTurnin = false;
+            let hasActive = false;
+            let hasAvailable = false;
+            for (const qs of this.questData.quests) {
+              const def = QUESTS[qs.questId];
+              if (!def || def.giverNpcId !== n.id) continue;
+              if (qs.status === "complete") hasTurnin = true;
+              else if (qs.status === "active") hasActive = true;
+              else if (qs.status === "available") hasAvailable = true;
+            }
+            // Priority: turn-in > active > available
+            if (hasTurnin) quest = "turnin";
+            else if (hasActive) quest = "active";
+            else if (hasAvailable) quest = "available";
+          }
+          return { x: n.x, y: n.y, quest };
+        }),
         dots,
       },
     });
@@ -2035,6 +2317,26 @@ export class UIScene extends Phaser.Scene {
       }
     }
     this.renderInventory();
+  }
+
+  /** Optimistically sort client-side display order for instant feedback. */
+  private sortInvClientOrder(tab: InventoryTab): void {
+    this.ensureInvOrder(tab);
+    const order = this.invClientOrder[tab];
+    if (!order || order.length <= 1) return;
+    const p = this.localPlayer;
+    if (!p) return;
+    order.sort((aUid, bUid) => {
+      const a = p.inventory.get(aUid);
+      const b = p.inventory.get(bUid);
+      if (!a && !b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+      const defCmp = a.defId.localeCompare(b.defId);
+      if (defCmp !== 0) return defCmp;
+      return (b.count || 1) - (a.count || 1);
+    });
+    this.saveInvClientOrder();
   }
 
   /** Open/close the inventory, keeping the Phaser flag and React store in sync. */
@@ -2726,26 +3028,36 @@ export class UIScene extends Phaser.Scene {
       } else {
         const conn = connectedFromCurrent.get(id);
         if (conn) {
-          // Connected to current map — check level gate.
-          const req = conn.portal.requiresLevel;
-          const meetsLevel = !req || (p && p.level >= req);
-          if (meetsLevel) {
-            // Eligible — bright blue, clickable.
-            fillColor = WORLD_MAP_CONNECTED_COLOR;
-            fillAlpha = 1;
-            labelColor = "#93c5fd";
-            strokeColor = 0x93c5fd;
-            strokeAlpha = 1;
-            clickable = true;
-          } else {
-            // Level-gated — dim brown, clickable (shows message on click).
-            fillColor = WORLD_MAP_LOCKED_COLOR;
-            fillAlpha = 0.9;
-            labelColor = "#a88b6d";
-            strokeColor = 0x8b6914;
+          // Connected to current map — check coming-soon and level gate.
+          if (conn.portal.comingSoon) {
+            // Coming soon — warm gray, not clickable.
+            fillColor = WORLD_MAP_COMING_SOON_COLOR;
+            fillAlpha = 0.7;
+            labelColor = "#a8a29e";
+            strokeColor = 0x78716c;
             strokeAlpha = 0.8;
-            clickable = true;
-            lockText = `🔒 Lv.${req}`;
+            lockText = "🚧 Coming Soon";
+          } else {
+            const req = conn.portal.requiresLevel;
+            const meetsLevel = !req || (p && p.level >= req);
+            if (meetsLevel) {
+              // Eligible — bright blue, clickable.
+              fillColor = WORLD_MAP_CONNECTED_COLOR;
+              fillAlpha = 1;
+              labelColor = "#93c5fd";
+              strokeColor = 0x93c5fd;
+              strokeAlpha = 1;
+              clickable = true;
+            } else {
+              // Level-gated — dim brown, clickable (shows message on click).
+              fillColor = WORLD_MAP_LOCKED_COLOR;
+              fillAlpha = 0.9;
+              labelColor = "#a88b6d";
+              strokeColor = 0x8b6914;
+              strokeAlpha = 0.8;
+              clickable = true;
+              lockText = `🔒 Lv.${req}`;
+            }
           }
         } else {
           // Not connected from current map.
@@ -4602,6 +4914,16 @@ export class UIScene extends Phaser.Scene {
   }
 
   private setupFeedbackToggle(): void {
+    const openFeedback = () => {
+      if (this.feedbackOpen) return;
+      this.closeAllPanels();
+      this.feedbackOpen = true;
+      this.feedbackInputText = "";
+      this.feedbackSelectedCategory = "bug";
+      this.renderFeedbackPanel();
+      this.feedbackContainer.setVisible(true);
+    };
+
     // Toggle with B key.
     this.input.keyboard?.on("keydown-B", () => {
       if (this.chatFocused) return;
@@ -4609,14 +4931,13 @@ export class UIScene extends Phaser.Scene {
         this.feedbackOpen = false;
         this.feedbackContainer.setVisible(false);
       } else {
-        this.closeAllPanels();
-        this.feedbackOpen = true;
-        this.feedbackInputText = "";
-        this.feedbackSelectedCategory = "bug";
-        this.renderFeedbackPanel();
-        this.feedbackContainer.setVisible(true);
+        openFeedback();
       }
     });
+
+    // Persistent HUD button (React) dispatches this CustomEvent.
+    this._feedbackEventHandler = openFeedback;
+    window.addEventListener("open-feedback", this._feedbackEventHandler);
   }
 
   private renderFeedbackPanel(): void {
@@ -4925,9 +5246,12 @@ export class UIScene extends Phaser.Scene {
       message: msg,
       context: {
         mapId: this.currentMapId,
+        x: p.x,
+        y: p.y,
         level: p.level,
         archetype: p.archetype,
         clientVersion: VERSION_LABEL,
+        serverVersion: "dev",
         logLines: getLastLogLines(50),
         userAgent: navigator.userAgent,
       },
@@ -4985,9 +5309,48 @@ export class UIScene extends Phaser.Scene {
         this.registry.set("settingsOpen", false);
       } else {
         this.closeAllPanels();
-        this.scene.launch("settings");
+        loadScene(this.game, "settings", () => import("./SettingsUI")).then(() => {
+          this.scene.launch("settings");
+        });
         this.registry.set("settingsOpen", true);
       }
+    });
+  }
+
+  // ─── Help panel toggle (F1) ──────────────────────────────────────────────
+  private setupHelpToggle(): void {
+    this.input.keyboard?.on("keydown-F1", (event: KeyboardEvent) => {
+      // Prevent the browser's default F1 help behavior.
+      event.preventDefault();
+      if (this.chatFocused || this.registry.get("settingsOpen") === true) return;
+      const next = !uiStore.getState().helpOpen;
+      uiStore.getState().setHelpOpen(next);
+    });
+  }
+
+  // ─── Replay events from the Help panel ───────────────────────────────────
+  private setupReplayEvents(): void {
+    // Replay coach marks: triggered by HelpPanel dispatching "replay-coachmarks".
+    // Restart the scene so it re-reads the (now-cleared) seen set from localStorage,
+    // then stagger the triggers so they show one at a time.
+    window.addEventListener("replay-coachmarks", () => {
+      if (this.scene.isActive("coachmarks")) {
+        this.scene.stop("coachmarks");
+      }
+      loadScene(this.game, "coachmarks", () => import("./CoachMarks")).then(() => {
+        if (!this.scene.isActive("coachmarks")) this.scene.launch("coachmarks");
+        const triggers = ["firstObjective", "move", "attack", "jump", "inventory", "talk"];
+        triggers.forEach((id, i) => {
+          setTimeout(() => this.registry.set(`coachmark:${id}`, true), i * 5200);
+        });
+      });
+    });
+
+    // Replay intro cinematic: triggered by HelpPanel dispatching "replay-intro".
+    window.addEventListener("replay-intro", () => {
+      loadScene(this.game, "intro", () => import("./Intro")).then(() => {
+        this.scene.launch("intro");
+      });
     });
   }
 
@@ -5036,9 +5399,52 @@ export class UIScene extends Phaser.Scene {
         },
       },
       {
+        label: "🏰 Invite Guild",
+        fn: () => {
+          const targetSessionId = this.resolveSessionByName(name);
+          if (targetSessionId) {
+            const room = this.registry.get(ROOM_REGISTRY_KEY) as
+              | Room<unknown, TownStateView>
+              | undefined;
+            if (room) room.send(MessageType.GUILD_INVITE, { targetSessionId });
+          } else {
+            this.addChatLine("System", `Player '${name}' not found on this map.`, "system");
+          }
+        },
+      },
+      {
+        label: "🔄 Trade",
+        fn: () => {
+          const targetSessionId = this.resolveSessionByName(name);
+          if (targetSessionId) {
+            const room = this.registry.get(ROOM_REGISTRY_KEY) as
+              | Room<unknown, TownStateView>
+              | undefined;
+            if (room) room.send(MessageType.TRADE_INVITE, { targetSessionId });
+          } else {
+            this.addChatLine("System", `Player '${name}' not found on this map.`, "system");
+          }
+        },
+      },
+      {
+        label: "👤 Add Friend",
+        fn: () => {
+          const room = this.registry.get(ROOM_REGISTRY_KEY) as
+            | Room<unknown, TownStateView>
+            | undefined;
+          if (room) room.send(MessageType.FRIEND_ADD, { targetName: name });
+        },
+      },
+      {
         label: "⭐ Give Fame",
         fn: () => {
           this.sendGiveFame(sessionId);
+        },
+      },
+      {
+        label: "📊 View Stats",
+        fn: () => {
+          this.showPlayerStatsTooltip(sessionId, name);
         },
       },
       {
@@ -5092,6 +5498,243 @@ export class UIScene extends Phaser.Scene {
 
   private hidePlayerContextMenu(): void {
     this.contextMenuContainer.setVisible(false);
+  }
+
+  // ─── NPC context menu (right-click on NPC sprite) ────────────────────
+  private buildNpcContextMenu(): void {
+    this.npcContextMenuBg = this.add.graphics();
+    this.npcContextMenuContainer = this.add.container(0, 0, [this.npcContextMenuBg]);
+    this.npcContextMenuContainer.setDepth(10200).setVisible(false);
+  }
+
+  private setupNpcContextMenu(): void {
+    this.game.events.on(
+      "npc-rightclick",
+      (data: { npcId: string; npcName: string; role: string; worldX: number; worldY: number }) => {
+        const cam = this.cameras.main;
+        const sx = data.worldX - cam.scrollX;
+        const sy = data.worldY - cam.scrollY;
+        this.showNpcContextMenu(sx, sy, data.npcId, data.npcName, data.role);
+      },
+    );
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      if (pointer.leftButtonDown()) this.hideNpcContextMenu();
+    });
+  }
+
+  private showNpcContextMenu(
+    x: number,
+    y: number,
+    npcId: string,
+    npcName: string,
+    role: string,
+  ): void {
+    for (const el of this.npcContextMenuElements) el.destroy();
+    this.npcContextMenuElements.length = 0;
+
+    const MENU_W = 140;
+    const ROW_H = 24;
+    const MENU_PAD = 6;
+
+    // Build entries based on NPC role.
+    const items: { label: string; fn: () => void }[] = [];
+
+    // Primary action based on role.
+    switch (role) {
+      case "shop":
+        items.push({
+          label: "🛒 Shop",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      case "storage":
+        items.push({
+          label: "📦 Storage",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      case "travel":
+        items.push({
+          label: "🚕 Travel",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      case "ferry":
+        items.push({
+          label: "⛵ Ferry",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      case "job":
+        items.push({
+          label: "⚔️ Job Advance",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      case "quest":
+        items.push({
+          label: "❓ Quest",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+      default: // guide and others
+        items.push({
+          label: "💬 Talk",
+          fn: () => this.talkToNpc(npcId),
+        });
+        break;
+    }
+
+    // Always show the NPC name as a disabled header row.
+    const MENU_H = MENU_PAD * 2 + (items.length + 1) * ROW_H + items.length * 2;
+
+    // NPC name header (non-clickable).
+    const headerContainer = this.add.container(MENU_PAD, MENU_PAD);
+    const headerBg = this.add.graphics();
+    headerBg.fillStyle(0x1a2540, 0.9);
+    headerBg.fillRoundedRect(0, 0, MENU_W - MENU_PAD * 2, ROW_H, 4);
+    const headerText = this.add
+      .text((MENU_W - MENU_PAD * 2) / 2, ROW_H / 2, npcName, {
+        fontFamily: FONT,
+        fontSize: "11px",
+        color: "#ffe08a",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    headerContainer.add([headerBg, headerText]);
+    this.npcContextMenuContainer.add(headerContainer);
+    this.npcContextMenuElements.push(headerContainer);
+
+    // Action rows below the header.
+    items.forEach((item, i) => {
+      const btn = this.createPanelButton(
+        MENU_PAD,
+        MENU_PAD + (i + 1) * (ROW_H + 2),
+        MENU_W - MENU_PAD * 2,
+        ROW_H,
+        item.label,
+        () => {
+          item.fn();
+          this.hideNpcContextMenu();
+        },
+      );
+      this.npcContextMenuContainer.add(btn);
+      this.npcContextMenuElements.push(btn);
+    });
+
+    const sw = this.scale.width;
+    const sh = this.scale.height;
+    let mx = x;
+    let my = y;
+    if (mx + MENU_W > sw) mx = sw - MENU_W - 4;
+    if (my + MENU_H > sh) my = sh - MENU_H - 4;
+
+    this.npcContextMenuBg
+      .clear()
+      .fillStyle(PALETTE.panelFill, 0.96)
+      .fillRoundedRect(0, 0, MENU_W, MENU_H, 8)
+      .lineStyle(1, PALETTE.panelStroke, 1)
+      .strokeRoundedRect(0, 0, MENU_W, MENU_H, 8);
+
+    this.npcContextMenuContainer.setPosition(mx, my);
+    this.npcContextMenuContainer.setVisible(true);
+  }
+
+  private hideNpcContextMenu(): void {
+    this.npcContextMenuContainer.setVisible(false);
+  }
+
+  /** Send TALK_NPC to the server for the given NPC id. */
+  private talkToNpc(npcId: string): void {
+    const room = this.registry.get(ROOM_REGISTRY_KEY) as Room<unknown, TownStateView> | undefined;
+    if (!room) return;
+    room.send(MessageType.TALK_NPC, { npcId });
+  }
+
+  // ─── Player stats tooltip (shown from context menu "View Stats") ─────
+  private buildStatsTooltip(): void {
+    this.statsTooltipBg = this.add.graphics();
+    this.statsTooltipContainer = this.add.container(0, 0, [this.statsTooltipBg]);
+    this.statsTooltipContainer.setDepth(10201).setVisible(false);
+  }
+
+  private showPlayerStatsTooltip(sessionId: string, name: string): void {
+    for (const el of this.statsTooltipElements) el.destroy();
+    this.statsTooltipElements.length = 0;
+
+    const room = this.registry.get(ROOM_REGISTRY_KEY) as Room<unknown, TownStateView> | undefined;
+    if (!room) return;
+    const player = room.state.players.get(sessionId);
+    if (!player) return;
+
+    const PANEL_W = 180;
+    const ROW_H = 18;
+    const PAD = 10;
+    const HEADER_H = 22;
+    const lines: string[] = [
+      `Level: ${player.level}`,
+      `HP: ${player.hp} / ${player.maxHp}`,
+      `MP: ${player.mp} / ${player.maxMp}`,
+      `STR: ${player.str}`,
+      `DEX: ${player.dex}`,
+      `INT: ${player.intel}`,
+      `LUK: ${player.luk}`,
+      `Fame: ${player.displayFame}`,
+    ];
+    const PANEL_H = PAD * 2 + HEADER_H + lines.length * (ROW_H + 2);
+
+    // Header.
+    const headerContainer = this.add.container(PAD, PAD);
+    const headerBg = this.add.graphics();
+    headerBg.fillStyle(0x1a2540, 0.9);
+    headerBg.fillRoundedRect(0, 0, PANEL_W - PAD * 2, HEADER_H, 4);
+    const headerText = this.add
+      .text((PANEL_W - PAD * 2) / 2, HEADER_H / 2, `${name}'s Stats`, {
+        fontFamily: FONT,
+        fontSize: "12px",
+        color: "#f6c177",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    headerContainer.add([headerBg, headerText]);
+    this.statsTooltipContainer.add(headerContainer);
+    this.statsTooltipElements.push(headerContainer);
+
+    // Stat rows.
+    lines.forEach((line, i) => {
+      const text = this.add.text(PAD, PAD + HEADER_H + 4 + i * (ROW_H + 2), line, {
+        fontFamily: FONT,
+        fontSize: "11px",
+        color: TEXT.bright,
+      });
+      this.statsTooltipContainer.add(text);
+      this.statsTooltipElements.push(text);
+    });
+
+    // Position at center of screen.
+    const sw = this.scale.width;
+    const sh = this.scale.height;
+    const mx = (sw - PANEL_W) / 2;
+    const my = (sh - PANEL_H) / 2;
+
+    this.statsTooltipBg
+      .clear()
+      .fillStyle(PALETTE.panelFill, 0.96)
+      .fillRoundedRect(0, 0, PANEL_W, PANEL_H, 8)
+      .lineStyle(1, PALETTE.panelStroke, 1)
+      .strokeRoundedRect(0, 0, PANEL_W, PANEL_H, 8);
+
+    this.statsTooltipContainer.setPosition(mx, my);
+    this.statsTooltipContainer.setVisible(true);
+
+    // Auto-hide on left click.
+    const hideHandler = () => {
+      this.statsTooltipContainer.setVisible(false);
+      this.input.off("pointerdown", hideHandler);
+    };
+    this.time.delayedCall(100, () => {
+      this.input.on("pointerdown", hideHandler);
+    });
   }
 
   private sendPartyInviteByName(name: string): void {
@@ -5378,6 +6021,8 @@ export class UIScene extends Phaser.Scene {
       this.guidePanelContainer.setVisible(false);
     }
     this.hidePlayerContextMenu();
+    this.hideNpcContextMenu();
+    this.statsTooltipContainer.setVisible(false);
   }
 
   /** Send current settings to the server for persistence. */
@@ -5438,6 +6083,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   private setupFamiliarPanelToggle(): void {
+    if (!FAMILIAR_ENABLED) return;
     this.game.events.on("keydown", (event: KeyboardEvent) => {
       if (event.key === "v" || event.key === "V") {
         // Don't toggle while typing in chat or any input.
@@ -6091,6 +6737,259 @@ export class UIScene extends Phaser.Scene {
     }
   }
 
+  // ─── Achievement panel (toggled with J) ─────────────────────────────────
+  private buildAchievePanel(): void {
+    this.achievePanelBg = this.add.graphics();
+    this.achievePanelContainer = this.add.container(0, 0, [this.achievePanelBg]);
+    this.achievePanelContainer.setDepth(5000).setVisible(false);
+  }
+
+  private setupAchievePanelToggle(): void {
+    this.game.events.on("keydown", (event: KeyboardEvent) => {
+      if (event.key === "j" || event.key === "J") {
+        if (this.chatFocused) return;
+        this.achievePanelOpen = !this.achievePanelOpen;
+        if (this.achievePanelOpen) {
+          const room = this.registry.get(ROOM_REGISTRY_KEY) as
+            | Room<unknown, TownStateView>
+            | undefined;
+          if (room) {
+            room.send(MessageType.VIEW_ACHIEVEMENTS);
+          }
+        }
+        this.renderAchievePanel();
+      }
+    });
+  }
+
+  private renderAchievePanel(): void {
+    for (const el of this.achievePanelElements) el.destroy();
+    this.achievePanelElements.length = 0;
+
+    if (!this.achievePanelOpen) {
+      this.achievePanelContainer.setVisible(false);
+      return;
+    }
+    this.achievePanelContainer.setVisible(true);
+
+    const sw = this.scale.width;
+    const sh = this.scale.height;
+    const panelW = 420;
+    const pad = 14;
+    const headerH = 36;
+    const panelH = Math.min(sh - 40, 520);
+    const px = (sw - panelW) / 2;
+    const py = (sh - panelH) / 2;
+
+    // Background.
+    this.achievePanelBg.clear();
+    this.achievePanelBg.fillStyle(PALETTE.panelFill, 0.95);
+    this.achievePanelBg.fillRoundedRect(px, py, panelW, panelH, 8);
+    this.achievePanelBg.lineStyle(1, PALETTE.panelStroke, 0.9);
+    this.achievePanelBg.strokeRoundedRect(px, py, panelW, panelH, 8);
+    this.achievePanelContainer.add(this.achievePanelBg);
+
+    // Header.
+    const header = this.add
+      .text(px + panelW / 2, py + headerH / 2, "🏆 Achievements", {
+        fontFamily: FONT,
+        fontSize: "14px",
+        color: TEXT.bright,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    this.achievePanelContainer.add(header);
+    this.achievePanelElements.push(header);
+
+    // Close button.
+    const closeBtn = this.add
+      .text(px + panelW - 20, py + 8, "✕", {
+        fontFamily: FONT,
+        fontSize: "16px",
+        color: TEXT.dim,
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+    closeBtn.on("pointerdown", () => {
+      this.achievePanelOpen = false;
+      this.renderAchievePanel();
+    });
+    this.achievePanelContainer.add(closeBtn);
+    this.achievePanelElements.push(closeBtn);
+
+    // Summary.
+    const completedCount = this.achieveData.filter((a) => a.completed).length;
+    const summaryText = this.add.text(
+      px + pad,
+      py + headerH + 4,
+      `${completedCount} / ${this.achieveData.length} completed`,
+      { fontFamily: FONT, fontSize: "10px", color: TEXT.dim },
+    );
+    this.achievePanelContainer.add(summaryText);
+    this.achievePanelElements.push(summaryText);
+
+    // Category tabs.
+    const categories = ["combat", "exploration", "collection", "milestone"] as const;
+    const categoryLabels: Record<string, string> = {
+      combat: "⚔️ Combat",
+      exploration: "🗺️ Exploration",
+      collection: "📦 Collection",
+      milestone: "📈 Milestone",
+    };
+    let activeCategory = "all";
+    let y = py + headerH + 24;
+
+    // Category filter row.
+    const allBtnBg = this.add.graphics();
+    allBtnBg.fillStyle(0x2563eb, 0.8);
+    allBtnBg.fillRoundedRect(px + pad, y, 40, 20, 3);
+    this.achievePanelContainer.add(allBtnBg);
+    this.achievePanelElements.push(allBtnBg);
+    const allBtnLabel = this.add
+      .text(px + pad + 20, y + 10, "All", {
+        fontFamily: FONT,
+        fontSize: "9px",
+        color: "#ffffff",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    this.achievePanelContainer.add(allBtnLabel);
+    this.achievePanelElements.push(allBtnLabel);
+
+    for (let ci = 0; ci < categories.length; ci++) {
+      const cat = categories[ci];
+      const catX = px + pad + 46 + ci * 80;
+      const catBg = this.add.graphics();
+      catBg.fillStyle(0x1a2234, 0.8);
+      catBg.fillRoundedRect(catX, y, 74, 20, 3);
+      this.achievePanelContainer.add(catBg);
+      this.achievePanelElements.push(catBg);
+      const catLabel = this.add
+        .text(catX + 37, y + 10, categoryLabels[cat] ?? cat, {
+          fontFamily: FONT,
+          fontSize: "9px",
+          color: TEXT.dim,
+        })
+        .setOrigin(0.5);
+      this.achievePanelContainer.add(catLabel);
+      this.achievePanelElements.push(catLabel);
+    }
+    y += 28;
+
+    // Achievement list.
+    const contentY = y;
+    const contentH = panelH - headerH - 28 - pad - (y - (py + headerH + 24));
+    const rowH = 48;
+
+    // Sort: uncompleted first, then completed.
+    const sorted = [...this.achieveData].sort((a, b) => {
+      if (a.completed !== b.completed) return a.completed ? 1 : -1;
+      return a.id.localeCompare(b.id);
+    });
+
+    let rowCount = 0;
+    for (const ach of sorted) {
+      if (rowCount * rowH + rowH > contentH) break;
+      const ry = contentY + rowCount * rowH;
+      const isCompleted = ach.completed;
+
+      // Row background.
+      const rowBg = this.add.graphics();
+      rowBg.fillStyle(isCompleted ? 0x1a2a1a : 0x1a1a22, 0.7);
+      rowBg.fillRoundedRect(px + pad, ry, panelW - pad * 2, rowH - 4, 4);
+      rowBg.lineStyle(1, isCompleted ? 0x4a8a4a : PALETTE.panelStroke, 0.5);
+      rowBg.strokeRoundedRect(px + pad, ry, panelW - pad * 2, rowH - 4, 4);
+      this.achievePanelContainer.add(rowBg);
+      this.achievePanelElements.push(rowBg);
+
+      // Name + description.
+      const nameColor = isCompleted ? "#9ad06b" : TEXT.bright;
+      const nameText = this.add.text(px + pad + 8, ry + 4, ach.name, {
+        fontFamily: FONT,
+        fontSize: "10px",
+        color: nameColor,
+        fontStyle: "bold",
+      });
+      this.achievePanelContainer.add(nameText);
+      this.achievePanelElements.push(nameText);
+
+      const descText = this.add.text(px + pad + 8, ry + 18, ach.description, {
+        fontFamily: FONT,
+        fontSize: "9px",
+        color: TEXT.dim,
+        wordWrap: { width: panelW - pad * 2 - 16 },
+      });
+      this.achievePanelContainer.add(descText);
+      this.achievePanelElements.push(descText);
+
+      // Progress bar for each condition.
+      const progress = ach.progress[0];
+      if (progress) {
+        const barX = px + pad + 8;
+        const barY = ry + 34;
+        const barW = panelW - pad * 2 - 16;
+        const barH = 4;
+        const ratio = Math.min(progress.current / Math.max(progress.target, 1), 1);
+        const bar = this.add.graphics();
+        bar.fillStyle(0x0c1019, 0.8);
+        bar.fillRoundedRect(barX, barY, barW, barH, 2);
+        bar.fillStyle(isCompleted ? 0x9ad06b : 0x3b82f6, 0.9);
+        bar.fillRoundedRect(barX, barY, Math.max(barW * ratio, 1), barH, 2);
+        this.achievePanelContainer.add(bar);
+        this.achievePanelElements.push(bar);
+
+        const progressLabel = this.add.text(
+          barX + barW + 4,
+          barY - 1,
+          `${progress.current}/${progress.target}`,
+          { fontFamily: FONT, fontSize: "8px", color: TEXT.dim },
+        );
+        this.achievePanelContainer.add(progressLabel);
+        this.achievePanelElements.push(progressLabel);
+      }
+
+      // Completion badge.
+      if (isCompleted) {
+        const badge = this.add.text(px + panelW - pad - 16, ry + 4, "✅", {
+          fontFamily: FONT,
+          fontSize: "14px",
+        });
+        this.achievePanelContainer.add(badge);
+        this.achievePanelElements.push(badge);
+      }
+
+      // Reward summary.
+      const rewardParts: string[] = [];
+      if (ach.rewards.mesos) rewardParts.push(`${ach.rewards.mesos} mesos`);
+      if (ach.rewards.exp) rewardParts.push(`${ach.rewards.exp} exp`);
+      if (ach.rewards.title) rewardParts.push(`Title: ${ach.rewards.title}`);
+      if (rewardParts.length > 0) {
+        const rewardText = this.add.text(px + panelW - pad - 16, ry + 22, rewardParts.join(" | "), {
+          fontFamily: FONT,
+          fontSize: "8px",
+          color: TEXT.mesos,
+        });
+        this.achievePanelContainer.add(rewardText);
+        this.achievePanelElements.push(rewardText);
+      }
+
+      rowCount++;
+    }
+
+    if (rowCount === 0) {
+      const emptyText = this.add
+        .text(px + panelW / 2, contentY + 40, "No achievements to display.", {
+          fontFamily: FONT,
+          fontSize: "11px",
+          color: TEXT.dim,
+          align: "center",
+        })
+        .setOrigin(0.5);
+      this.achievePanelContainer.add(emptyText);
+      this.achievePanelElements.push(emptyText);
+    }
+  }
+
   private teardown(): void {
     this.roomPoll?.remove();
     this.roomPoll = undefined;
@@ -6113,6 +7012,7 @@ export class UIScene extends Phaser.Scene {
     uiStore.getState().setEquipmentOpen(false);
     uiStore.getState().setSkillTreeOpen(false);
     uiStore.getState().setReportOpen(false);
+    uiStore.getState().setHelpOpen(false);
     uiStore.getState().setStatusEffects([]);
     for (const el of this.guidePanelElements) el.destroy();
     this.guidePanelElements.length = 0;
@@ -6128,6 +7028,10 @@ export class UIScene extends Phaser.Scene {
     // Clean up moderation elements.
     for (const el of this.contextMenuElements) el.destroy();
     this.contextMenuElements.length = 0;
+    for (const el of this.npcContextMenuElements) el.destroy();
+    this.npcContextMenuElements.length = 0;
+    for (const el of this.statsTooltipElements) el.destroy();
+    this.statsTooltipElements.length = 0;
     for (const el of this.blockedElements) el.destroy();
     this.blockedElements.length = 0;
     for (const el of this.familiarPanelElements) el.destroy();
@@ -6135,5 +7039,9 @@ export class UIScene extends Phaser.Scene {
     for (const el of this.codexPanelElements) el.destroy();
     this.codexPanelElements.length = 0;
     this.game.events.off("player-rightclick");
+    this.game.events.off("npc-rightclick");
+    if (this._feedbackEventHandler) {
+      window.removeEventListener("open-feedback", this._feedbackEventHandler);
+    }
   }
 }

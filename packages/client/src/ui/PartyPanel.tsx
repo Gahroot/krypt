@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Crown, MoreVertical, UserPlus, LogOut, Users } from "lucide-react";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { EmptyState } from "@/ui/components/EmptyState";
 import { ConfirmDialog } from "@/ui/components/ConfirmDialog";
 import { Button } from "@/ui/components/ui/button";
@@ -152,11 +152,11 @@ export function PartyPanel() {
 
   return (
     <>
-      <Panel
+      <DraggableWindow
         title="Party"
         hotkey="O"
         onClose={() => actions?.close()}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[320px]"
+        defaultPosition={{ x: 480, y: 200 }}
         headerExtra={
           <span className="text-[10px] tabular-nums text-muted-foreground">
             {party.members.length} / 6
@@ -241,7 +241,7 @@ export function PartyPanel() {
             </Button>
           </>
         )}
-      </Panel>
+      </DraggableWindow>
 
       <ConfirmDialog
         open={confirmLeave}

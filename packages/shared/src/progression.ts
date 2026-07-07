@@ -140,3 +140,60 @@ export function applyExp(
     maxMp: maxMpForLevel(archetype, level),
   };
 }
+
+// ── Death penalty ───────────────────────────────────────────────────────────
+
+/** Levels at or below this threshold are safe from death EXP penalties. */
+export const DEATH_SAFE_LEVEL = 10;
+
+/**
+ * EXP loss percentage on death, scaled by level bracket (MapleStory-style).
+ *
+ * Brackets:
+ *   1–10   →  0%  (safe tutorial zone)
+ *   11–20  →  2%
+ *   21–30  →  4%
+ *   31–50  →  5%
+ *   51–70  →  6%
+ *   71–90  →  7%
+ *   91–120 →  8%
+ *   121–150 → 9%
+ *   151–200 → 10%
+ *
+ * Throws RangeError for out-of-range or non-integer levels.
+ */
+export function deathPenaltyPercent(level: number): number {
+  if (!Number.isInteger(level) || level < 1 || level > MAX_LEVEL) {
+    throw new RangeError(`level must be an integer in [1, ${MAX_LEVEL}], got ${level}`);
+  }
+  if (level <= 10) return 0;
+  if (level <= 20) return 2;
+  if (level <= 30) return 4;
+  if (level <= 50) return 5;
+  if (level <= 70) return 6;
+  if (level <= 90) return 7;
+  if (level <= 120) return 8;
+  if (level <= 150) return 9;
+  return 10;
+}
+
+/**
+ * Calculate the EXP lost on death (MapleStory-style).
+ *
+ * Penalty = floor(expForLevel(level) × deathPenaltyPercent(level) / 100),
+ * clamped to `currentExp` (you can never lose more EXP than you have — no de-levelling
+ * from a death penalty).
+ *
+ * Returns 0 for safe levels (1–10), at MAX_LEVEL, or when currentExp is 0.
+ *
+ * @throws RangeError if level is out of [1, MAX_LEVEL] or currentExp is negative.
+ */
+export function deathExpLoss(level: number, currentExp: number): number {
+  if (currentExp < 0) {
+    throw new RangeError(`currentExp must be >= 0, got ${currentExp}`);
+  }
+  const pct = deathPenaltyPercent(level);
+  if (pct === 0) return 0;
+  const raw = Math.floor((expForLevel(level) * pct) / 100);
+  return Math.min(raw, currentExp);
+}

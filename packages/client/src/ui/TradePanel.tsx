@@ -10,6 +10,7 @@ import {
 } from "@maple/shared";
 
 import { Panel } from "@/ui/components/Panel";
+import { focusPanelForEsc } from "@/ui/panelEsc";
 import { ItemListRow } from "@/ui/components/economy/ItemListRow";
 import { CurrencyDisplay } from "@/ui/components/CurrencyDisplay";
 import { ConfirmDialog } from "@/ui/components/ConfirmDialog";
@@ -20,6 +21,7 @@ import { Badge } from "@/ui/components/ui/badge";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
 import { Separator } from "@/ui/components/ui/separator";
 import { useUIStore, type TradeItemSnapshot } from "@/ui/store";
+import { slotItemIcon } from "@/ui/item-icon";
 
 /**
  * TradePanel — the player-to-player direct trade overlay.
@@ -45,10 +47,9 @@ function TradeRow({ item, trailing }: { item: TradeItemSnapshot; trailing?: Reac
   return (
     <ItemListRow
       leading={
-        <span
-          className="size-3 rounded-[3px] border border-black/40"
-          style={{ backgroundColor: tier.color }}
-        />
+        <span className="text-sm" aria-hidden>
+          {slotItemIcon(item.defId) ?? "◻️"}
+        </span>
       }
       title={<span style={{ color: rank.color }}>{def?.name ?? item.defId}</span>}
       badges={item.count > 1 ? <Badge variant="secondary">×{item.count}</Badge> : undefined}
@@ -112,6 +113,11 @@ export function TradePanel() {
     <div
       data-slot="trade-scrim"
       className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      onPointerDown={() =>
+        focusPanelForEsc(() => {
+          setConfirmCancel(true);
+        })
+      }
     >
       <Panel
         title={partnerName ? `Trade with ${partnerName}` : "Trade"}

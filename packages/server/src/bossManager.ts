@@ -8,7 +8,7 @@
 import type { TownState } from "./rooms/schema/TownState";
 import type { Mob } from "./rooms/schema/Mob";
 import type { GameMap, MobDef, BossSpawnZone } from "@maple/shared";
-import { getMobDef } from "@maple/shared";
+import { getMobDef, applyEffect, skillDebuffToStatusEffects } from "@maple/shared";
 import { groundYAt } from "@maple/shared";
 import { Mob as MobSchema } from "./rooms/schema/Mob";
 
@@ -16,6 +16,8 @@ import { Mob as MobSchema } from "./rooms/schema/Mob";
 
 /** Minimum ms between boss attack ticks. */
 const BOSS_ATTACK_INTERVAL_MS = 1800;
+/** Ms without nearby players before the boss resets to full HP (wipe protection). */
+const BOSS_WIPE_RESET_MS = 10_000;
 /** Phase 2 attack speed multiplier (reduced cooldown = faster attacks). */
 const PHASE2_SPEED_MULT = 0.6;
 /** Phase 3 attack speed multiplier (<25% HP — enrage). */
@@ -41,6 +43,8 @@ export interface BossEncounter {
   damageOwners: Set<string>;
   /** Ms remaining before the synced bossTelegraph field is cleared. */
   telegraphTimer: number;
+  /** Ms since the last nearby player was detected; triggers reset at threshold. */
+  wipeTimer: number;
 }
 
 // ─── BossManager ───────────────────────────────────────────────────────────
@@ -51,9 +55,15 @@ export class BossManager {
   private bossTimers = new Map<string, number>();
 
   /** Called each tick by MapRoom.fixedTick. */
-  tick(dt: number, state: TownState, map: GameMap, nextId: () => number): void {
+  tick(
+    dt: number,
+    state: TownState,
+    map: GameMap,
+    nextId: () => number,
+    onTimedSpawn?: (instanceId: string, bossDefId: string) => void,
+  ): void {
     // Check timed boss spawns.
-    this.checkTimedSpawns(state, map, nextId);
+    this.checkTimedSpawns(state, map, nextId, onTimedSpawn);
 
     // Tick active encounters.
     for (const [instanceId, enc] of this.encounters) {
@@ -87,6 +97,34 @@ export class BossManager {
 
       // Only run boss combat when a player is within encounter range.
       const hasNearbyPlayer = this.hasPlayerNearby(mob, state, 500);
+
+      // Wipe detection: if no players are nearby, accumulate wipe timer.
+      // When threshold is reached, reset boss to full HP and phase 0.
+      if (!hasNearbyPlayer) {
+        enc.wipeTimer += dt;
+        if (enc.wipeTimer >= BOSS_WIPE_RESET_MS) {
+          // Full reset.
+          mob.hp = mob.maxHp;
+          mob.dead = false;
+          enc.phase = 0;
+          mob.bossPhase = 0;
+          mob.bossPhaseTransitioned = false;
+          enc.attackPatternIndex = 0;
+          enc.lastAttackTick = BOSS_ATTACK_INTERVAL_MS;
+          enc.telegraphTimer = 0;
+          mob.bossTelegraph = "";
+          // Despawn all adds.
+          for (const addId of enc.addInstanceIds) {
+            state.mobs.delete(addId);
+          }
+          enc.addInstanceIds.length = 0;
+          enc.damageOwners.clear();
+          // Keep wipeTimer at threshold so we don't re-trigger every tick.
+          enc.wipeTimer = BOSS_WIPE_RESET_MS;
+        }
+      } else {
+        enc.wipeTimer = 0;
+      }
 
       // Attack timer.
       if (hasNearbyPlayer) {
@@ -133,6 +171,7 @@ export class BossManager {
     hp: number,
     maxHp: number,
     phases: readonly number[],
+    state?: TownState,
   ): void {
     const enc = this.encounters.get(bossInstanceId);
     if (!enc) return;
@@ -143,7 +182,7 @@ export class BossManager {
     const phaseThreshold = phases[enc.phase];
     if (phaseThreshold !== undefined && hpFraction <= phaseThreshold) {
       enc.phase++;
-      const mob = this.getMobRef(bossInstanceId);
+      const mob = state ? state.mobs.get(bossInstanceId) : undefined;
       if (mob) {
         mob.bossPhase = enc.phase;
         mob.bossPhaseTransitioned = false;
@@ -157,7 +196,9 @@ export class BossManager {
     if (!enc) return new Set();
     const owners = new Set(enc.damageOwners);
     // Reset the spawn timer so the boss can respawn after the interval.
-    this.bossTimers.set(enc.bossDefId, 0);
+    // Use 1 (not 0) so checkTimedSpawns doesn't re-spawn immediately.
+    // 0 = "never spawned, spawn now"; 1 = "start counting toward respawn".
+    this.bossTimers.set(enc.bossDefId, 1);
     // Despawn all living adds.
     this.encounters.delete(bossInstanceId);
     return owners;
@@ -175,7 +216,13 @@ export class BossManager {
       addInstanceIds: [],
       damageOwners: new Set(),
       telegraphTimer: 0,
+      wipeTimer: 0,
     });
+  }
+
+  /** True when at least one boss encounter is alive on this map. */
+  hasActiveEncounters(): boolean {
+    return this.encounters.size > 0;
   }
 
   /** Check if a boss instance is being tracked. */
@@ -189,7 +236,12 @@ export class BossManager {
   }
 
   /** Check timed spawns and create new bosses if the timer has elapsed. */
-  private checkTimedSpawns(state: TownState, map: GameMap, nextId: () => number): void {
+  private checkTimedSpawns(
+    state: TownState,
+    map: GameMap,
+    nextId: () => number,
+    onTimedSpawn?: (instanceId: string, bossDefId: string) => void,
+  ): void {
     const bossSpawns = map.bossSpawns ?? [];
     for (const zone of bossSpawns) {
       if (!zone.respawnIntervalMs) continue; // skip item-summoned bosses
@@ -205,7 +257,7 @@ export class BossManager {
       if (prev === 0) {
         // First check — spawn immediately.
         this.bossTimers.set(zone.mobId, -1); // mark as spawned
-        this.spawnTimedBoss(zone, state, map, nextId);
+        this.spawnTimedBoss(zone, state, map, nextId, onTimedSpawn);
         continue;
       }
       if (prev === -1) continue; // already spawned, waiting for respawn
@@ -215,7 +267,7 @@ export class BossManager {
 
       if (elapsed >= zone.respawnIntervalMs) {
         this.bossTimers.set(zone.mobId, -1); // mark as spawned
-        this.spawnTimedBoss(zone, state, map, nextId);
+        this.spawnTimedBoss(zone, state, map, nextId, onTimedSpawn);
       }
     }
   }
@@ -265,6 +317,7 @@ export class BossManager {
     state: TownState,
     map: GameMap,
     nextId: () => number,
+    onTimedSpawn?: (instanceId: string, bossDefId: string) => void,
   ): void {
     const def = getMobDef(zone.mobId);
     if (!def) return;
@@ -281,6 +334,7 @@ export class BossManager {
     const mob = this.createBossMob(def, instanceId, x, y, fh);
     state.mobs.set(instanceId, mob);
     this.registerEncounter(instanceId, zone.mobId);
+    onTimedSpawn?.(instanceId, zone.mobId);
   }
 
   private createBossMob(
@@ -354,7 +408,9 @@ export class BossManager {
       if (target && !target.dead) {
         // I-frame check: ignore damage during the invulnerability window.
         const now = Date.now();
+        let hit = false;
         if (now >= target.iframesUntil) {
+          hit = true;
           target.hp = Math.max(0, target.hp - dmg);
           // Knockback the player backward (opposite their facing).
           target.knockbackVx += dmg * 0.12 * -target.facing;
@@ -365,6 +421,15 @@ export class BossManager {
           target.dead = true;
           target.attacking = false;
           target.respawnTimer = 4000;
+        }
+
+        // Apply boss debuff (stun/slow/poison) to the player on hit.
+        if (hit && def.debuffEffect) {
+          const debuffs = skillDebuffToStatusEffects(def.id, def.debuffEffect, def.name);
+          for (const debuff of debuffs) {
+            target.activeEffects = applyEffect(target.activeEffects, debuff);
+            target.effectElapsed.set(debuff.id, 0);
+          }
         }
       }
     }
@@ -414,12 +479,6 @@ export class BossManager {
       state.mobs.set(addId, addMob);
       enc.addInstanceIds.push(addId);
     }
-  }
-
-  private getMobRef(_instanceId: string): Mob | undefined {
-    // We don't have direct state access here, but the mob ref is stable in Colyseus.
-    // The MapRoom will sync bossPhase via its own tick.
-    return undefined;
   }
 
   /** Check if any alive player is within range of the boss. */

@@ -1,4 +1,7 @@
-import { lazy, Suspense, type ComponentType } from "react";
+import { lazy, Suspense, useEffect, type ComponentType } from "react";
+import { toast } from "sonner";
+
+import { installPanelEscHandler } from "@/ui/panelEsc";
 
 import { InventoryPanel } from "@/ui/InventoryPanel";
 import { CharacterCreatePanel } from "@/ui/CharacterCreatePanel";
@@ -12,6 +15,7 @@ import { ChannelSelectPanel } from "@/ui/ChannelSelectPanel";
 import { CoachMarks } from "@/ui/CoachMarks";
 import { IntroPanel } from "@/ui/IntroPanel";
 import { LoginPanel } from "@/ui/LoginPanel";
+import { MinimumResolutionNotice } from "@/ui/MinimumResolutionNotice";
 import { HUD } from "@/ui/HUD";
 import { Toaster } from "@/ui/components/ui/sonner";
 import { useUIStore, type UIState } from "@/ui/store";
@@ -62,6 +66,7 @@ const StatsPanel = lazy(() => import("@/ui/StatsPanel").then((m) => ({ default: 
 const EquipmentPanel = lazy(() =>
   import("@/ui/EquipmentPanel").then((m) => ({ default: m.EquipmentPanel })),
 );
+const HelpPanel = lazy(() => import("@/ui/HelpPanel").then((m) => ({ default: m.HelpPanel })));
 
 /**
  * Mounts a lazy panel only while its `*Open` store flag is true. Because the
@@ -86,8 +91,41 @@ function LazyPanel({
 }
 
 export function OverlayRoot() {
+  // Install the global Esc-to-close handler (panelEsc.ts). Safe to call
+  // multiple times — the installer is idempotent.
+  useEffect(() => installPanelEscHandler(), []);
+
+  // Bridge Phaser game events to React toasts.
+  useEffect(() => {
+    let unsub: (() => void) | null = null;
+    let disposed = false;
+    import("@/main").then(({ game }) => {
+      if (disposed || !game?.events) return;
+      const handler = (payload: {
+        id: string;
+        name: string;
+        description: string;
+        rewards: { mesos?: number; exp?: number; title?: string };
+      }) => {
+        const parts: string[] = [payload.description];
+        if (payload.rewards.mesos) parts.push(`+${payload.rewards.mesos} mesos`);
+        if (payload.rewards.exp) parts.push(`+${payload.rewards.exp} EXP`);
+        if (payload.rewards.title) parts.push(`Title: ${payload.rewards.title}`);
+        toast.success(`🏆 ${payload.name}`, { description: parts.join(" · ") });
+      };
+      game.events.on("achievement-unlock", handler);
+      unsub = () => {
+        game.events.off("achievement-unlock", handler);
+      };
+    });
+    return () => {
+      disposed = true;
+      unsub?.();
+    };
+  }, []);
   return (
     <>
+      <MinimumResolutionNotice />
       <HUD />
       <CharacterSelectPanel />
       <CharacterCreatePanel />
@@ -115,6 +153,7 @@ export function OverlayRoot() {
       <LazyPanel open={(s) => s.skillTreeOpen} component={SkillTreePanel} />
       <LazyPanel open={(s) => s.statPanelOpen} component={StatsPanel} />
       <LazyPanel open={(s) => s.equipmentOpen} component={EquipmentPanel} />
+      <LazyPanel open={(s) => s.helpOpen} component={HelpPanel} />
 
       <Toaster position="top-center" />
     </>

@@ -10,12 +10,14 @@ import {
 } from "@maple/shared";
 
 import { Panel } from "@/ui/components/Panel";
+import { focusPanelForEsc } from "@/ui/panelEsc";
 import { ItemListRow } from "@/ui/components/economy/ItemListRow";
 import { EmptyState } from "@/ui/components/EmptyState";
 import { Button } from "@/ui/components/ui/button";
 import { Badge } from "@/ui/components/ui/badge";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
 import { useUIStore, type StorageItemSnapshot } from "@/ui/store";
+import { slotItemIcon } from "@/ui/item-icon";
 
 /**
  * StoragePanel — the account-wide stash (bank) overlay.
@@ -46,10 +48,9 @@ function StorageRow({
   return (
     <ItemListRow
       leading={
-        <span
-          className="size-3 rounded-[3px] border border-black/40"
-          style={{ backgroundColor: tier.color }}
-        />
+        <span className="text-sm" aria-hidden>
+          {slotItemIcon(item.defId) ?? "◻️"}
+        </span>
       }
       title={
         <span style={{ color: dimmed ? undefined : rank.color }}>{def?.name ?? item.defId}</span>
@@ -85,6 +86,7 @@ export function StoragePanel() {
     <div
       data-slot="storage-scrim"
       className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      onPointerDown={() => focusPanelForEsc(() => actions?.close())}
     >
       <Panel
         title={

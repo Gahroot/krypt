@@ -50,6 +50,13 @@ const COACH_MARKS: readonly CoachMarkDef[] = [
     detail: "Press  Enter  near an NPC to start a conversation.",
     position: "center-bottom",
   },
+  {
+    id: "firstObjective",
+    icon: "🎯",
+    title: "Your First Quest",
+    detail: "Talk to Guide Iris — she's nearby with a ⚡ over her head!",
+    position: "center-bottom",
+  },
 ];
 
 // ─── Scene ─────────────────────────────────────────────────────────────────────
@@ -61,7 +68,7 @@ const COACH_MARKS: readonly CoachMarkDef[] = [
  * (`ui/CoachMarks.tsx`); this scene owns all the *logic*.
  *
  * Triggered via scene-registry flags set by MapScene/UIScene:
- *   `coachmark:move` | `coachmark:attack` | `coachmark:jump` | `coachmark:inventory` | `coachmark:talk`
+ *   `coachmark:firstObjective` | `coachmark:move` | `coachmark:attack` | `coachmark:jump` | `coachmark:inventory` | `coachmark:talk`
  *
  * Each flag is a one-shot: CoachMarks reads it, clears it, publishes the hint
  * (if not already seen), and auto-dismisses after 5 s or on any keypress/click.
@@ -97,7 +104,14 @@ export class CoachMarksScene extends Phaser.Scene {
 
   override update(): void {
     if (this.activeMarkId) return; // already showing one
-    const triggers: CoachMarkId[] = ["move", "attack", "jump", "inventory", "talk"];
+    const triggers: CoachMarkId[] = [
+      "firstObjective",
+      "move",
+      "attack",
+      "jump",
+      "inventory",
+      "talk",
+    ];
     for (const id of triggers) {
       const flag = this.registry.get(`coachmark:${id}`);
       if (flag === true) {

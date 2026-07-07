@@ -15,6 +15,9 @@ import bcrypt from "bcryptjs";
 import { verifyMessage } from "viem";
 import { log } from "./logger";
 
+/** Version identifier of the current alpha ToS/Privacy notice shown at registration. */
+export const TOS_VERSION = "alpha-2026-06";
+
 // ─── Secret resolution ────────────────────────────────────────────────────────
 /**
  * The HMAC secret. Provide `AUTH_SECRET` in the environment for stable tokens

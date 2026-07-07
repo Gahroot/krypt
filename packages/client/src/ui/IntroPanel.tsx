@@ -6,12 +6,20 @@ import { useUIStore, type IntroActions } from "@/ui/store";
 /**
  * IntroPanel — the Dawn Isle intro cinematic.
  *
- * React migration of the legacy hand-drawn Phaser `IntroScene`. The scene is a
- * thin controller that publishes the line sequence + registers a `complete`
- * action; this component plays the lines (fade in → hold → crossfade) and
- * handles skip-on-key/click, then calls `complete()` — which the scene wires to
- * its finish() (mark intro seen + fade into MapScene for Dawn Isle).
+ * Four atmospheric beats fade in and crossfade: stillness → dawn → mystery →
+ * the promise of scale + first objective. The background gradient warms with
+ * each beat (cold black → pre-dawn amber) to reinforce the emotional arc.
+ * Any keypress or click skips immediately. The scene's `complete()` marks the
+ * intro as seen and transitions into MapScene for Dawn Isle.
  */
+
+/** Per-beat visual config — background gradient, text color, and font size. */
+const BEAT_STYLES = [
+  { bg: "#050810", text: "#8fa89a", size: "text-lg" }, // stillness — dim, ethereal
+  { bg: "#0a1628", text: "#b5d4a4", size: "text-xl" }, // dawn — warmer, larger
+  { bg: "#111c2e", text: "#cfe8b4", size: "text-xl" }, // mystery — standard warmth
+  { bg: "#1a2538", text: "#ddeec8", size: "text-xl" }, // call to action — confident, bright
+] as const;
 
 const FADE_IN_MS = 500;
 const FADE_OUT_MS = 400;
@@ -97,15 +105,25 @@ export function IntroPanel() {
   };
 
   const line = lines[index];
+  const beat = (BEAT_STYLES[index] ?? BEAT_STYLES[0]) as (typeof BEAT_STYLES)[number];
 
   return (
     <div
-      className="pointer-events-auto absolute inset-0 z-50 flex flex-col items-center justify-center bg-[#0c1019]"
+      className="pointer-events-auto absolute inset-0 z-50 flex flex-col items-center justify-center"
+      style={{
+        background: `radial-gradient(ellipse at 50% 60%, ${beat.bg}ee, ${beat.bg})`,
+        transition: "background 1.2s ease-out",
+      }}
       onClick={skip}
     >
       <p
-        className="max-w-[70%] text-center text-lg leading-relaxed text-[#cfe8b4] transition-opacity duration-500 ease-out"
-        style={{ opacity: visible ? 1 : 0 }}
+        className={`max-w-[68%] text-center ${beat.size} leading-relaxed transition-opacity duration-500 ease-out`}
+        style={{
+          opacity: visible ? 1 : 0,
+          color: beat.text,
+          textShadow: `0 0 40px ${beat.text}22`,
+          whiteSpace: "pre-line",
+        }}
       >
         {line?.text ?? ""}
       </p>
@@ -117,7 +135,7 @@ export function IntroPanel() {
           e.stopPropagation();
           skip();
         }}
-        className="absolute bottom-8 text-xs text-muted-foreground hover:text-foreground"
+        className="absolute bottom-8 text-xs tracking-wide text-muted-foreground/60 hover:text-foreground/80 transition-colors"
       >
         Press any key to skip…
       </Button>

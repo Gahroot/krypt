@@ -92,7 +92,12 @@ export function CashShopPanel() {
     <>
       <ShopLayout
         title="Cash Shop"
-        subtitle={`Premium · ${cash.currencyLabel}`}
+        subtitle={
+          <>
+            Premium · {cash.currencyLabel} ·{" "}
+            <span className="text-amber-400 font-semibold">ALPHA — Test Currency</span>
+          </>
+        }
         hotkey="P"
         wallet={wallet}
         tabs={[
@@ -103,6 +108,7 @@ export function CashShopPanel() {
         onTabChange={(v) => setTab(v as Tab)}
         onClose={close}
         widthClassName="w-[760px]"
+        footer="Maple Crystals are test currency during alpha. No real money is involved."
       >
         {tab === "browse" ? (
           cash.items.length === 0 ? (

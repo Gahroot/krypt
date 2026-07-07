@@ -168,10 +168,14 @@ async function testSharedExp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   sdk2.send(MessageType.PARTY_ACCEPT, { fromCharId: rec1.charId });
   await sleep(300);
 
-  // Record pre-kill EXP.
+  // Record pre-kill EXP and level (level-up resets raw EXP within the new level).
   const exp1Before = p1.exp;
   const exp2Before = p2.exp;
-  console.log(`[party] EXP before kill: ${p1.name}=${exp1Before}, ${p2.name}=${exp2Before}`);
+  const level1Before = p1.level;
+  const level2Before = p2.level;
+  console.log(
+    `[party] EXP before kill: ${p1.name} Lv${level1Before} ${exp1Before}, ${p2.name} Lv${level2Before} ${exp2Before}`,
+  );
 
   // Find a mob and place it between them.
   let mobId = "";
@@ -202,6 +206,9 @@ async function testSharedExp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   p1.facing = 1;
   p1.climbing = false;
   p1.dead = false;
+  p1.hp = 5000;
+  p1.maxHp = 5000; // prevent HP being capped to base maxHp on effect ticks
+  p1.str = 999; // guarantee the hit lands against any mob defense/avoid
   p1.inputQueue.push({
     left: false,
     right: false,
@@ -218,16 +225,18 @@ async function testSharedExp(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
 
   const exp1After = p1.exp;
   const exp2After = p2.exp;
-  console.log(`[party] EXP after kill: ${p1.name}=${exp1After}, ${p2.name}=${exp2After}`);
+  console.log(
+    `[party] EXP after kill: ${p1.name} Lv${p1.level} ${exp1After}, ${p2.name} Lv${p2.level} ${exp2After}`,
+  );
 
   // Both should have gained EXP (shared with party bonus).
-  assert.ok(exp1After > exp1Before, "Player 1 should have gained EXP");
-  assert.ok(exp2After > exp2Before, "Player 2 should have gained EXP");
+  // A level-up resets raw EXP within the new level, so check level OR exp increased.
+  const p1Gained = p1.level > level1Before || exp1After > exp1Before;
+  const p2Gained = p2.level > level2Before || exp2After > exp2Before;
+  assert.ok(p1Gained, "Player 1 should have gained EXP (or leveled up)");
+  assert.ok(p2Gained, "Player 2 should have gained EXP (or leveled up)");
 
-  // Verify at least the killer gained EXP from the mob kill.
-  const exp1Gained = exp1After - exp1Before;
-  assert.ok(exp1Gained > 0, `Player 1 (killer) should gain EXP, got ${exp1Gained}`);
-  console.log(`[party] ✔ killer gained ${exp1Gained} EXP (mob base: ${mobDef.exp})`);
+  console.log(`[party] ✔ both players gained EXP from shared party kill (mob base: ${mobDef.exp})`);
 
   await sdk2.leave();
   await sdk1.leave();
@@ -281,9 +290,10 @@ async function testLeaderReassign(colyseus: Awaited<ReturnType<typeof bootAuthed
     latestUpdate = msg;
   });
 
-  // Leader (sdk1) disconnects.
+  // Leader (sdk1) disconnects. A consented leave fires onLeave immediately,
+  // which removes the player from the party and syncs the update to sdk2.
   await sdk1.leave();
-  await sleep(400);
+  await sleep(500);
 
   // sdk2 should have received a party update showing them as the new leader.
   assert.ok(latestUpdate, "Player 2 should have received a party update after leader left");

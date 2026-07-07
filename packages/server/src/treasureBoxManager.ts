@@ -101,6 +101,7 @@ export class TreasureBoxManager {
     // Broadcast hit (so client shows damage).
     this.broadcast(MessageType.TREASURE_HIT, {
       boxId: this.activeBox.id,
+      damage: dmg,
       hp: Math.max(0, this.activeBox.hp),
       maxHp: this.activeBox.maxHp,
     });
@@ -150,8 +151,10 @@ export class TreasureBoxManager {
 
   private despawn(): void {
     if (!this.activeBox) return;
+    const boxId = this.activeBox.id;
     this.activeBox = undefined;
     this.nextSpawnMs = TREASURE_SPAWN_INTERVAL_MS;
+    this.broadcast(MessageType.TREASURE_DESPAWN, { boxId });
   }
 
   private destroyBox(killer: Player): void {

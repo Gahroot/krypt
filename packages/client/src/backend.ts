@@ -158,9 +158,29 @@ async function postAuth(path: string, body?: unknown): Promise<AuthResult> {
   return persistAuth({ token: data.token, accountId: data.accountId });
 }
 
+/** Whether the alpha invite-code gate is enabled (fetched once on boot). */
+let alphaGateEnabled: boolean | null = null;
+
+/** Fetch the alpha-gate status from the server and cache it. */
+export async function fetchAlphaGateStatus(): Promise<boolean> {
+  if (alphaGateEnabled !== null) return alphaGateEnabled;
+  try {
+    const res = await fetch(`${HTTP_BACKEND_URL}/auth/alpha-gate`);
+    if (res.ok) {
+      const data = (await res.json()) as { enabled?: boolean };
+      alphaGateEnabled = !!data.enabled;
+    } else {
+      alphaGateEnabled = false;
+    }
+  } catch {
+    alphaGateEnabled = false;
+  }
+  return alphaGateEnabled;
+}
+
 /** Guest sign-in — mint a brand-new server-issued account so new players get in fast. */
-export function guestSignIn(): Promise<AuthResult> {
-  return postAuth("/auth/guest");
+export function guestSignIn(inviteCode?: string): Promise<AuthResult> {
+  return postAuth("/auth/guest", { tosAccepted: true, ...(inviteCode ? { inviteCode } : {}) });
 }
 
 /** Email + password sign-in — recovers the SAME account on any browser. */
@@ -169,8 +189,17 @@ export function loginWithPassword(email: string, password: string): Promise<Auth
 }
 
 /** Register a NEW credentialed account from an email + password. */
-export function registerWithPassword(email: string, password: string): Promise<AuthResult> {
-  return postAuth("/auth/register", { email, password });
+export function registerWithPassword(
+  email: string,
+  password: string,
+  inviteCode?: string,
+): Promise<AuthResult> {
+  return postAuth("/auth/register", {
+    email,
+    password,
+    tosAccepted: true,
+    ...(inviteCode ? { inviteCode } : {}),
+  });
 }
 
 /** Minimal EIP-1193 provider surface we use for wallet sign-in (e.g. MetaMask). */
@@ -193,7 +222,7 @@ export function isWalletAvailable(): boolean {
  *   3. sign it with the wallet, 4. verify the signature server-side to find-or-
  *      create the account bound to that wallet and issue a token.
  */
-export async function connectWallet(): Promise<AuthResult> {
+export async function connectWallet(inviteCode?: string): Promise<AuthResult> {
   const eth = getEthereum();
   if (!eth) throw new Error("No browser wallet detected. Install MetaMask to continue.");
 
@@ -219,7 +248,12 @@ export async function connectWallet(): Promise<AuthResult> {
     params: [nonceData.message, address],
   })) as string;
 
-  return postAuth("/auth/wallet/verify", { address, signature });
+  return postAuth("/auth/wallet/verify", {
+    address,
+    signature,
+    tosAccepted: true,
+    ...(inviteCode ? { inviteCode } : {}),
+  });
 }
 
 /**
@@ -516,7 +550,7 @@ export function setMacros(charId: string, macros: SkillMacro[]): void {
 // ─── Coach marks (onboarding overlays — seen once per character) ───────────────
 
 /** IDs of coach marks the player has already seen. */
-export type CoachMarkId = "move" | "attack" | "jump" | "inventory" | "talk";
+export type CoachMarkId = "move" | "attack" | "jump" | "inventory" | "talk" | "firstObjective";
 
 /** Read the set of coach mark IDs already dismissed for this character. */
 export function getSeenCoachMarks(charId: string): Set<string> {
@@ -535,6 +569,11 @@ export function markCoachMarkSeen(charId: string, id: CoachMarkId): void {
   const seen = getSeenCoachMarks(charId);
   seen.add(id);
   localStorage.setItem(`cryptomaple.coachmarks.${charId}`, JSON.stringify([...seen]));
+}
+
+/** Clear all seen coach marks so they replay on next trigger. */
+export function clearSeenCoachMarks(charId: string): void {
+  localStorage.removeItem(`cryptomaple.coachmarks.${charId}`);
 }
 
 // ─── Intro cinematic (seen once per character) ────────────────────────────────

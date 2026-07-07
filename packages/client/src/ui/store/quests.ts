@@ -80,6 +80,8 @@ export interface QuestActions {
   acceptTurnin(questId: string): void;
   /** Dismiss the pending quest turn-in (not yet). */
   declineTurnin(questId: string): void;
+  /** Abandon an active quest. */
+  abandonQuest(questId: string): void;
   /** Close the quest log. */
   closeLog(): void;
 }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ITEMS, EquipSlot } from "../src/items.js";
+import { ClassArchetype } from "../src/classes.js";
 
 /** Non-weapon slots that must have armor entries. */
 const ARMOR_SLOTS: EquipSlot[] = [
@@ -129,4 +130,82 @@ describe("armor catalog — class-flavored items have classReq", () => {
       }
     });
   }
+});
+
+describe("armor catalog — no zero-stat or placeholder items", () => {
+  const ALL_ARMOR = Object.values(ITEMS).filter((i) => i.slot !== EquipSlot.WEAPON);
+
+  it("every armor item has baseStatBonus > 0", () => {
+    for (const item of ALL_ARMOR) {
+      expect(item.baseStatBonus, `${item.id} has baseStatBonus 0`).toBeGreaterThan(0);
+    }
+  });
+
+  it("every armor item has a non-empty name", () => {
+    for (const item of ALL_ARMOR) {
+      expect(item.name.length, `${item.id} has empty name`).toBeGreaterThan(0);
+    }
+  });
+
+  it("no armor item has baseAttack > 0 (defense items only)", () => {
+    for (const item of ALL_ARMOR) {
+      // Exception: gloves may have small baseAttack for melee classes.
+      if (item.slot !== EquipSlot.GLOVES) {
+        expect(item.baseAttack, `${item.id} has baseAttack > 0`).toBe(0);
+      }
+    }
+  });
+
+  it("all primaryStat values are valid", () => {
+    const valid = new Set(["STR", "DEX", "INT", "LUK"]);
+    for (const item of ALL_ARMOR) {
+      expect(
+        valid.has(item.primaryStat),
+        `${item.id} has invalid primaryStat ${item.primaryStat}`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("armor catalog — unique IDs across entire catalog", () => {
+  it("has no duplicate item IDs", () => {
+    const ids = Object.keys(ITEMS);
+    expect(ids.length).toBe(new Set(ids).size);
+  });
+});
+
+describe("armor catalog — every slot has level band coverage", () => {
+  // Core armor slots should have items at multiple level bands.
+  const CORE_SLOTS = [
+    EquipSlot.HAT,
+    EquipSlot.TOP,
+    EquipSlot.BOTTOM,
+    EquipSlot.SHOES,
+    EquipSlot.GLOVES,
+    EquipSlot.CAPE,
+    EquipSlot.SHIELD,
+    EquipSlot.OVERALL,
+  ];
+
+  for (const slot of CORE_SLOTS) {
+    it(`${slot} has items at levels 5, 10, 20, 30, 40, 50, 60`, () => {
+      const items = armorForSlot(slot);
+      const levels = new Set(items.map((i) => i.levelReq));
+      const expected = [5, 10, 20, 30, 40, 50, 60];
+      for (const lv of expected) {
+        expect(levels.has(lv), `${slot} missing level ${lv} item`).toBe(true);
+      }
+    });
+  }
+});
+
+describe("armor catalog — shield is warrior-only", () => {
+  const shields = armorForSlot(EquipSlot.SHIELD);
+
+  it("all shields have classReq including WARRIOR", () => {
+    for (const item of shields) {
+      expect(item.classReq).toBeDefined();
+      expect(item.classReq).toContain(ClassArchetype.WARRIOR);
+    }
+  });
 });

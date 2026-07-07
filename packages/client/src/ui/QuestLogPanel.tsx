@@ -1,7 +1,7 @@
-import { CheckSquare, ScrollText, Square } from "lucide-react";
+import { CheckSquare, ScrollText, Square, XCircle } from "lucide-react";
 import { QUESTS, getItemDef } from "@maple/shared";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { Badge } from "@/ui/components/ui/badge";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
 import { EmptyState } from "@/ui/components/EmptyState";
@@ -33,6 +33,7 @@ function rewardLine(questId: string): string | null {
 }
 
 function QuestEntry({ quest }: { quest: QuestEntrySnapshot }) {
+  const actions = useUIStore((s) => s.questActions);
   const turnedIn = quest.status === "turnedIn";
   const isComplete = quest.status === "complete";
   const reward = turnedIn ? null : rewardLine(quest.questId);
@@ -66,12 +67,7 @@ function QuestEntry({ quest }: { quest: QuestEntrySnapshot }) {
               ) : (
                 <Square className="mt-0.5 size-3 shrink-0" />
               )}
-              <span>
-                {obj.description}{" "}
-                <span className="tabular-nums">
-                  ({obj.current}/{obj.target})
-                </span>
-              </span>
+              <span>{obj.description}</span>
             </div>
           );
         })}
@@ -82,6 +78,15 @@ function QuestEntry({ quest }: { quest: QuestEntrySnapshot }) {
         <p className="pl-3 text-[11px] italic text-amber-200">
           💬 Talk to the quest giver to turn in
         </p>
+      )}
+      {quest.status === "active" && (
+        <button
+          onClick={() => actions?.abandonQuest(quest.questId)}
+          className="mt-1 flex items-center gap-1 pl-3 text-[11px] text-red-400/70 transition-colors hover:text-red-300"
+        >
+          <XCircle className="size-3" />
+          Abandon
+        </button>
       )}
     </div>
   );
@@ -112,11 +117,11 @@ export function QuestLogPanel() {
   const isEmpty = quests.length === 0;
 
   return (
-    <Panel
+    <DraggableWindow
       title="Quest Log"
       hotkey="Q"
       onClose={() => actions?.closeLog()}
-      className="absolute left-1/2 top-1/2 w-[420px] -translate-x-1/2 -translate-y-1/2"
+      defaultPosition={{ x: 430, y: 200 }}
     >
       {isEmpty ? (
         <EmptyState
@@ -144,6 +149,6 @@ export function QuestLogPanel() {
           </div>
         </ScrollArea>
       )}
-    </Panel>
+    </DraggableWindow>
   );
 }

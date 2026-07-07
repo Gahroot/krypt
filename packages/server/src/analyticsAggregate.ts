@@ -144,6 +144,33 @@ function main(): void {
   );
   console.log();
 
+  // ── Tutorial funnel ─────────────────────────────────────────────────────
+
+  /**
+   * Tutorial funnel: accounts that reached each Dawn Isle tutorial step.
+   * Each step is a TUTORIAL_STEP event; the last step (completed=true) means
+   * the player finished the tutorial and left for Heartland.
+   */
+  const tutorialStarted = new Set<string>();
+  const tutorialComplete = new Set<string>();
+  for (const ev of events) {
+    if (ev.eventType === AnalyticsEventType.TUTORIAL_STEP) {
+      tutorialStarted.add(ev.accountId);
+      if (ev.payload.completed === true) tutorialComplete.add(ev.accountId);
+    }
+  }
+  console.log("─── Tutorial Funnel (Dawn Isle) ─────────────────────────");
+  console.log(
+    `  Tutorial started:    ${tutorialStarted.size}  (${pct(tutorialStarted.size, created.size)} of accounts)`,
+  );
+  console.log(
+    `  Tutorial complete:   ${tutorialComplete.size}  (${pct(tutorialComplete.size, tutorialStarted.size)} of starters)`,
+  );
+  console.log(
+    `  Dropped during:      ${tutorialStarted.size - tutorialComplete.size}  (${pct(tutorialStarted.size - tutorialComplete.size, tutorialStarted.size)} of starters)`,
+  );
+  console.log();
+
   // ── D1 Retention ───────────────────────────────────────────────────────
 
   /**
@@ -172,10 +199,24 @@ function main(): void {
     if (lastTs - firstTs >= MS_PER_DAY) d1Return++;
   }
 
-  console.log("─── D1 Retention ──────────────────────────────────────────");
-  console.log(
-    `  Accounts with ≥2 sessions:  ${d1Return} / ${d1Eligible}  (${pct(d1Return, d1Eligible)})`,
-  );
+  // D3 and D7 retention
+  let d3Return = 0;
+  let d3Eligible = 0;
+  let d7Return = 0;
+  let d7Eligible = 0;
+  for (const [acct, firstTs] of firstSessionTs) {
+    const lastTs = lastSessionTs.get(acct);
+    if (lastTs === undefined) continue;
+    d3Eligible++;
+    if (lastTs - firstTs >= 3 * MS_PER_DAY) d3Return++;
+    d7Eligible++;
+    if (lastTs - firstTs >= 7 * MS_PER_DAY) d7Return++;
+  }
+
+  console.log("─── Retention ─────────────────────────────────────────────");
+  console.log(`  D1:  ${d1Return} / ${d1Eligible}  (${pct(d1Return, d1Eligible)})`);
+  console.log(`  D3:  ${d3Return} / ${d3Eligible}  (${pct(d3Return, d3Eligible)})`);
+  console.log(`  D7:  ${d7Return} / ${d7Eligible}  (${pct(d7Return, d7Eligible)})`);
   console.log();
 
   // ── Time-to-Level (Lv 10, 30, 50) ────────────────────────────────────
@@ -219,6 +260,27 @@ function main(): void {
     console.log(`  ${cls}: ${count}`);
   }
   if (sorted.length === 0) console.log("  (no data)");
+  console.log();
+
+  // ── Churn analysis ─────────────────────────────────────────────────────
+
+  /**
+   * Churn: correlate disconnects with player progression stage.
+   * "Where do players quit?" is answered by grouping disconnects by map + level.
+   */
+  console.log("─── Churn (Disconnects by Map + Level) ────────────────────");
+  const churnByMapLevel = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.eventType === AnalyticsEventType.DISCONNECT_BY_MAP) {
+      const key = `${ev.payload.mapId} (Lv${ev.payload.level})`;
+      churnByMapLevel.set(key, (churnByMapLevel.get(key) ?? 0) + 1);
+    }
+  }
+  const sortedChurn = [...churnByMapLevel.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [key, count] of sortedChurn.slice(0, 15)) {
+    console.log(`  ${key}: ${count}`);
+  }
+  if (sortedChurn.length === 0) console.log("  (no data)");
   console.log();
 
   // ── Disconnect-by-map heatmap ──────────────────────────────────────────
@@ -271,13 +333,36 @@ function main(): void {
 
   console.log("─── Market Activity ───────────────────────────────────────");
   let firstLists = 0;
+  let firstBuys = 0;
   let sales = 0;
   for (const ev of events) {
     if (ev.eventType === AnalyticsEventType.MARKET_FIRST_LIST) firstLists++;
+    if (ev.eventType === AnalyticsEventType.MARKET_FIRST_BUY) firstBuys++;
     if (ev.eventType === AnalyticsEventType.MARKET_SALE) sales++;
   }
   console.log(`  First-time listers: ${firstLists}`);
+  console.log(`  First-time buyers:  ${firstBuys}`);
   console.log(`  Total sales:        ${sales}`);
+  console.log();
+
+  // ── Trades ──────────────────────────────────────────────────────────────
+
+  console.log("─── Player Trades ────────────────────────────────────────");
+  let totalTrades = 0;
+  let totalTradeItems = 0;
+  let totalTradeMesos = 0;
+  for (const ev of events) {
+    if (ev.eventType === AnalyticsEventType.TRADE_COMPLETE) {
+      totalTrades++;
+      totalTradeItems += (ev.payload.itemCountA as number) + (ev.payload.itemCountB as number);
+      totalTradeMesos += (ev.payload.mesosA as number) + (ev.payload.mesosB as number);
+    }
+  }
+  // Divide by 2 because each trade emits an event per player.
+  const uniqueTrades = Math.floor(totalTrades / 2);
+  console.log(`  Completed trades:   ${uniqueTrades}`);
+  console.log(`  Items traded:       ${Math.floor(totalTradeItems / 2)}`);
+  console.log(`  Mesos exchanged:    ${Math.floor(totalTradeMesos / 2)}`);
   console.log();
 
   // ── Deaths ─────────────────────────────────────────────────────────────
@@ -318,12 +403,26 @@ function main(): void {
         lv30ToJob2: dropoffJob2,
       },
     },
-    d1Retention: { eligible: d1Eligible, returned: d1Return },
+    tutorial: {
+      started: tutorialStarted.size,
+      complete: tutorialComplete.size,
+      droppedDuring: tutorialStarted.size - tutorialComplete.size,
+    },
+    retention: {
+      d1: { eligible: d1Eligible, returned: d1Return },
+      d3: { eligible: d3Eligible, returned: d3Return },
+      d7: { eligible: d7Eligible, returned: d7Return },
+    },
     classDistribution: Object.fromEntries(sorted),
     disconnectsByMap: Object.fromEntries(sortedDiscon),
     bossKills: Object.fromEntries(sortedBoss),
     partyQuests: { success: pqSuccess, fail: pqFail },
-    market: { firstLists, sales },
+    market: { firstLists, firstBuys, sales },
+    trades: {
+      uniqueTrades,
+      itemsTraded: Math.floor(totalTradeItems / 2),
+      mesosExchanged: Math.floor(totalTradeMesos / 2),
+    },
     deaths: { total: totalDeaths, byMap: Object.fromEntries(sortedDeath) },
   };
 

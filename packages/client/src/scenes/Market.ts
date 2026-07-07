@@ -188,7 +188,10 @@ export class MarketScene extends Phaser.Scene {
   // ─── Snapshot publishing ─────────────────────────────────────────────────────
   private publish(): void {
     const listings: MarketListing[] = [];
-    this.room?.state.listings.forEach((l: ListingView) => {
+    // `state.listings` is a nested MapSchema that decodes a beat after `state`
+    // itself, so guard it — an early publish() (right after join, before the first
+    // full sync) must no-op rather than throw on an undefined map.
+    this.room?.state?.listings?.forEach((l: ListingView) => {
       const info = getPotentialTierInfo(l.potentialTier as PotentialTier);
       listings.push({
         listingId: l.listingId,

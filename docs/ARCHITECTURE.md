@@ -13,7 +13,7 @@ will follow.
 > live rooms with channels), 74 mobs (12 bosses), two-layer rarity loot, a search-rich Free Market, plus
 > quests, parties, guilds, party quests, channels, trade, storage, friends, achievements and a monster
 > codex, with buffs/passives, status effects and the elemental triangle wired into live combat. One
-> authored system isn't wired into the live loop yet (see [§8](#8-authored-but-not-yet-wired)). The chain layer
+> authored system isn't wired into the live loop yet (see [§9](#9-authored-but-not-yet-wired)). The chain layer
 > (`packages/contracts`) is **scaffolded but deferred** — stubs with passing unit tests, no deploy
 > scripts, no keys, no broadcasts — until the game is proven fun.
 
@@ -415,7 +415,51 @@ Be honest about the trust model — it's a load-bearing part of the pitch.
 
 ---
 
-## 8. Authored but not yet wired
+## 8. Combat QoL — Macros, Quickslots, Auto-Pot
+
+A convenience layer that reduces button-mashing without enabling auto-combat. All three systems are
+**server-authoritative**: the client sends *intent*, the server validates and executes.
+
+### Skill Macros
+
+| Constraint | Value | Why |
+|---|---|---|
+| Max macros per player | 5 | Fits on one hand of keybinds |
+| Max steps per macro | 10 | Enough for a full rotation; prevents bloated sequences |
+| Step types | `skill` or `consumable` | Skills are class-filtered; consumables limited to heal/buff |
+| Rate limit | 5 macro casts/sec | Prevents spam; comfortably above manual play rate |
+| Auto-repeat | **Disabled** | Keypress fires once. No loop, no toggle, no timer. |
+
+**How it works:** `handleMacroCast` iterates each step and delegates to the existing `handleSkillCast` /
+`handleUseConsumable` handlers — the same server-validated paths used by quickslots. Each step
+independently checks: class ownership, learned status, cooldown, and MP. A failed step (e.g. skill
+unlearned mid-macro) is silently skipped; remaining steps still execute.
+
+**Persistence:** Macros are stored as a JSON blob in the `characters` table (`accountStore.setMacros`),
+loaded on join, and synced to the client via `MACRO_LAYOUT`. If a player unlearns or changes a skill,
+the macro doesn't break — it gracefully skips invalid steps at cast time.
+
+**Alpha anti-bot policy:** Macros are a QoL convenience, not an auto-combat bot.
+- Player must press the macro key for each execution (single-fire).
+- No server-side auto-repeat, no loop counter, no scheduled re-cast.
+- Per-step cooldown/MP/learned checks prevent any advantage over manual play.
+- Rate limit (5/sec) caps throughput even under scripted key input.
+- Policy may tighten if external macro-looping tools are detected (e.g. lower rate limit, add inter-step jitter).
+
+### Quickslots
+
+10 slots (1–0), each holding a skill or consumable. Layout persisted per character via
+`QUICKSLOT_LAYOUT` / `accountStore.setQuickslots`. Numpad 0–9 is a hard-wired fallback.
+
+### Auto-Pot
+
+Threshold-based HP/MP potion use. Configured per character in the Settings panel, persisted via
+`AUTO_POT_SYNC` / `accountStore.setAutoPot`. Server-side tick checks thresholds and applies potion
+effect — the client never decides HP/MP thresholds.
+
+---
+
+## 9. Authored but not yet wired
 
 One system exists as data/code but isn't applied in the live loop yet. It's called out here (and on the
 task list) so the doc never overstates what runs today:

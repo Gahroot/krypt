@@ -35,6 +35,83 @@ export default defineConfig([
       ],
     },
   },
+  // ─── Chain-import guard (Phase 2 deferred — contracts must not leak into runtime) ─────
+  // The client (browser bundle) must have ZERO chain dependencies.
+  {
+    files: ["packages/client/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "viem",
+              message:
+                "Chain imports are forbidden in the client (Phase 2 deferred). See eslint guard.",
+            },
+            {
+              name: "wagmi",
+              message:
+                "Chain imports are forbidden in the client (Phase 2 deferred). See eslint guard.",
+            },
+            {
+              name: "ethers",
+              message:
+                "Chain imports are forbidden in the client (Phase 2 deferred). See eslint guard.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@ethereum/*"],
+              message:
+                "Chain imports are forbidden in the client (Phase 2 deferred). See eslint guard.",
+            },
+            {
+              group: ["@maple/contracts"],
+              message:
+                "Chain imports are forbidden in the client (Phase 2 deferred). See eslint guard.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  // The server may use viem for off-chain signature verification (auth.ts verifyMessage),
+  // but must not import the contracts package or other chain-specific RPC libraries.
+  {
+    files: ["packages/server/src/**/*.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "ethers",
+              message:
+                "Chain imports are forbidden in the game server (Phase 2 deferred). See eslint guard.",
+            },
+            {
+              name: "wagmi",
+              message:
+                "Chain imports are forbidden in the game server (Phase 2 deferred). See eslint guard.",
+            },
+          ],
+          patterns: [
+            {
+              group: ["@ethereum/*"],
+              message:
+                "Chain imports are forbidden in the game server (Phase 2 deferred). See eslint guard.",
+            },
+            {
+              group: ["@maple/contracts", "@maple/contracts/**"],
+              message:
+                "Contracts package imports are forbidden in the game server (Phase 2 deferred). See eslint guard.",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Test harnesses pragmatically cast the synced Colyseus state (`room.state as any`) to read it by
   // hand, so `any` is allowed in test files only — not in shipped source.
   {

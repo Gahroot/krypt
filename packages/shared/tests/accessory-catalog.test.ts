@@ -139,3 +139,61 @@ describe("accessory catalog — no MapleStory IP names", () => {
     });
   }
 });
+
+describe("accessory catalog — no zero-stat or placeholder items", () => {
+  const accessories = Object.values(ITEMS).filter((i) => ACCESSORY_SLOTS.includes(i.slot));
+
+  it("every accessory has baseStatBonus > 0", () => {
+    for (const item of accessories) {
+      expect(item.baseStatBonus, `${item.id} has baseStatBonus 0`).toBeGreaterThan(0);
+    }
+  });
+
+  it("every accessory has a non-empty name", () => {
+    for (const item of accessories) {
+      expect(item.name.length, `${item.id} has empty name`).toBeGreaterThan(0);
+    }
+  });
+
+  it("no accessory has baseAttack > 0", () => {
+    for (const item of accessories) {
+      expect(item.baseAttack, `${item.id} has baseAttack > 0`).toBe(0);
+    }
+  });
+
+  it("all primaryStat values are valid", () => {
+    const valid = new Set(["STR", "DEX", "INT", "LUK"]);
+    for (const item of accessories) {
+      expect(
+        valid.has(item.primaryStat),
+        `${item.id} has invalid primaryStat ${item.primaryStat}`,
+      ).toBe(true);
+    }
+  });
+});
+
+describe("accessory catalog — baseStatBonus ascends across level bands", () => {
+  for (const slot of ACCESSORY_SLOTS) {
+    it(`${slot}: baseStatBonus increases across bands`, () => {
+      const items = itemsForSlot(slot);
+      const levelBands = [...new Set(items.map((i) => i.levelReq))].sort((a, b) => a - b);
+
+      const bandBest = levelBands.map((lv) => {
+        const atLevel = items.filter((i) => i.levelReq === lv);
+        return {
+          lv,
+          bestStat: Math.max(...atLevel.map((i) => i.baseStatBonus)),
+        };
+      });
+
+      for (let i = 1; i < bandBest.length; i++) {
+        const prev = bandBest[i - 1]!;
+        const cur = bandBest[i]!;
+        expect(
+          cur.bestStat > prev.bestStat,
+          `${slot} lv${prev.lv}→${cur.lv}: baseStatBonus ${prev.bestStat}→${cur.bestStat}`,
+        ).toBe(true);
+      }
+    });
+  }
+});

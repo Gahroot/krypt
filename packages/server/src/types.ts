@@ -14,6 +14,7 @@ export {
   type SessionGenerationPayload,
   type ForceLogoutPayload,
   type FerryBlockedPayload,
+  type TransportStatusPayload,
   type TalkNpcPayload,
   type DialogLinePayload,
   type DialogChoicePayload,
@@ -28,6 +29,7 @@ export {
   type QuestTurninOfferPayload,
   type QuestTurninAcceptPayload,
   type QuestTurninDeclinePayload,
+  type QuestAbandonPayload,
   type QuestObjectiveInfo,
   type BuyCashItemPayload,
   type BuyCashItemResultPayload,
@@ -198,4 +200,16 @@ export {
   // ─── Titles ──────────────────────────────────────────────────────────────
   type EquipTitlePayload,
   type TitleSyncPayload,
+
+  // ─── Daily Login Gift ────────────────────────────────────────────────────
+  type DailyLoginGiftSyncPayload,
+
+  // ─── Inventory Sort ──────────────────────────────────────────────────────
+  type InventorySortPayload,
+
+  // ─── Unstuck / Return to Town ────────────────────────────────────────────
+  type UnstuckResultPayload,
+
+  // ─── Live-ops events (date-gated feature flags) ─────────────────────────
+  type EventsSyncPayload,
 } from "@maple/shared";

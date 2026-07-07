@@ -23,7 +23,7 @@ import {
 
 import { keyBindFromEventCode } from "@/keybindings";
 import { VERSION_LABEL } from "@/version";
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { Button } from "@/ui/components/ui/button";
 import { Switch } from "@/ui/components/ui/switch";
 import { Slider } from "@/ui/components/ui/slider";
@@ -478,11 +478,11 @@ export function SettingsPanel() {
   const toggle = (key: SettingsToggleKey, value: boolean) => actions?.toggle(key, value);
 
   return (
-    <Panel
+    <DraggableWindow
       title="⚙ Settings"
       hotkey="Esc"
       onClose={() => actions?.close()}
-      className="absolute top-1/2 left-1/2 w-[460px] -translate-x-1/2 -translate-y-1/2"
+      defaultPosition={{ x: 410, y: 160 }}
     >
       <Tabs defaultValue="controls">
         <TabsList>
@@ -701,6 +701,6 @@ export function SettingsPanel() {
       <div className="mt-2 border-t border-border pt-2 text-center text-[10px] text-muted-foreground select-text">
         {VERSION_LABEL}
       </div>
-    </Panel>
+    </DraggableWindow>
   );
 }

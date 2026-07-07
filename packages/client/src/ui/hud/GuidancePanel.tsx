@@ -17,10 +17,8 @@ export function GuidancePanel() {
   const level = useUIStore((s) => s.hud.level);
   const trackedQuests = useUIStore((s) => s.hud.quests);
   const questLog = useUIStore((s) => s.questLog.quests);
-  const toggleOn = useUIStore((s) => s.hud.hudToggles.questTracker);
-
   // Only show when no quests are being tracked — this is the "lost player" state.
-  if (!toggleOn || trackedQuests.length > 0) return null;
+  if (trackedQuests.length > 0) return null;
 
   // Build the quest-states map the guidance function expects.
   const questStates = new Map<string, string>();

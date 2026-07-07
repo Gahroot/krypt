@@ -256,9 +256,12 @@ async function testMobStopsOnPlayerDeath(colyseus: Awaited<ReturnType<typeof boo
   mob.aiState = "chase";
   mob.targetSessionId = sdk.sessionId;
 
-  // Force-kill the player.
-  player.hp = 1;
+  // Force-kill the player and set respawn timer far in the future so the
+  // server doesn't immediately revive them (respawnTimer=0 → instant respawn
+  // lets the mob re-aggro the revived player).
+  player.hp = 0;
   player.dead = true;
+  player.respawnTimer = 30_000;
 
   await sleep(500);
 

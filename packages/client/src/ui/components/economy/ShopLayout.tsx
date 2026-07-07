@@ -4,6 +4,7 @@ import { Panel } from "@/ui/components/Panel";
 import { Tabs, TabsList, TabsTrigger } from "@/ui/components/ui/tabs";
 import { ScrollArea } from "@/ui/components/ui/scroll-area";
 import { cn } from "@/ui/lib/utils";
+import { focusPanelForEsc } from "@/ui/panelEsc";
 
 /**
  * ShopLayout — the standard centered buy/sell window shared by every economy
@@ -57,6 +58,7 @@ export function ShopLayout({
     <div
       data-slot="shop-layout-scrim"
       className="pointer-events-auto fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-[2px]"
+      onPointerDown={() => focusPanelForEsc(onClose)}
     >
       <Panel
         title={
@@ -70,7 +72,7 @@ export function ShopLayout({
         hotkey={hotkey}
         onClose={onClose}
         headerExtra={wallet}
-        className={cn("max-w-[92vw]", widthClassName)}
+        className={cn("max-w-[min(92vw,calc(100vw-2rem))]", widthClassName)}
       >
         {tabs && tabs.length > 0 && (
           <Tabs value={activeTab} onValueChange={onTabChange} className="mb-3">

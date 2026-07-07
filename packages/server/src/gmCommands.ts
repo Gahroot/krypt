@@ -19,14 +19,23 @@
  *   /kick <playerName>
  *   /ban <playerName> [reason]
  *   /unban <playerName>
+ *   /heal [player]
+ *   /summon <player>
  *   /god
+ *   /noclip
  *   /announce <text>
  *   /help
  */
 import type { Client } from "colyseus";
 import { type TownState, type Player } from "./rooms/schema/index";
 import { accountStore } from "./persistence/store";
-import { getMobDef, getMap, MessageType, type ServerAnnouncementPayload } from "@maple/shared";
+import {
+  getMobDef,
+  getMap,
+  MessageType,
+  SP_PER_LEVEL,
+  type ServerAnnouncementPayload,
+} from "@maple/shared";
 import { channelRegistry } from "./channelRegistry";
 import { log } from "./logger";
 import type { GmResultPayload } from "@maple/shared";
@@ -170,6 +179,8 @@ function dispatchCommand(ctx: GmCommandContext, cmd: string, args: string[]): Gm
     case "teleport":
     case "tp":
       return cmdTeleport(ctx, args);
+    case "summon":
+      return cmdSummon(ctx, args);
     case "spawn":
       return cmdSpawn(ctx, args);
     case "boss":
@@ -179,6 +190,8 @@ function dispatchCommand(ctx: GmCommandContext, cmd: string, args: string[]): Gm
     case "level":
     case "lvl":
       return cmdLevel(ctx, args);
+    case "heal":
+      return cmdHeal(ctx, args);
     case "killall":
       return cmdKillAll(ctx);
     case "mute":
@@ -193,6 +206,8 @@ function dispatchCommand(ctx: GmCommandContext, cmd: string, args: string[]): Gm
       return cmdUnban(ctx, args);
     case "god":
       return cmdGod(ctx);
+    case "noclip":
+      return cmdNoclip(ctx);
     case "announce":
     case "shout":
       return cmdAnnounce(ctx, args);
@@ -208,12 +223,14 @@ function cmdHelp(): GmResultPayload {
     "GM Commands:",
     "  /tp <mapId>              — teleport self to map",
     "  /tp <player> <mapId>     — teleport player to map",
+    "  /summon <player>         — teleport player to your location",
     "  /spawn <mobId> [count]   — spawn mob(s) at your position",
     "  /boss <mobId>            — spawn a boss",
     "  /give <itemId> [count]   — give item to self",
     "  /give mesos <amount>     — give mesos to self",
     "  /give exp <amount>       — give exp to self",
     "  /level <level>           — set your level",
+    "  /heal [player]           — heal self (or named player) to full HP/MP",
     "  /killall                 — kill all mobs in the map",
     "  /mute <player> [mins]    — mute a player (default 30 min)",
     "  /unmute <player>         — unmute a player",
@@ -221,6 +238,7 @@ function cmdHelp(): GmResultPayload {
     "  /ban <player> [reason]   — ban a player",
     "  /unban <player>          — unban a player",
     "  /god                     — toggle invincible",
+    "  /noclip                  — toggle no-clip (debug: walk through terrain)",
     "  /announce <text>         — broadcast server announcement",
   ].join("\n");
   return { success: true, message: help };
@@ -415,13 +433,67 @@ function cmdLevel(ctx: GmCommandContext, args: string[]): GmResultPayload {
   player.level = targetLevel;
   player.exp = 0;
   player.ap = (targetLevel - 1) * 5; // standard AP allocation
+  // SP only starts at level 10 (1st-job unlock). Levels 1-9 = Beginner, no SP.
+  player.sp = targetLevel >= 10 ? (targetLevel - 9) * SP_PER_LEVEL : 0;
   accountStore.updateCharacter(player.charId, {
     level: targetLevel,
     exp: 0,
     ap: player.ap,
+    sp: player.sp,
   });
 
-  return { success: true, message: `Set level to ${targetLevel}. AP: ${player.ap}.` };
+  return {
+    success: true,
+    message: `Set level to ${targetLevel}. AP: ${player.ap}. SP: ${player.sp}.`,
+  };
+}
+
+function cmdSummon(ctx: GmCommandContext, args: string[]): GmResultPayload {
+  if (args.length === 0) {
+    return { success: false, message: "Usage: /summon <player>" };
+  }
+
+  const playerName = args[0];
+  const target = findPlayerByName(ctx.room.state, playerName);
+  if (!target) {
+    return { success: false, message: `Player "${playerName}" not found.` };
+  }
+
+  const gm = ctx.room.state.players.get(ctx.client.sessionId);
+  if (!gm) {
+    return { success: false, message: "You are not in a valid player state." };
+  }
+
+  target.x = gm.x;
+  target.y = gm.y;
+  target.vy = 0;
+  target.vx = 0;
+
+  return { success: true, message: `Summoned ${target.name} to your location.` };
+}
+
+function cmdHeal(ctx: GmCommandContext, args: string[]): GmResultPayload {
+  // /heal — heal self
+  // /heal <player> — heal named player
+  if (args.length > 0) {
+    const target = findPlayerByName(ctx.room.state, args[0]);
+    if (!target) {
+      return { success: false, message: `Player "${args[0]}" not found.` };
+    }
+    target.hp = target.maxHp;
+    target.mp = target.maxMp;
+    target.dead = false;
+    return { success: true, message: `Healed ${target.name} to full HP/MP.` };
+  }
+
+  const player = ctx.room.state.players.get(ctx.client.sessionId);
+  if (!player) {
+    return { success: false, message: "You are not in a valid player state." };
+  }
+  player.hp = player.maxHp;
+  player.mp = player.maxMp;
+  player.dead = false;
+  return { success: true, message: `Healed to full HP/MP. (${player.hp}/${player.maxHp} HP)` };
 }
 
 function cmdKillAll(ctx: GmCommandContext): GmResultPayload {
@@ -604,7 +676,28 @@ function findPlayerByName(state: TownState, name: string): Player | undefined {
   return undefined;
 }
 
+function cmdNoclip(ctx: GmCommandContext): GmResultPayload {
+  const sid = ctx.client.sessionId;
+  const wasNoclipping = _noclipPlayers.has(sid);
+  if (wasNoclipping) {
+    _noclipPlayers.delete(sid);
+    return { success: true, message: "No-clip OFF. Collision restored." };
+  }
+  _noclipPlayers.add(sid);
+  return { success: true, message: "No-clip ON. You can now walk through terrain." };
+}
+
+// ─── Invincibility / noclip helpers ────────────────────────────────────────
+
 /** Check if a player is currently invincible (GM /god toggle). */
 export function isGmInvincible(sessionId: string): boolean {
   return _invinciblePlayers.has(sessionId);
+}
+
+/** Noclipping players (GM /noclip toggle) — bypasses terrain collision. */
+const _noclipPlayers = new Set<string>();
+
+/** Check if a player is currently noclip (GM /noclip toggle). */
+export function isNoclipping(sessionId: string): boolean {
+  return _noclipPlayers.has(sessionId);
 }

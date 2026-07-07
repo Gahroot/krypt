@@ -55,6 +55,15 @@ function effectEmoji(kind: string, label: string): string {
   }
 }
 
+/** Short text label for each status kind — shown below the icon for colorblind accessibility. */
+const KIND_LABEL: Record<string, string> = {
+  buff: "BUFF",
+  debuff: "DEBUFF",
+  stun: "STUN",
+  hot: "HOT",
+  dot: "DOT",
+};
+
 function EffectIcon({ effect }: { effect: StatusEffectSnapshot }) {
   const ratio =
     effect.durationMs > 0 ? Math.max(0, Math.min(1, effect.remainingMs / effect.durationMs)) : 0;
@@ -71,7 +80,7 @@ function EffectIcon({ effect }: { effect: StatusEffectSnapshot }) {
       >
         <span>{effectEmoji(effect.kind, effect.label)}</span>
         {effect.stacks > 1 && (
-          <span className="absolute -top-1 -right-1 rounded bg-black/70 px-1 text-[8px] font-bold text-amber-300">
+          <span className="absolute -top-1 -right-1 rounded bg-black/70 px-1 text-[9px] font-bold text-amber-300">
             {effect.stacks}
           </span>
         )}
@@ -83,7 +92,10 @@ function EffectIcon({ effect }: { effect: StatusEffectSnapshot }) {
           )}
         />
       </div>
-      <span className="text-[9px] tabular-nums text-muted-foreground">{secs}s</span>
+      <span className="text-[10px] tabular-nums text-muted-foreground">{secs}s</span>
+      <span className="text-[7px] font-bold uppercase tracking-wider text-muted-foreground/70">
+        {KIND_LABEL[effect.kind] ?? ""}
+      </span>
     </div>
   );
 }
@@ -94,7 +106,7 @@ export function StatusEffects() {
   if (effects.length === 0) return null;
 
   return (
-    <div className="pointer-events-none absolute bottom-[72px] left-1/2 flex -translate-x-1/2 select-none gap-1 rounded-lg border border-border bg-background/80 px-1.5 py-1 shadow-lg backdrop-blur-sm">
+    <div className="pointer-events-none absolute bottom-[72px] left-1/2 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 select-none gap-1 overflow-hidden rounded-lg border border-border bg-background/92 px-1.5 py-1 shadow-lg">
       {effects.map((e) => (
         <EffectIcon key={e.id} effect={e} />
       ))}

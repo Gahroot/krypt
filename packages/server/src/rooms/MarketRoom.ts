@@ -120,6 +120,9 @@ export class MarketRoom extends AuthedRoom<MarketState> {
   /** Track first market list per charId for analytics. */
   private marketListedChars = new Set<string>();
 
+  /** Track first market buy per charId for analytics. */
+  private marketBoughtChars = new Set<string>();
+
   /** Pure in-memory order book used for search/filter (mirrors Colyseus state). */
   private book = new FreeMarket();
 
@@ -399,6 +402,14 @@ export class MarketRoom extends AuthedRoom<MarketState> {
         price: rec.price,
         isSeller: false,
       });
+      // First-time buyer tracking.
+      if (!this.marketBoughtChars.has(buyerCharId)) {
+        this.marketBoughtChars.add(buyerCharId);
+        track(AnalyticsEventType.MARKET_FIRST_BUY, buyerAcct, buyerCharId, {
+          itemDefId: rec.item.defId,
+          price: rec.price,
+        });
+      }
     }
     // Analytics: sale tracking (seller side).
     const sellerAcct = this.accountByChar.get(rec.sellerId);

@@ -12,6 +12,7 @@ import {
   moveSlot,
   splitStack,
   findItem,
+  sortSlotArray,
 } from "../src/inventory.js";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -396,6 +397,82 @@ describe("findItem", () => {
   it("returns null when item not found", () => {
     const inv = createInventory();
     expect(findItem(inv, "pot.small_hp")).toBeNull();
+  });
+});
+
+// ─── sortSlotArray ───────────────────────────────────────────────────────
+
+describe("sortSlotArray", () => {
+  it("sorts equips alphabetically by defId", () => {
+    const slots: (Slot | null)[] = [
+      { defId: "wpn.bronze_sword", uid: "u1", qty: 1 },
+      { defId: "hat.leather_cap", uid: "u2", qty: 1 },
+      { defId: "arm.iron_shield", uid: "u3", qty: 1 },
+      null,
+      null,
+    ];
+    const sorted = sortSlotArray(slots);
+    expect(sorted[0]?.defId).toBe("arm.iron_shield");
+    expect(sorted[1]?.defId).toBe("hat.leather_cap");
+    expect(sorted[2]?.defId).toBe("wpn.bronze_sword");
+    expect(sorted[3]).toBeNull();
+    expect(sorted[4]).toBeNull();
+  });
+
+  it("sorts stackables by defId then qty descending", () => {
+    const slots: (Slot | null)[] = [
+      { defId: "pot.large_hp", qty: 10 },
+      { defId: "pot.small_hp", qty: 50 },
+      { defId: "pot.large_hp", qty: 30 },
+      { defId: "pot.small_hp", qty: 20 },
+    ];
+    const sorted = sortSlotArray(slots);
+    expect(sorted[0]?.defId).toBe("pot.large_hp");
+    expect(sorted[0]?.qty).toBe(30);
+    expect(sorted[1]?.defId).toBe("pot.large_hp");
+    expect(sorted[1]?.qty).toBe(10);
+    expect(sorted[2]?.defId).toBe("pot.small_hp");
+    expect(sorted[2]?.qty).toBe(50);
+    expect(sorted[3]?.defId).toBe("pot.small_hp");
+    expect(sorted[3]?.qty).toBe(20);
+  });
+
+  it("pushes all nulls to the end", () => {
+    const slots: (Slot | null)[] = [
+      null,
+      { defId: "wpn.sword", uid: "u1", qty: 1 },
+      null,
+      { defId: "hat.cap", uid: "u2", qty: 1 },
+      null,
+    ];
+    const sorted = sortSlotArray(slots);
+    expect(sorted[0]?.defId).toBe("hat.cap");
+    expect(sorted[1]?.defId).toBe("wpn.sword");
+    expect(sorted[2]).toBeNull();
+    expect(sorted[3]).toBeNull();
+    expect(sorted[4]).toBeNull();
+  });
+
+  it("handles all-null array", () => {
+    const slots: (Slot | null)[] = [null, null, null];
+    const sorted = sortSlotArray(slots);
+    expect(sorted).toEqual([null, null, null]);
+  });
+
+  it("handles empty array", () => {
+    const sorted = sortSlotArray([]);
+    expect(sorted).toEqual([]);
+  });
+
+  it("does not mutate the input", () => {
+    const slots: (Slot | null)[] = [
+      { defId: "wpn.sword", uid: "u1", qty: 1 },
+      { defId: "hat.cap", uid: "u2", qty: 1 },
+    ];
+    const original = [...slots];
+    sortSlotArray(slots);
+    expect(slots[0]?.defId).toBe(original[0]?.defId);
+    expect(slots[1]?.defId).toBe(original[1]?.defId);
   });
 });
 

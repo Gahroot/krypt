@@ -42,7 +42,7 @@ function SkillSlot({
       disabled={disabled}
       onClick={() => onUse(slot.index)}
       className={cn(
-        "pointer-events-auto relative flex size-10 select-none flex-col items-center justify-center overflow-hidden rounded-md border text-[9px] font-semibold leading-none transition-colors",
+        "pointer-events-auto relative flex size-10 select-none flex-col items-center justify-center overflow-hidden rounded-md border text-[10px] font-semibold leading-none transition-colors",
         empty
           ? "border-border/60 bg-black/40 text-muted-foreground/50"
           : slot.usable && !onCooldown
@@ -71,13 +71,13 @@ function SkillSlot({
 
       {/* Stack count (consumables). */}
       {slot.count !== undefined && slot.count > 1 && (
-        <span className="pointer-events-none absolute right-0.5 top-0.5 text-[8px] font-bold text-yellow-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+        <span className="pointer-events-none absolute right-0.5 top-0.5 text-[9px] font-bold text-yellow-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
           {slot.count}
         </span>
       )}
 
       {/* Key-binding hint. */}
-      <span className="pointer-events-none absolute bottom-0.5 left-0.5 text-[8px] text-muted-foreground">
+      <span className="pointer-events-none absolute bottom-0.5 left-0.5 text-[9px] text-muted-foreground">
         {slot.key}
       </span>
     </button>
@@ -99,6 +99,7 @@ function SkillSlot({
 export function SkillBar() {
   const skills = useUIStore((s) => s.hud.skills);
   const useSkill = useUIStore((s) => s.hudActions?.useSkill);
+  const toggleOn = useUIStore((s) => s.hud.hudToggles.skillBar);
   const [now, setNow] = useState(() => Date.now());
 
   // Tick locally only while a cooldown is running, so the sweep animates without
@@ -110,11 +111,11 @@ export function SkillBar() {
     return () => window.clearInterval(id);
   }, [anyCooldown]);
 
-  if (skills.length === 0) return null;
+  if (skills.length === 0 || !toggleOn) return null;
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="absolute bottom-3 right-3 flex gap-1 rounded-lg border border-border bg-background/85 p-1.5 shadow-2xl backdrop-blur-sm">
+      <div className="absolute bottom-3 right-3 flex max-w-[calc(100vw-4rem)] flex-wrap justify-end gap-1 rounded-lg border border-border bg-background/92 p-1.5 shadow-2xl">
         {skills.map((slot) => (
           <SkillSlot key={slot.index} slot={slot} now={now} onUse={(i) => useSkill?.(i)} />
         ))}

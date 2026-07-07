@@ -6,11 +6,13 @@ import {
   type PotentialTier,
 } from "@maple/shared";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { ItemCell } from "@/ui/components/ItemCell";
 import { PaperDoll } from "@/ui/components/PaperDoll";
 import { TooltipProvider } from "@/ui/components/ui/tooltip";
 import { ItemTooltip } from "@/ui/ItemTooltip";
+import { RARITY_SHORT_LABELS } from "@/ui/theme";
+import { slotItemIcon } from "@/ui/item-icon";
 import {
   useUIStore,
   type EquipSlotSnapshot,
@@ -48,15 +50,17 @@ function EquipCell({
 }) {
   const def = item ? getItemDef(item.defId) : undefined;
   const label = item ? (def?.name ?? item.defId) : undefined;
+  const tierInfo = item ? getPotentialTierInfo(item.potentialTier as PotentialTier) : undefined;
   return (
     <div className="flex flex-col items-center gap-0.5">
       <ItemCell
         className="w-full"
+        icon={item ? slotItemIcon(item.defId) : undefined}
         label={label}
-        borderColor={
-          item ? getPotentialTierInfo(item.potentialTier as PotentialTier).color : undefined
-        }
+        borderColor={tierInfo?.color}
         labelColor={item ? getBaseRankInfo(item.baseRank as BaseRank).color : undefined}
+        rarityLabel={item ? RARITY_SHORT_LABELS[item.potentialTier] : undefined}
+        rarityColor={tierInfo?.color}
         onContextMenu={(e) => {
           e.preventDefault();
           if (item) onUnequip();
@@ -99,11 +103,11 @@ export function EquipmentPanel() {
 
   return (
     <TooltipProvider delayDuration={120}>
-      <Panel
+      <DraggableWindow
         title="Equipment"
         hotkey="E"
         onClose={() => actions?.closeEquipment()}
-        className="absolute top-[52px] right-4 w-[300px]"
+        defaultPosition={{ x: 960, y: 200 }}
       >
         <div className="flex gap-3">
           {/* Left column of slots */}
@@ -143,7 +147,7 @@ export function EquipmentPanel() {
         <p className="mt-2 text-center text-[10px] text-muted-foreground">
           Double-click or right-click a slot to unequip.
         </p>
-      </Panel>
+      </DraggableWindow>
     </TooltipProvider>
   );
 }

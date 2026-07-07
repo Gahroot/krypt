@@ -12,11 +12,12 @@ import { useUIStore } from "@/ui/store";
 export function QuestTracker() {
   const quests = useUIStore((s) => s.hud.quests);
   const bonusHunt = useUIStore((s) => s.hud.bonusHunt);
+  const toggleOn = useUIStore((s) => s.hud.hudToggles.questTracker);
 
-  if (quests.length === 0 && !bonusHunt) return null;
+  if (!toggleOn || (quests.length === 0 && !bonusHunt)) return null;
 
   return (
-    <div className="absolute right-3 top-3 w-[260px] select-none rounded-lg border border-border bg-background/85 px-3 py-2 shadow-2xl backdrop-blur-sm">
+    <div className="absolute right-3 top-3 max-w-[min(260px,calc(100vw-4rem))] w-[260px] select-none rounded-lg border border-border bg-background/92 px-3 py-2 shadow-2xl">
       <div className="mb-1 flex items-center gap-1.5 text-[12px] font-bold text-primary">
         <ScrollText className="size-3.5" />
         Quests
@@ -49,12 +50,12 @@ export function QuestTracker() {
                   o.done ? "text-[#9ad06b]" : "text-muted-foreground",
                 )}
               >
-                {o.description} {o.current}/{o.target}
+                {o.description}
               </div>
             ))}
             {q.complete && (
               <div className="pl-2 text-[11px] italic text-slate-400">
-                Return to the giver to turn in
+                🎯 Return to the giver to turn in
               </div>
             )}
           </div>

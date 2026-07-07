@@ -16,4 +16,9 @@ export class LootDrop extends Schema {
 
   // ─── Server-only ────────────────────────────────────────────────────
   despawnTimer = 0; // ms until this drop disappears if unclaimed
+
+  /** Session id of the killer — exclusive pickup rights during the ownership window. */
+  ownerSessionId = "";
+  /** Epoch ms at which ownership expires and the drop becomes FFA. */
+  ownershipExpiresAt = 0;
 }

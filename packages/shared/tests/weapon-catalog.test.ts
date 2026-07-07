@@ -53,16 +53,50 @@ describe("weapon catalog — ascending attack per type", () => {
   }
 });
 
-describe("weapon catalog — coverage", () => {
-  const coveredTypes = new Set(WEAPONS.map(([, item]) => item.weaponType));
+describe("weapon catalog — no zero-stat or placeholder items", () => {
+  for (const [id, item] of WEAPONS) {
+    it(`${id} has baseStatBonus > 0`, () => {
+      expect(item.baseStatBonus).toBeGreaterThan(0);
+    });
 
-  for (const wt of ALL_WEAPON_TYPES) {
-    it(`has at least one weapon of type ${wt}`, () => {
-      expect(coveredTypes.has(wt)).toBe(true);
+    it(`${id} has a non-empty name`, () => {
+      expect(item.name.length).toBeGreaterThan(0);
+    });
+
+    it(`${id} has a valid classReq`, () => {
+      const validArchetypes = new Set(["BEGINNER", "WARRIOR", "MAGE", "ARCHER", "THIEF", "PIRATE"]);
+      if (item.classReq) {
+        for (const arch of item.classReq) {
+          expect(validArchetypes.has(arch)).toBe(true);
+        }
+      }
     });
   }
+});
 
+describe("weapon catalog — unique IDs", () => {
+  it("has no duplicate item IDs", () => {
+    const ids = Object.keys(ITEMS);
+    expect(ids.length).toBe(new Set(ids).size);
+  });
+});
+
+describe("weapon catalog — coverage", () => {
   it("has at least 40 weapons total", () => {
     expect(WEAPONS.length).toBeGreaterThanOrEqual(40);
   });
+});
+
+describe("weapon catalog — type-level band coverage", () => {
+  const EXPECTED_LEVELS = [10, 20, 30, 40, 50, 60];
+
+  for (const wt of ALL_WEAPON_TYPES) {
+    it(`${wt} has items covering levels 10–60`, () => {
+      const typeWeapons = WEAPONS.filter(([, item]) => item.weaponType === wt);
+      const levels = new Set(typeWeapons.map(([, item]) => item.levelReq));
+      for (const lv of EXPECTED_LEVELS) {
+        expect(levels.has(lv), `${wt} missing level ${lv} weapon`).toBe(true);
+      }
+    });
+  }
 });

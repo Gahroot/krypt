@@ -12,6 +12,19 @@ import { QUESTS } from "./quests.js";
 import { NPCS } from "./npcs.js";
 import { MAPS } from "./world.js";
 
+// ── Tutorial Chain ──────────────────────────────────────────────────────────
+
+/** Ordered quest ids that form the Dawn Isle tutorial. Used by analytics to build a tutorial funnel. */
+export const TUTORIAL_QUEST_CHAIN: readonly string[] = [
+  "quest.dawn_tutorial",
+  "quest.dawn_step_jump",
+  "quest.dawn_trio",
+  "quest.dawn_step_loot",
+  "quest.dawn_step_inventory",
+  "quest.dawn_level3",
+  "quest.dawn_ferry",
+];
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 /** A single step inside a milestone (quest to complete, NPC to talk to, etc.). */

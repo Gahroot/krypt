@@ -35,12 +35,21 @@ const SCOPE_COLOR: Record<string, string> = {
   system: "text-amber-400",
 };
 
+/** Short prefix tag shown before the sender name so scope is identifiable without color. */
+const SCOPE_TAG: Record<string, string> = {
+  whisper: "[W]",
+  party: "[P]",
+  guild: "[G]",
+  system: "[S]",
+};
+
 export function ChatBox() {
   const messages = useUIStore((s) => s.chat.messages);
   const channels = useUIStore((s) => s.chat.channels);
   const actions = useUIStore((s) => s.chatActions);
   const focusNonce = useUIStore((s) => s.chatFocusNonce);
   const prefill = useUIStore((s) => s.chatPrefill);
+  const toggleOn = useUIStore((s) => s.hud.hudToggles.chatBox);
 
   const [channel, setChannel] = useState<ChatChannel>("map");
   const [draft, setDraft] = useState("");
@@ -76,8 +85,10 @@ export function ChatBox() {
     setDraft("");
   };
 
+  if (!toggleOn) return null;
+
   return (
-    <div className="absolute bottom-[88px] left-3 w-[320px] select-none rounded-lg border border-border bg-background/80 shadow-2xl backdrop-blur-sm">
+    <div className="absolute bottom-[88px] left-3 max-w-[min(320px,calc(100vw-6rem))] w-[320px] select-none rounded-lg border border-border bg-background/92 shadow-2xl">
       <Tabs value={channel} onValueChange={(v) => setChannel(v as ChatChannel)} className="gap-0">
         <TabsList className="pointer-events-auto h-7 rounded-b-none rounded-t-lg">
           {channels.map((c) => (
@@ -92,7 +103,12 @@ export function ChatBox() {
         <div className="flex flex-col gap-0.5">
           {visible.map((m) => (
             <div key={m.id} className="text-[12px] leading-snug">
-              <span className={cn("font-semibold", SCOPE_COLOR[m.scope])}>{m.name}</span>
+              <span className={cn("font-semibold", SCOPE_COLOR[m.scope])}>
+                {SCOPE_TAG[m.scope] && (
+                  <span className="mr-0.5 text-[10px] opacity-70">{SCOPE_TAG[m.scope]}</span>
+                )}
+                {m.name}
+              </span>
               <span className="text-slate-300">: {m.text}</span>
             </div>
           ))}

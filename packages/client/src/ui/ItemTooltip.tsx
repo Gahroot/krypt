@@ -110,16 +110,24 @@ export function ItemTooltip({
       )}
 
       <div className="text-sm font-bold" style={{ color: rankInfo.color }}>
+        {rankInfo.label !== "Normal" && (
+          <span
+            className="mr-1 inline-flex size-4 items-center justify-center rounded-sm bg-black/50 text-[8px] font-bold"
+            style={{ color: rankInfo.color }}
+          >
+            {rankInfo.label.charAt(0)}
+          </span>
+        )}
         {def.name}
       </div>
 
-      <div className="text-[11px]" style={{ color: tierInfo.color }}>
+      <div className="text-[11px] font-semibold" style={{ color: tierInfo.color }}>
         {tierInfo.label} Potential · {item.lines} {item.lines === 1 ? "line" : "lines"}
       </div>
 
       {equipCheck && !equipCheck.ok && (
         <div className="text-[11px] font-bold" style={{ color: RED }}>
-          UNUSABLE
+          ⛔ UNUSABLE
         </div>
       )}
 

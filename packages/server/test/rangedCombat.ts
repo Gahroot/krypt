@@ -104,29 +104,30 @@ async function testArcherHitsFarMob(colyseus: Awaited<ReturnType<typeof bootAuth
   // Let the server tick a few frames to settle positions.
   await sleep(100);
 
-  // Re-pin the mob right before the swing so AI wander during the settle window
-  // can't drift it out of range before the attack is processed.
-  mob.x = arcPlayer.x + RANGED_TEST_DIST;
-  mob.y = arcPlayer.y;
-
-  // Archer attacks from far — cooldown is 450ms, so send one attack and wait.
-  arcSdk.send(MessageType.INPUT, {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    attack: true,
-    jump: false,
-    interact: false,
-    tick: 0,
-  });
-  await sleep(600); // wait for cooldown to expire + server tick
+  // Re-pin the mob right before swings so AI wander can't drift it.
+  // Send multiple attacks — a Lv 1 beginner vs a Lv 10 mob with avoid:3
+  // has only ~53% hit rate per swing, so several ensure at least one connects.
+  for (let t = 0; t < 5; t++) {
+    mob.x = arcPlayer.x + RANGED_TEST_DIST;
+    mob.y = arcPlayer.y;
+    arcSdk.send(MessageType.INPUT, {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      attack: true,
+      jump: false,
+      interact: false,
+      tick: t,
+    });
+    await sleep(500); // wait for cooldown (450 ms) + tick
+  }
 
   const mobAfterArc = serverRoom.state.mobs.get(firstMobId);
   assert.ok(mobAfterArc, "mob should still exist");
   assert.ok(mobAfterArc.hp < mobStartHp, "Archer should have damaged mob from far");
   console.log(
-    `[rangedCombat] Archer attacked: mob HP ${mobStartHp} → ${mobAfterArc.hp} at distance 300`,
+    `[rangedCombat] Archer attacked: mob HP ${mobStartHp} → ${mobAfterArc.hp} at distance ${RANGED_TEST_DIST}`,
   );
 
   // Warrior attacks from far — should NOT hit.
@@ -158,21 +159,27 @@ async function testArcherHitsFarMob(colyseus: Awaited<ReturnType<typeof bootAuth
   );
 
   // Move Warrior into melee range — should hit now.
+  // Send multiple attacks (Lv 1 vs Lv 10 mob has ~50% hit rate due to
+  // accuracy vs avoid, so several swings ensure at least one connects).
   warPlayer.x = mobAfterWar.x - 40;
   warPlayer.facing = 1;
-  await sleep(100); // let server tick to update position
+  await sleep(100);
 
-  warSdk.send(MessageType.INPUT, {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    attack: true,
-    jump: false,
-    interact: false,
-    tick: 2,
-  });
-  await sleep(600);
+  for (let t = 2; t < 7; t++) {
+    mobAfterWar.x = warPlayer.x + 40;
+    mobAfterWar.y = warPlayer.y;
+    warSdk.send(MessageType.INPUT, {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      attack: true,
+      jump: false,
+      interact: false,
+      tick: t,
+    });
+    await sleep(500);
+  }
 
   const mobAfterMelee = serverRoom.state.mobs.get(firstMobId);
   assert.ok(
@@ -234,18 +241,25 @@ async function testMageAoeHitsMultiple(colyseus: Awaited<ReturnType<typeof bootA
 
   await sleep(100);
 
-  // Mage attacks.
-  sdk.send(MessageType.INPUT, {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    attack: true,
-    jump: false,
-    interact: false,
-    tick: 0,
-  });
-  await sleep(600);
+  // Send multiple attacks — Lv 1 beginner vs Lv 10 mob with avoid:3
+  // has only ~53% hit rate per swing, so several ensure at least one connects.
+  for (let t = 0; t < 5; t++) {
+    mob1.x = player.x + 100;
+    mob1.y = player.y;
+    mob2.x = player.x + 200;
+    mob2.y = player.y;
+    sdk.send(MessageType.INPUT, {
+      left: false,
+      right: false,
+      up: false,
+      down: false,
+      attack: true,
+      jump: false,
+      interact: false,
+      tick: t,
+    });
+    await sleep(500);
+  }
 
   const mob1After = serverRoom.state.mobs.get(mobIds[0]!);
   const mob2After = serverRoom.state.mobs.get(mobIds[1]!);

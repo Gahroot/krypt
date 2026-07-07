@@ -12,6 +12,16 @@
 
 import type { MobDef } from "./mobs.js";
 
+// ─── Feature gate ───────────────────────────────────────────────────────────
+
+/**
+ * Master switch for the familiar system.
+ * When `false`, no familiar cards drop, no familiars can be summoned, and the
+ * client familiar panel is inert. Set to `true` once sprite rendering and
+ * balance tuning are complete.
+ */
+export const FAMILIAR_ENABLED = false;
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 /** Probability that a non-boss mob kill drops its familiar card. */

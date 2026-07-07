@@ -71,9 +71,18 @@ export interface HudMinimap {
   footholds: { x1: number; y1: number; x2: number; y2: number }[];
   ladders: { x: number; yTop: number; yBottom: number }[];
   portals: { x: number; y: number }[];
-  npcs: { x: number; y: number }[];
+  npcs: { x: number; y: number; quest?: "available" | "active" | "turnin" | "guide" }[];
   /** Live entity dots (players + mobs), refreshed on a throttle. */
   dots: { x: number; y: number; kind: "self" | "player" | "mob" }[];
+}
+
+/** Per-element HUD visibility toggles. All default to true. */
+export interface HudToggles {
+  statusBars: boolean;
+  minimap: boolean;
+  skillBar: boolean;
+  questTracker: boolean;
+  chatBox: boolean;
 }
 
 /** Everything the always-on HUD needs. Pushed in granular patches from Phaser. */
@@ -82,6 +91,10 @@ export interface HudSnapshot {
   visible: boolean;
   name: string;
   level: number;
+  /** Player class / archetype (e.g. "WARRIOR", "MAGE", "ARCHER"). */
+  archetype: string;
+  /** Local player's mesos (currency) count. */
+  mesos: number;
   hp: number;
   maxHp: number;
   mp: number;
@@ -94,6 +107,12 @@ export interface HudSnapshot {
   quests: HudQuest[];
   bonusHunt: HudBonusHunt | null;
   minimap: HudMinimap | null;
+  /** Per-element visibility toggles. */
+  hudToggles: HudToggles;
+  /** True while the local player is dead (shows DeathOverlay). */
+  dead: boolean;
+  /** Ms remaining until auto-respawn (countdown shown in DeathOverlay). */
+  respawnCountdownMs: number;
 }
 
 /** Imperative HUD actions the scene wires so React can drive the game. */
@@ -106,6 +125,8 @@ const EMPTY_HUD: HudSnapshot = {
   visible: false,
   name: "Adventurer",
   level: 1,
+  archetype: "BEGINNER",
+  mesos: 0,
   hp: 0,
   maxHp: 0,
   mp: 0,
@@ -116,6 +137,15 @@ const EMPTY_HUD: HudSnapshot = {
   quests: [],
   bonusHunt: null,
   minimap: null,
+  hudToggles: {
+    statusBars: true,
+    minimap: true,
+    skillBar: true,
+    questTracker: true,
+    chatBox: true,
+  },
+  dead: false,
+  respawnCountdownMs: 0,
 };
 
 export interface HudSlice {
@@ -125,6 +155,8 @@ export interface HudSlice {
   /** Merge a partial snapshot (preserves untouched fields). */
   setHud: (patch: Partial<HudSnapshot>) => void;
   setHudActions: (actions: HudActions | null) => void;
+  /** Toggle a single HUD element's visibility. */
+  toggleHudElement: (key: keyof HudToggles) => void;
 }
 
 export const createHudSlice: StateCreator<UIState, [], [], HudSlice> = (set) => ({
@@ -133,4 +165,11 @@ export const createHudSlice: StateCreator<UIState, [], [], HudSlice> = (set) => 
 
   setHud: (patch) => set((s) => ({ hud: { ...s.hud, ...patch } })),
   setHudActions: (actions) => set({ hudActions: actions }),
+  toggleHudElement: (key) =>
+    set((s) => ({
+      hud: {
+        ...s.hud,
+        hudToggles: { ...s.hud.hudToggles, [key]: !s.hud.hudToggles[key] },
+      },
+    })),
 });

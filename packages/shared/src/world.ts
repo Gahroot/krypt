@@ -249,12 +249,16 @@ export function clampXByWalls(
 const DAWN_GROUND_Y = 580;
 
 const DAWN_ISLE_SPAWNS: readonly MobSpawnZone[] = [
-  // Friendly snails on the ground — easiest targets
-  { footholdId: 0, mobId: "mob.friendly_snail", count: 5 },
+  // Friendly snails on the ground — easiest targets (wide platform)
+  { footholdId: 0, mobId: "mob.friendly_snail", count: 8 },
   // Green puffs roaming the fork-base plaza — slightly harder
-  { footholdId: 2, mobId: "mob.green_puff", count: 3 },
+  { footholdId: 2, mobId: "mob.green_puff", count: 5 },
   // Dawn shrooms near the guide ledge — toughest starter mob
-  { footholdId: 1, mobId: "mob.dawn_shroom", count: 2 },
+  { footholdId: 1, mobId: "mob.dawn_shroom", count: 3 },
+  // Green puffs near the warrior alcove — encourage platform exploration
+  { footholdId: 3, mobId: "mob.green_puff", count: 2 },
+  // Friendly snails near the pirate alcove — ground-level extras
+  { footholdId: 7, mobId: "mob.friendly_snail", count: 2 },
 ];
 
 export const DAWN_ISLE: GameMap = {
@@ -520,16 +524,16 @@ export const HARBOR_DOCKS: GameMap = {
   ],
 
   spawns: [
-    // Dock rats swarming the bilge planks
-    { footholdId: 0, mobId: "mob.dock_rat", count: 7 },
+    // Dock rats swarming the bilge planks (wide platform)
+    { footholdId: 0, mobId: "mob.dock_rat", count: 10 },
     // Barnacle crabs skittering among the crates
-    { footholdId: 1, mobId: "mob.barnacle_crab", count: 5 },
+    { footholdId: 1, mobId: "mob.barnacle_crab", count: 6 },
     // Harbor gulls circling the upper deck
-    { footholdId: 2, mobId: "mob.harbor_gull", count: 4 },
+    { footholdId: 2, mobId: "mob.harbor_gull", count: 5 },
     // Deckhand specters haunting the crow's nest
     { footholdId: 3, mobId: "mob.deckhand_specter", count: 3 },
     // Bilge rats on the side pier
-    { footholdId: 4, mobId: "mob.bilge_rat", count: 3 },
+    { footholdId: 4, mobId: "mob.bilge_rat", count: 4 },
   ],
 
   portals: [
@@ -635,20 +639,20 @@ export const MEADOWFIELD: GameMap = {
 
   spawns: [
     // Green mushrooms on the ground (easiest — entry-level for Lv 10 arrivals)
-    { footholdId: 0, mobId: "mob.green_mushroom", count: 4 },
+    { footholdId: 0, mobId: "mob.green_mushroom", count: 6 },
     // Mushrooms mixing on the ground (Lv 12)
-    { footholdId: 0, mobId: "mob.mushroom", count: 4 },
+    { footholdId: 0, mobId: "mob.mushroom", count: 5 },
     // Mushrooms on the mid platform (Lv 12)
-    { footholdId: 1, mobId: "mob.mushroom", count: 3 },
+    { footholdId: 1, mobId: "mob.mushroom", count: 4 },
     // Meadow beetles on the mid platform (Lv 16)
-    { footholdId: 1, mobId: "mob.meadow_beetle", count: 3 },
+    { footholdId: 1, mobId: "mob.meadow_beetle", count: 4 },
     // Thornback hoppers on the upper platform (Lv 18)
-    { footholdId: 2, mobId: "mob.thornback_hopper", count: 3 },
+    { footholdId: 2, mobId: "mob.thornback_hopper", count: 4 },
     // Crows and feral bunnies on the top (Lv 12–14)
-    { footholdId: 3, mobId: "mob.crow", count: 2 },
-    { footholdId: 3, mobId: "mob.feral_bunny", count: 3 },
+    { footholdId: 3, mobId: "mob.crow", count: 3 },
+    { footholdId: 3, mobId: "mob.feral_bunny", count: 4 },
     // Meadow beetles patrolling the far ledge (Lv 16)
-    { footholdId: 4, mobId: "mob.meadow_beetle", count: 3 },
+    { footholdId: 4, mobId: "mob.meadow_beetle", count: 4 },
   ],
 
   portals: [
@@ -937,12 +941,14 @@ export const SYLVANREACH_CANOPY: GameMap = {
   ],
 
   spawns: [
+    // Forest wisps on the low branch (ground-level canopy)
+    { footholdId: 0, mobId: "mob.forest_wisp", count: 4 },
     // Forest wisps along the mid canopy
-    { footholdId: 1, mobId: "mob.forest_wisp", count: 5 },
+    { footholdId: 1, mobId: "mob.forest_wisp", count: 6 },
     // Canopy moths on the high branches
     { footholdId: 2, mobId: "mob.canopy_moth", count: 4 },
     // Bark spiders near the rope bridge
-    { footholdId: 3, mobId: "mob.bark_spider", count: 2 },
+    { footholdId: 3, mobId: "mob.bark_spider", count: 3 },
   ],
 
   bossSpawns: [{ footholdId: 3, mobId: "mob.rotwood", count: 1, respawnIntervalMs: 180_000 }],
@@ -1021,12 +1027,12 @@ export const SYLVANREACH_ROOTS: GameMap = {
   ],
 
   spawns: [
-    // Root crawlers along the floor
-    { footholdId: 0, mobId: "mob.root_crawler", count: 6 },
+    // Root crawlers along the floor (wide platform)
+    { footholdId: 0, mobId: "mob.root_crawler", count: 8 },
     // Sylvan sprites on the fallen log
-    { footholdId: 1, mobId: "mob.sylvan_sprite", count: 4 },
+    { footholdId: 1, mobId: "mob.sylvan_sprite", count: 5 },
     // Bark spiders guarding the root mound
-    { footholdId: 2, mobId: "mob.bark_spider", count: 3 },
+    { footholdId: 2, mobId: "mob.bark_spider", count: 4 },
   ],
 
   portals: [
@@ -1247,13 +1253,13 @@ export const CRAGHOLD_CLIFFS: GameMap = {
 
   spawns: [
     // Rock lizards on the cliff base
-    { footholdId: 0, mobId: "mob.rock_lizard", count: 6 },
+    { footholdId: 0, mobId: "mob.rock_lizard", count: 7 },
     // Fossil beetles on the shelf
-    { footholdId: 1, mobId: "mob.fossil_beetle", count: 5 },
+    { footholdId: 1, mobId: "mob.fossil_beetle", count: 6 },
     // Cliff hawks on the ledge
-    { footholdId: 2, mobId: "mob.cliff_hawk", count: 3 },
+    { footholdId: 2, mobId: "mob.cliff_hawk", count: 4 },
     // A hawk alpha at the nest
-    { footholdId: 3, mobId: "mob.cliff_hawk", count: 2 },
+    { footholdId: 3, mobId: "mob.cliff_hawk", count: 3 },
   ],
 
   bossSpawns: [{ footholdId: 3, mobId: "mob.gelatinarch", count: 1, respawnIntervalMs: 240_000 }],
@@ -1352,13 +1358,13 @@ export const CRAGHOLD_QUARRY: GameMap = {
 
   spawns: [
     // Quarry crabs at the pit bottom (Lv 16)
-    { footholdId: 0, mobId: "mob.quarry_crab", count: 5 },
+    { footholdId: 0, mobId: "mob.quarry_crab", count: 6 },
     // Quarry crabs on the quarry floor
-    { footholdId: 1, mobId: "mob.quarry_crab", count: 5 },
+    { footholdId: 1, mobId: "mob.quarry_crab", count: 6 },
     // Boulder golems on the mid ledge (Lv 18)
-    { footholdId: 2, mobId: "mob.boulder_golem", count: 4 },
+    { footholdId: 2, mobId: "mob.boulder_golem", count: 5 },
     // Boulder golems on the crush deck
-    { footholdId: 3, mobId: "mob.boulder_golem", count: 3 },
+    { footholdId: 3, mobId: "mob.boulder_golem", count: 4 },
     // Mixed — crabs and golems on the side ledge
     { footholdId: 4, mobId: "mob.quarry_crab", count: 3 },
   ],
@@ -1599,16 +1605,16 @@ export const DUSK_WARD_SUBWAY: GameMap = {
   ],
 
   spawns: [
-    // Neon rats scurrying along the track bed
-    { footholdId: 0, mobId: "mob.neon_rat", count: 7 },
+    // Neon rats scurrying along the track bed (wide platform)
+    { footholdId: 0, mobId: "mob.neon_rat", count: 9 },
     // Tunnel bats on the lower platform
-    { footholdId: 1, mobId: "mob.tunnel_bat", count: 5 },
+    { footholdId: 1, mobId: "mob.tunnel_bat", count: 6 },
     // Spark drones hovering on the mid platform
-    { footholdId: 2, mobId: "mob.spark_drone", count: 4 },
+    { footholdId: 2, mobId: "mob.spark_drone", count: 5 },
     // Rail sentinels guarding the upper tunnel
     { footholdId: 3, mobId: "mob.rail_sentinel", count: 3 },
     // Mixed vermin on the maintenance ledge
-    { footholdId: 4, mobId: "mob.neon_rat", count: 4 },
+    { footholdId: 4, mobId: "mob.neon_rat", count: 5 },
   ],
 
   portals: [
@@ -1725,11 +1731,11 @@ export const DUSK_WARD_BACKALLEY: GameMap = {
 
   spawns: [
     // Shadow thugs lurking on the alley floor
-    { footholdId: 0, mobId: "mob.shadow_thug", count: 6 },
+    { footholdId: 0, mobId: "mob.shadow_thug", count: 8 },
     // Neon spiders on the mid alley
-    { footholdId: 1, mobId: "mob.neon_spider", count: 5 },
+    { footholdId: 1, mobId: "mob.neon_spider", count: 6 },
     // Arc wraiths in the drainage channel
-    { footholdId: 2, mobId: "mob.arc_wraith", count: 4 },
+    { footholdId: 2, mobId: "mob.arc_wraith", count: 5 },
     // Shadow thugs patrolling the fire escape
     { footholdId: 3, mobId: "mob.shadow_thug", count: 3 },
     // Neon spiders on the catwalk

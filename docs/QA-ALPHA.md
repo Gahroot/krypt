@@ -80,7 +80,7 @@
 | Dawn Isle intro | ✅ shared `dawn-isle-intro.test.ts` | ✅ PASS | — |
 | Guidance / Maple Guide | ✅ shared `guidance.test.ts` | ✅ PASS | — |
 | Appearance | ✅ shared `appearance.test.ts` | ✅ PASS | — |
-| Portals | ✅ server `portals.ts` | ✅ PASS | Scheduled-transport portals carry timetable metadata but MapRoom does not gate departures |
+| Portals | ✅ server `portals.ts`, `scheduledTransport.ts` | ✅ PASS | Scheduled-transport boarding, countdown, and departure fully gated + automated |
 | Boss encounters | ✅ server `boss.ts` | ✅ PASS | — |
 | Spawn system | ✅ server `spawnManager.ts` | ✅ PASS | Deterministic via injected jitter source |
 | Party Quest | ✅ server `partyquest.ts` | ✅ PASS | `solve` puzzle objective still unevaluated |
@@ -397,7 +397,7 @@ The full alpha loop: create account → Dawn Isle tutorial → class → grind �
 5. **Skill damage in melee auto-attack** — MapRoom `tryAttack` hardcodes `skillDamagePercent: 100` for auto-attacks; dedicated `SKILL_CAST` now applies skill-specific damage %.
 6. **Scroll system STUB** — `applyScroll()` / `ScrollDef` exist in shared but there is no `APPLY_SCROLL` message, drop source, or shop slot, so equipment scrolling is unreachable in play.
 7. **Untested-but-wired systems** — Familiars, Runes, Treasure boxes, Titles, Exploration dispatch, LFG/Party Finder, Free Market MTS extensions (buy orders/auctions/bids/price history), Bonus Hunting, Moderation, and Settings sync have no automated coverage.
-8. **Scheduled transport not gated** — airship/boat portals carry `schedule` timetable metadata in `world.ts`, but MapRoom does not enforce departure windows (always traversable).
+8. ~~**Scheduled transport not gated**~~ — **FIXED.** Scheduled portals (Crossway↔Skyhaven airship, Skyhaven↔Frosthold airship, etc.) now enforce boarding windows server-side. Players board during the 60-second window, see a live countdown banner, and are teleported together when the window closes. Fully automated test in `test/scheduledTransport.ts`.
 9. **PQ puzzle solver** — `solve` objective type defined but `PartyQuestRoom` doesn't evaluate puzzle solving.
 10. **TownRoom is legacy** — `MapRoom` supersedes it for all features.
 11. **BEGINNER class stub** — only 2 skills, minimal combat stats.

@@ -1,5 +1,12 @@
 # Familiar System Implementation Plan
 
+> **⚠ Alpha status: FLAGGED OFF.** The familiar system is gated behind `FAMILIAR_ENABLED = false`
+> in `packages/shared/src/familiars.ts`. Two items remain before shipping:
+> 1. **Sprite rendering** — MapScene does not draw familiar entities; summoned familiars are invisible.
+> 2. **Balance/perf tuning** — 30% ATK × 3 familiars = ~90% free DPS; `tickFamiliar` runs the full
+>    equip/stat pipeline per attack. Needs damage cap, scaling, or cooldown adjustments.
+> Flip the flag to `true` once both are resolved.
+
 ## Overview
 
 Add a MapleStory-style familiar system: defeating mobs has a small chance to drop a **familiar card**; cards register in a persistent **familiar collection**; the player can **summon up to 3 familiars** that fight nearby mobs for a fraction of player damage.

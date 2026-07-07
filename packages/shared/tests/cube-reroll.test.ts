@@ -5,6 +5,7 @@ import {
   potentialOdds,
   getPotentialTierInfo,
   createVerifiableRoll,
+  isMintWorthy,
 } from "../src/rarity.js";
 import { rerollPotential, CUBE_REROLL_COST, type ItemInstance } from "../src/items.js";
 import { BaseRank } from "../src/rarity.js";
@@ -178,6 +179,38 @@ describe("createVerifiableRoll", () => {
     for (const tier of Object.values(PotentialTier)) {
       const roll = createVerifiableRoll(42, tier, 1000);
       expect(roll.linesCount).toBe(getPotentialTierInfo(tier).lines);
+    }
+  });
+});
+
+// ─── isMintWorthy — Legendary flags mint-pending ───────────────────────────
+
+describe("isMintWorthy — mint-pending flag", () => {
+  it("returns true ONLY for LEGENDARY", () => {
+    expect(isMintWorthy(PotentialTier.RARE)).toBe(false);
+    expect(isMintWorthy(PotentialTier.EPIC)).toBe(false);
+    expect(isMintWorthy(PotentialTier.UNIQUE)).toBe(false);
+    expect(isMintWorthy(PotentialTier.LEGENDARY)).toBe(true);
+  });
+
+  it("a seeded LEGENDARY roll triggers isMintWorthy", () => {
+    // rng→1 yields LEGENDARY (rarest tier).
+    const rerolled = rerollPotential(makeInstance(), () => 0.99999);
+    expect(rerolled.potentialTier).toBe(PotentialTier.LEGENDARY);
+    expect(isMintWorthy(rerolled.potentialTier)).toBe(true);
+  });
+
+  it("over 200k rolls, every LEGENDARY triggers isMintWorthy and no other tier does", () => {
+    const rng = mulberry32(0xdeadbeef);
+    const N = 200_000;
+    for (let i = 0; i < N; i++) {
+      const rerolled = rerollPotential(makeInstance(), rng);
+      const shouldMint = isMintWorthy(rerolled.potentialTier);
+      if (rerolled.potentialTier === PotentialTier.LEGENDARY) {
+        expect(shouldMint).toBe(true);
+      } else {
+        expect(shouldMint).toBe(false);
+      }
     }
   });
 });

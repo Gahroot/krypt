@@ -7,15 +7,6 @@ import { CharacterSelectScene } from "./scenes/CharacterSelect";
 import { CharacterCreateScene } from "./scenes/CharacterCreate";
 import { MapScene } from "./scenes/MapScene";
 import { UIScene } from "./scenes/UI";
-import { MarketScene } from "./scenes/Market";
-import { CashShopScene } from "./scenes/CashShop";
-import { GeneralStoreScene } from "./scenes/GeneralStore";
-import { TradeScene } from "./scenes/Trade";
-import { StorageScene } from "./scenes/Storage";
-import { ChannelSelectScene } from "./scenes/ChannelSelect";
-import { SettingsScene } from "./scenes/SettingsUI";
-import { CoachMarksScene } from "./scenes/CoachMarks";
-import { LoadingScene } from "./scenes/Loading";
 import { IntroScene } from "./scenes/Intro";
 import { mountOverlay } from "./ui/mount";
 import { installInputFocusTracking } from "./ui/inputFocus";
@@ -36,6 +27,7 @@ const config: Phaser.Types.Core.GameConfig = {
   },
   scale: {
     mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
     width: window.innerWidth,
     height: window.innerHeight,
   },
@@ -55,15 +47,9 @@ const config: Phaser.Types.Core.GameConfig = {
     IntroScene,
     MapScene,
     UIScene,
-    MarketScene,
-    CashShopScene,
-    GeneralStoreScene,
-    TradeScene,
-    StorageScene,
-    ChannelSelectScene,
-    SettingsScene,
-    CoachMarksScene,
-    LoadingScene,
+    // On-demand scenes (Market, CashShop, GeneralStore, Trade, Storage,
+    // ChannelSelect, Settings, CoachMarks, Loading) are lazy-loaded via
+    // loadScene() so they stay out of the initial bundle.
   ],
 };
 

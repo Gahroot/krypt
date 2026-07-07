@@ -266,6 +266,26 @@ export function splitStack(
 }
 
 /**
+ * Sort items within a slot array: non-null slots by defId ascending,
+ * then qty descending (bigger stacks first), with nulls pushed to the end.
+ * Returns a NEW array — does not mutate the input.
+ */
+export function sortSlotArray(slots: readonly (Slot | null)[]): (Slot | null)[] {
+  const nonNull: Slot[] = [];
+  for (const s of slots) {
+    if (s !== null) nonNull.push(s);
+  }
+  nonNull.sort((a, b) => {
+    const defCmp = a.defId.localeCompare(b.defId);
+    if (defCmp !== 0) return defCmp;
+    return b.qty - a.qty;
+  });
+  const result: (Slot | null)[] = [...nonNull];
+  while (result.length < slots.length) result.push(null);
+  return result;
+}
+
+/**
  * Find the first slot matching a defId (and optional uid).
  * Returns { tab, idx, slot } or null.
  */

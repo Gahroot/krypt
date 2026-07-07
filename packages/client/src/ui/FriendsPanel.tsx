@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { UserPlus, MessageSquare, UserMinus, Users } from "lucide-react";
 
-import { Panel } from "@/ui/components/Panel";
+import { DraggableWindow } from "@/ui/components/DraggableWindow";
 import { EmptyState } from "@/ui/components/EmptyState";
 import { Button } from "@/ui/components/ui/button";
 import { Input } from "@/ui/components/ui/input";
@@ -113,11 +113,11 @@ export function FriendsPanel() {
   };
 
   return (
-    <Panel
+    <DraggableWindow
       title="Friends"
       hotkey="F"
       onClose={() => actions?.close()}
-      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px]"
+      defaultPosition={{ x: 960, y: 340 }}
       headerExtra={
         <span className="text-[10px] tabular-nums text-green-400">{onlineCount} online</span>
       }
@@ -160,6 +160,6 @@ export function FriendsPanel() {
           description="Add someone by name to build your buddy list."
         />
       )}
-    </Panel>
+    </DraggableWindow>
   );
 }

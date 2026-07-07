@@ -19,7 +19,7 @@ import { mkdirSync, rmSync } from "node:fs";
 import { bootAuthed } from "./authBoot";
 import appConfig from "../src/app.config";
 import { MessageType } from "../src/types";
-import { applyHealEffect } from "@maple/shared";
+import { applyHealEffect, getShopDef, NPCS } from "@maple/shared";
 
 const TEST_DIR = ".data_test_consumableuse";
 
@@ -97,6 +97,22 @@ async function main() {
     /* suppress unhandled message warning */
   });
   await sleep(400);
+
+  // Teleport the server-side player near the shop NPC so BUY_FROM_SHOP passes
+  // the proximity check — same pattern as generalStore.ts.
+  const serverPlayer = (serverRoom.state as any).players.get(sdkRoom.sessionId) as any;
+  assert.ok(serverPlayer, "player should exist in server state after join");
+  const shopDef = getShopDef(SHOP_ID);
+  assert.ok(shopDef, `shop ${SHOP_ID} should exist`);
+  const shopNpc = NPCS[shopDef.npcId];
+  assert.ok(shopNpc, "shop NPC should exist");
+  serverPlayer.x = shopNpc.x;
+  serverPlayer.y = shopNpc.y;
+  console.log(`[consumableUse] ✔ teleported near NPC (${shopNpc.x},${shopNpc.y})`);
+
+  // Clear mobs so they don't chip HP between potion-heal assertions.
+  (serverRoom.state as any).mobs.clear();
+  await sleep(100);
 
   const me = () => (sdkRoom.state as any).players.get(sdkRoom.sessionId) as any;
   assert.ok(me(), "player should exist after join");

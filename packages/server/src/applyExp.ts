@@ -11,6 +11,7 @@
 import { applyExp, type ClassArchetype } from "@maple/shared";
 import type { Player } from "./rooms/schema/Player";
 import { accountStore } from "./persistence/store";
+import { getEventMultiplier } from "./events";
 
 export interface GrantExpResult {
   /** Whether at least one level-up occurred. */
@@ -33,7 +34,11 @@ export interface GrantExpResult {
 export function grantExp(player: Player, gained: number): GrantExpResult {
   const archetype = player.archetype as ClassArchetype;
 
-  const result = applyExp({ level: player.level, exp: player.exp }, gained, archetype);
+  // Apply active event EXP multiplier (stacks with rune/elite multipliers).
+  const eventExpMul = getEventMultiplier("expMultiplier");
+  const effectiveGained = Math.floor(gained * eventExpMul);
+
+  const result = applyExp({ level: player.level, exp: player.exp }, effectiveGained, archetype);
 
   // Update schema fields.
   player.level = result.level;

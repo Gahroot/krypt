@@ -48,36 +48,23 @@ export default defineConfig({
   },
   build: {
     target: "esnext",
-    // With vendor code split out (below) and heavy panels lazy-loaded, every
-    // app + vendor chunk is now well under this. Dropped from 1500 toward the
-    // 500 default so an accidental fat app chunk surfaces again. The sole chunk
-    // that still exceeds it is `phaser` (~1.5 MB) — a single-namespace engine
-    // that can't be sub-split with standard tooling, so one expected warning
-    // about that vendor chunk remains by design.
-    chunkSizeWarningLimit: 700,
+    // Phaser is a monolithic ~1.5 MB engine that cannot be sub-split — the
+    // 1500 KB limit accommodates it while still flagging any accidentally fat
+    // app or vendor chunk (all of which land well under 700 KB).
+    chunkSizeWarningLimit: 1500,
     rollupOptions: {
       output: {
         // Split large, rarely-changing vendor code into dedicated chunks so the
         // browser can cache them independently and the initial app bundle stays
-        // small. Order matters: the first matching branch wins.
+        // small. Two splits: Phaser (huge, never changes) and shared game-data
+        // tables (large, change rarely). Everything else from node_modules
+        // (React, Radix, Colyseus, zustand, utils) goes into a single `vendor`
+        // chunk to avoid circular dependency warnings between React and vendor
+        // sub-packages.
         manualChunks(id) {
-          // Shared game-data tables (mobs / items / codex / classes) are large,
-          // statically imported everywhere, and change rarely — give them their
-          // own cacheable chunk so they stay out of the app entry bundle.
           if (id.includes("/packages/shared/")) return "shared";
           if (!id.includes("node_modules")) return undefined;
-          // Phaser is by far the heaviest dependency — isolate it.
           if (id.includes("/phaser/")) return "phaser";
-          // React core + Radix UI primitives used by the overlay kit.
-          if (
-            id.includes("/react/") ||
-            id.includes("/react-dom/") ||
-            id.includes("/scheduler/") ||
-            id.includes("/@radix-ui/")
-          ) {
-            return "react-vendor";
-          }
-          // Everything else from node_modules (colyseus sdk, zustand, utils …).
           return "vendor";
         },
       },

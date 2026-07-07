@@ -6,13 +6,21 @@
  * Run: npx tsx test/dailyQuests.ts
  */
 import assert from "node:assert";
-import { QUESTS, isDailyResettable, BONUS_HUNT_MAPS, type QuestState } from "@maple/shared";
+import {
+  QUESTS,
+  isDailyResettable,
+  BONUS_HUNT_MAPS,
+  canClaimDailyLoginGift,
+  getDailyLoginReward,
+  type QuestState,
+} from "@maple/shared";
 import {
   ensureQuestStates,
   acceptQuest,
   turnInQuest,
   resetDailyQuests,
   progressObjectives,
+  grantDailyLoginGift,
   getCurrentBonusMap,
   isBonusHuntingMap,
   getExpMultiplierForMap,
@@ -297,8 +305,8 @@ function testDailyQuestDefinitions() {
     .filter((q) => q.repeatable?.kind === "daily")
     .map((q) => q.id);
 
-  // Should have at least 2 quests per region × 8 regions = 16
-  assert.ok(dailyIds.length >= 16, `expected ≥16 daily quests, got ${dailyIds.length}`);
+  // 11 regions × 2 quests (hunt + collect) = 22 daily quests
+  assert.ok(dailyIds.length >= 22, `expected ≥22 daily quests, got ${dailyIds.length}`);
   console.log(`[dailyQuests] ✔ found ${dailyIds.length} daily quests`);
 
   // All should have unique ids
@@ -316,6 +324,100 @@ function testDailyQuestDefinitions() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: daily login gift — claimable once per UTC day, server-authoritative
+// ---------------------------------------------------------------------------
+
+function testDailyLoginGift() {
+  console.log("[dailyQuests] ── daily login gift ──");
+
+  const now = Date.now();
+  const yesterday = now - 25 * 60 * 60 * 1000;
+  const oneHourAgo = now - 60 * 60 * 1000;
+
+  // First login ever (undefined lastClaimed) → should grant
+  const firstLogin = grantDailyLoginGift(1, undefined, now);
+  assert.ok(firstLogin, "first login should grant a gift");
+  assert.ok(firstLogin!.mesos > 0, "should have mesos reward");
+  assert.ok(firstLogin!.exp > 0, "should have exp reward");
+  console.log(
+    `[dailyQuests] ✔ first login grants ${firstLogin!.mesos} mesos + ${firstLogin!.exp} exp`,
+  );
+
+  // Same-day re-login → should NOT grant
+  const sameDay = grantDailyLoginGift(1, now, now);
+  assert.strictEqual(sameDay, null, "same-day re-login should not grant");
+  console.log("[dailyQuests] ✔ same-day re-login blocked");
+
+  // Yesterday claim → should grant (new day)
+  const nextDay = grantDailyLoginGift(1, yesterday, now);
+  assert.ok(nextDay, "yesterday claim should allow grant on new day");
+  console.log("[dailyQuests] ✔ next-day re-claim allowed");
+
+  // canClaimDailyLoginGift — explicit checks
+  assert.ok(canClaimDailyLoginGift(undefined, now), "undefined → claimable");
+  assert.ok(!canClaimDailyLoginGift(now, now), "same ts → not claimable");
+  assert.ok(!canClaimDailyLoginGift(oneHourAgo, now), "1h ago → not claimable");
+  assert.ok(canClaimDailyLoginGift(yesterday, now), "yesterday → claimable");
+  console.log("[dailyQuests] ✔ canClaimDailyLoginGift edge cases pass");
+
+  // Level-scaled rewards
+  const lowLevel = getDailyLoginReward(1);
+  const midLevel = getDailyLoginReward(30);
+  const highLevel = getDailyLoginReward(95);
+  assert.ok(lowLevel.mesos <= midLevel.mesos, "mid-level mesos >= low-level");
+  assert.ok(midLevel.mesos <= highLevel.mesos, "high-level mesos >= mid-level");
+  assert.ok(lowLevel.exp <= midLevel.exp, "mid-level exp >= low-level");
+  assert.ok(midLevel.exp <= highLevel.exp, "high-level exp >= mid-level");
+  console.log(
+    `[dailyQuests] ✔ level-scaled rewards: Lv1=${lowLevel.mesos}m/${lowLevel.exp}e, Lv30=${midLevel.mesos}m/${midLevel.exp}e, Lv95=${highLevel.mesos}m/${highLevel.exp}e`,
+  );
+
+  // Anti-farm: can't farm by passing fake time
+  // A malicious client can't call this with a fake earlier timestamp —
+  // the server always uses its own Date.now(). Verify that even if
+  // someone passes a future timestamp, the function still works correctly.
+  const futureTs = now + 24 * 60 * 60 * 1000;
+  const futureGrant = grantDailyLoginGift(1, now, futureTs);
+  assert.ok(futureGrant, "future timestamp (next day) should allow grant");
+  console.log("[dailyQuests] ✔ anti-farm: future timestamp treated as new day");
+}
+
+// ---------------------------------------------------------------------------
+// Test: daily login gift rewards are sensible for all tiers
+// ---------------------------------------------------------------------------
+
+function testLoginGiftRewardTiers() {
+  console.log("[dailyQuests] ── login gift reward tiers ──");
+
+  // Boundary levels should return the right tier
+  const lv1 = getDailyLoginReward(1);
+  const lv10 = getDailyLoginReward(10);
+  const lv11 = getDailyLoginReward(11);
+  const lv25 = getDailyLoginReward(25);
+  const lv26 = getDailyLoginReward(26);
+  const lv50 = getDailyLoginReward(50);
+  const lv51 = getDailyLoginReward(51);
+  const lv90 = getDailyLoginReward(90);
+  const lv91 = getDailyLoginReward(91);
+  const lv200 = getDailyLoginReward(200);
+
+  // Same tier within bracket
+  assert.strictEqual(lv1.mesos, lv10.mesos, "Lv1-10 same tier");
+  assert.strictEqual(lv11.mesos, lv25.mesos, "Lv11-25 same tier");
+  assert.strictEqual(lv26.mesos, lv50.mesos, "Lv26-50 same tier");
+  assert.strictEqual(lv51.mesos, lv90.mesos, "Lv51-90 same tier");
+  assert.strictEqual(lv91.mesos, lv200.mesos, "Lv91+ same tier");
+
+  // Strictly increasing tiers
+  assert.ok(lv1.mesos < lv11.mesos, "tier 2 > tier 1");
+  assert.ok(lv11.mesos < lv26.mesos, "tier 3 > tier 2");
+  assert.ok(lv26.mesos < lv51.mesos, "tier 4 > tier 3");
+  assert.ok(lv51.mesos < lv91.mesos, "tier 5 > tier 4");
+
+  console.log("[dailyQuests] ✔ all reward tiers correct");
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -325,6 +427,8 @@ function main() {
   testIsDailyResettableEdgeCases();
   testBonusHuntMap();
   testDailyQuestDefinitions();
+  testDailyLoginGift();
+  testLoginGiftRewardTiers();
 
   console.log("[dailyQuests] PASS ✔  all daily quest engine tests verified");
 }

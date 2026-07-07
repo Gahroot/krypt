@@ -202,6 +202,13 @@ class PartyManagerImpl {
     return this.charPartyIndex.has(charId);
   }
 
+  /** Check if two characters are in the same party. */
+  areInSameParty(a: string, b: string): boolean {
+    const pa = this.charPartyIndex.get(a);
+    if (!pa) return false;
+    return pa === this.charPartyIndex.get(b);
+  }
+
   /** Check if a charId is the leader of their party. */
   isLeader(charId: string): boolean {
     const party = this.charPartyIndex.get(charId);

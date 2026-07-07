@@ -1,0 +1,14 @@
+[
+  {
+    "id": "double_exp_weekend_jul2026",
+    "name": "2× EXP Weekend",
+    "description": "All EXP gains are doubled this weekend — level up faster!",
+    "startAt": 1783123200000,
+    "endAt": 1783382400000,
+    "effects": {
+      "expMultiplier": 2
+    },
+    "color": "#4FC3F7",
+    "icon": "⚡"
+  }
+]

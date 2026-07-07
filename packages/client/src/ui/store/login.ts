@@ -21,6 +21,10 @@ export interface LoginSnapshot {
   sending: boolean;
   /** True when a browser wallet is injected, so "Connect Wallet" is offered. */
   walletAvailable: boolean;
+  /** Whether the server requires an invite code for new registrations. */
+  inviteCodeRequired: boolean;
+  /** True once the user has checked the ToS acceptance checkbox. */
+  tosAccepted: boolean;
 }
 
 /** Imperative actions the scene wires up so React can drive sign-in. */
@@ -28,17 +32,19 @@ export interface LoginActions {
   /** Sign in with an existing email + password. */
   loginEmail(email: string, password: string): void;
   /** Register a brand-new account from an email + password. */
-  registerEmail(email: string, password: string): void;
+  registerEmail(email: string, password: string, inviteCode?: string): void;
   /** Connect a browser wallet and sign in by signature. */
-  connectWallet(): void;
+  connectWallet(inviteCode?: string): void;
   /** Continue without credentials — mints a fresh guest account. */
-  guest(): void;
+  guest(inviteCode?: string): void;
 }
 
 const DEFAULT_SNAPSHOT: LoginSnapshot = {
   error: "",
   sending: false,
   walletAvailable: false,
+  inviteCodeRequired: false,
+  tosAccepted: false,
 };
 
 export interface LoginSlice {

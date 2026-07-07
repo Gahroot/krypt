@@ -403,7 +403,7 @@ describe("ARCHER key skill combat stats", () => {
       const s = skillStatAt(skill, 1);
       expect(s.mpCost).toBe(6);
       expect(s.cooldownMs).toBe(700);
-      expect(s.damagePercent).toBe(120);
+      expect(s.damagePercent).toBe(75);
       expect(s.hitCount).toBe(2);
       expect(s.targetCount).toBe(1);
     });
@@ -411,7 +411,7 @@ describe("ARCHER key skill combat stats", () => {
     it("level 20 (max): scales correctly", () => {
       const s = skillStatAt(skill, 20);
       expect(s.mpCost).toBe(25); // 6 + 1×19
-      expect(s.damagePercent).toBe(215); // 120 + 5×19
+      expect(s.damagePercent).toBe(132); // 75 + 3×19
     });
   });
 

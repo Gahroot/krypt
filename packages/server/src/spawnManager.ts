@@ -3,7 +3,7 @@
  *
  * Tracks which mob instances belong to which MobSpawnZone, enforces per-zone
  * capacity caps, and schedules staggered respawns with per-mob-type timers:
- *   - Normal mobs:  DEFAULT_RESPAWN_MS  (15 s)
+ *   - Normal mobs:  DEFAULT_RESPAWN_MS  (10 s)
  *   - Field bosses: BOSS_RESPAWN_MS    (120 s)
  *   - Dungeon bosses: DUNGEON_BOSS_RESPAWN_MS (300 s)
  *
@@ -19,7 +19,7 @@ import { TownState } from "./rooms/schema/TownState";
 // ─── Timing constants ──────────────────────────────────────────────────────
 
 /** Respawn delay for normal (non-boss) mobs. */
-export const DEFAULT_RESPAWN_MS = 15_000;
+export const DEFAULT_RESPAWN_MS = 10_000;
 
 /** Respawn delay for field bosses (open-world). */
 export const BOSS_RESPAWN_MS = 120_000;

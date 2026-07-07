@@ -1,5 +1,5 @@
 import type { StateCreator } from "zustand";
-import type { CharacterAppearance } from "@maple/shared";
+import type { CharacterAppearance, PrimaryStat, SecondaryStats } from "@maple/shared";
 
 import type { UIState } from "./index";
 import type { InvItemSnapshot } from "./inventory";
@@ -21,6 +21,14 @@ export type StatKey = "STR" | "DEX" | "INT" | "LUK" | "HP" | "MP";
 
 /** Equipment bonus aggregated across worn gear (drives derived-stat math). */
 export interface EquipBonus {
+  // Primary stat bonuses from gear (rank-multiplied + potentials + flames)
+  str: number;
+  dex: number;
+  int: number;
+  luk: number;
+  hp: number;
+  mp: number;
+  // Secondary stat bonuses from gear (weapon ATK + armor DEF/speed/jump)
   atk: number;
   wDef: number;
   mDef: number;
@@ -33,7 +41,11 @@ export interface CharacterSnapshot {
   name: string;
   level: number;
   archetype: string;
+  /** Branch specialization id (e.g. "berserker"), empty string before 2nd-job. */
+  branchId: string;
   jobTitle: string;
+  /** The class primary stat (e.g. STR for Warrior). */
+  primaryStat: PrimaryStat;
   str: number;
   dex: number;
   intel: number;
@@ -50,6 +62,30 @@ export interface CharacterSnapshot {
   ownedTitles: string[];
   /** Aggregated equipment bonus — combined with stats to derive secondary stats. */
   equipBonus: EquipBonus;
+  /** Set bonus contribution (primary + secondary stats). */
+  setBonus: {
+    STR: number;
+    DEX: number;
+    INT: number;
+    LUK: number;
+    HP: number;
+    MP: number;
+    atk: number;
+    mAtk: number;
+    wDef: number;
+    mDef: number;
+    speed: number;
+    jump: number;
+    accuracy: number;
+    avoid: number;
+    critRate: number;
+  };
+  /** Passive skill contribution to secondary stats. */
+  passiveBonus: SecondaryStats;
+  /** Active buff contribution to secondary stats. */
+  buffBonus: SecondaryStats;
+  /** Final derived secondary stats (matches server combat math). */
+  derived: SecondaryStats;
   /** Look used by the equipment paper-doll preview. */
   appearance: CharacterAppearance;
 }

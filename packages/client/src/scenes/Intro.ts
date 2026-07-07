@@ -8,26 +8,31 @@ import type { IntroLineSnapshot } from "../ui/store";
  * IntroScene — thin Phaser controller for the Dawn Isle intro cinematic.
  *
  * The cinematic itself is rendered by the React overlay (`ui/IntroPanel.tsx`):
- * three sequential text lines fade in and crossfade, with any keypress or click
- * skipping to the end. This scene is now a thin bridge — it publishes the line
- * sequence, opens the panel, and registers a `complete` action React calls when
- * the sequence ends or is skipped.
+ * four atmospheric beats fade in and crossfade — stillness, dawn, a tease of
+ * scale, then the first objective. Any keypress or click skips to the end.
+ * This scene is a thin bridge: it publishes the line sequence, opens the
+ * panel, and registers a `complete` action React calls when done or skipped.
  *
  * On completion it marks the intro as seen and starts MapScene for Dawn Isle.
+ * New characters see this once; returning characters skip it entirely.
  */
 
 const INTRO_LINES: readonly IntroLineSnapshot[] = [
   {
-    text: "You awaken on a mysterious shore…",
-    holdMs: 2000,
+    text: "The world is quiet. Dawn hasn't broken yet.",
+    holdMs: 2600,
   },
   {
-    text: "Dawn Isle — where every adventure begins.",
-    holdMs: 2000,
+    text: "Then — warmth. Light spills across green hills, calm water, soft cliffs.\nThis is Dawn Isle.",
+    holdMs: 3000,
   },
   {
-    text: "Use ← → to move. Talk to Guide Iris to start your journey.",
-    holdMs: 2200,
+    text: "You don't know how you got here.\nBut the island feels like it's been waiting.",
+    holdMs: 2800,
+  },
+  {
+    text: "Beyond these shores: snow mountains, open ocean, sky kingdoms,\njungles alive with dragons, cities of neon and clockwork.\n\nFind Guide Iris. She'll show you where to begin.",
+    holdMs: 4000,
   },
 ];
 

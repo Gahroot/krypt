@@ -46,6 +46,7 @@ import {
 } from "@/ui/components/ui/dialog";
 import { Label } from "@/ui/components/ui/label";
 import { useUIStore, type MarketListing, type MarketWalletItem } from "@/ui/store";
+import { slotItemIcon } from "@/ui/item-icon";
 
 /**
  * MarketPanel — the player-driven Free Market (auction house) overlay.
@@ -401,10 +402,9 @@ export function MarketPanel() {
                   <ItemListRow
                     key={item.uid}
                     leading={
-                      <span
-                        className="size-3 rounded-sm"
-                        style={{ backgroundColor: item.tierColor }}
-                      />
+                      <span className="text-sm" aria-hidden>
+                        {slotItemIcon(item.defId) ?? "◻️"}
+                      </span>
                     }
                     title={<span style={{ color: item.tierColor }}>{item.name}</span>}
                     meta={`${item.tierLabel} · ${lineLabel(item.lines)}`}

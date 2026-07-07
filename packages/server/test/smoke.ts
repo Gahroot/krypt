@@ -1,7 +1,9 @@
 /**
- * Runtime smoke test — boots rooms in-process via @colyseus/testing, joins as a Warrior,
- * marches into a mob while swinging, and verifies the authoritative combat/reward loop fires.
- * Also verifies that non-Meadowfield maps (e.g. dawn_isle) load and spawn mobs from shared data.
+ * Runtime smoke test — boots rooms in-process via @colyseus/testing, joins as a
+ * Beginner, and verifies:
+ *   1. Meadowfield loads and spawns mobs from shared data (spawn-path verification).
+ *   2. Dawn Isle loads, spawns mobs, AND the authoritative combat/reward loop fires
+ *      when the player kills a Lv 1 Friendly Snail (10 HP — beginner-killable).
  * Run: npx tsx test/smoke.ts
  */
 import assert from "node:assert";
@@ -12,26 +14,20 @@ import { MessageType } from "../src/types";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Hard watchdog so the process can never hang a harness. The meadowfield combat
-// phase runs ~1280 fixed ticks (~20s of real sleeps) plus per-tick SDK message
-// processing; under host load that loop can stretch well past a minute, so give
-// the watchdog generous headroom. This only guards against a true hang — it does
-// not relax any of the gameplay assertions below.
+// Hard watchdog so the process can never hang a harness.
 const watchdog = setTimeout(() => {
   console.error("[smoke] FAIL ✘ watchdog timeout");
   process.exit(1);
 }, 180_000);
 
+// ---------------------------------------------------------------------------
+// Meadowfield — spawn verification (Lv 10+ zone, no combat kill assertion)
+// ---------------------------------------------------------------------------
+
 async function testMeadowfield(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
   console.log("[smoke] ── meadowfield ──");
   const room = await colyseus.sdk.joinOrCreate("meadowfield", { name: "Smoke" });
-  // Swallow the per-tick boss HP broadcast (Meadowfield's Mano field boss). With
-  // no handler the SDK logs an "onMessage not registered" warning every tick, and
-  // that synchronous console spam noticeably slows the long combat loop below.
-  room.onMessage("boss_hp", () => {
-    /* suppress unhandled message warning */
-  });
-  await sleep(200); // let the first state patch arrive
+  await sleep(200);
 
   const sessionId = room.sessionId;
   const me = () => (room.state as any).players.get(sessionId);
@@ -42,12 +38,71 @@ async function testMeadowfield(colyseus: Awaited<ReturnType<typeof bootAuthed>>)
   assert.ok(mobCount > 0, "mobs should be spawned");
   console.log(`[smoke] joined; players=${(room.state as any).players.size} mobs=${mobCount}`);
 
+  const mobIds = new Set<string>();
+  for (const mob of (room.state as any).mobs.values()) {
+    mobIds.add(mob.mobId);
+  }
+  console.log("[smoke] meadowfield mob types:", [...mobIds].join(", "));
+  assert.ok(
+    mobIds.has("mob.green_mushroom"),
+    "meadowfield should spawn green_mushroom mobs (Lv 10)",
+  );
+  assert.ok(mobIds.has("mob.crow"), "meadowfield should spawn crow mobs (Lv 12)");
+
+  const map = MAPS.meadowfield;
+  assert.ok(map, "meadowfield should exist in shared MAPS data");
+  assert.strictEqual(
+    (room.state as any).mapWidth,
+    map.width,
+    `meadowfield width should match shared data (${map.width})`,
+  );
+
+  await room.leave();
+}
+
+// ---------------------------------------------------------------------------
+// Dawn Isle — combat verification (Lv 1 snails = beginner-killable)
+// ---------------------------------------------------------------------------
+
+async function testDawnIsle(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
+  console.log("[smoke] ── dawn_isle ──");
+  const room = await colyseus.sdk.joinOrCreate("dawn_isle", { name: "SmokeDI" });
+  room.onMessage("boss_hp", () => {
+    /* suppress */
+  });
+  await sleep(200);
+
+  const sessionId = room.sessionId;
+  const me = () => (room.state as any).players.get(sessionId);
+  assert.ok(me(), "player should exist in dawn_isle state after join");
+  assert.strictEqual((room.state as any).mapId, "dawn_isle", "mapId should be dawn_isle");
+
+  const mobCount = (room.state as any).mobs.size;
+  assert.ok(mobCount > 0, "dawn_isle should have mobs spawned from map data");
+  console.log(`[smoke] dawn_isle: players=${(room.state as any).players.size} mobs=${mobCount}`);
+
+  const mobIds = new Set<string>();
+  for (const mob of (room.state as any).mobs.values()) {
+    mobIds.add(mob.mobId);
+  }
+  console.log("[smoke] dawn_isle mob types:", [...mobIds].join(", "));
+  assert.ok(mobIds.has("mob.friendly_snail"), "dawn_isle should spawn friendly_snail mobs");
+
+  const dawnIsle = MAPS.dawn_isle;
+  assert.ok(dawnIsle, "dawn_isle should exist in shared MAPS data");
+  assert.strictEqual(
+    (room.state as any).mapWidth,
+    dawnIsle.width,
+    `dawn_isle width should match shared data (${dawnIsle.width})`,
+  );
+
+  // ── Combat kill test ──────────────────────────────────────────────────────
   const startMesos = me().mesos;
   const startExp = me().exp;
 
   // Home in on the nearest mob, stand on it, and swing until something dies.
-  // A beginner (no weapon) deals 1 dmg per hit; meadow slimes have 30 HP.
-  // At 450 ms cooldown we need ~34+ attacks → 1280 ticks × 16 ms ≈ 20 s.
+  // A beginner (no weapon) deals 1 dmg per hit; Friendly Snails have 10 HP.
+  // At 450 ms cooldown we need ~12+ attacks → 1280 ticks × 16 ms ≈ 20 s.
   const firstMobId = Array.from((room.state as any).mobs.keys())[0] as string;
   let tick = 0;
   for (let i = 0; i < 1280; i++) {
@@ -83,52 +138,10 @@ async function testMeadowfield(colyseus: Awaited<ReturnType<typeof bootAuthed>>)
   await room.leave();
 }
 
-async function testDawnIsle(colyseus: Awaited<ReturnType<typeof bootAuthed>>) {
-  console.log("[smoke] ── dawn_isle ──");
-  const room = await colyseus.sdk.joinOrCreate("dawn_isle", { name: "SmokeDI" });
-  await sleep(200);
-
-  const sessionId = room.sessionId;
-  const me = () => (room.state as any).players.get(sessionId);
-  assert.ok(me(), "player should exist in dawn_isle state after join");
-  assert.strictEqual((room.state as any).mapId, "dawn_isle", "mapId should be dawn_isle");
-
-  const mobCount = (room.state as any).mobs.size;
-  assert.ok(mobCount > 0, "dawn_isle should have mobs spawned from map data");
-  console.log(`[smoke] dawn_isle: players=${(room.state as any).players.size} mobs=${mobCount}`);
-
-  // Verify mob IDs match dawn_isle spawns (friendly_snail, green_puff, dawn_shroom).
-  const mobIds = new Set<string>();
-  for (const mob of (room.state as any).mobs.values()) {
-    mobIds.add(mob.mobId);
-  }
-  console.log("[smoke] dawn_isle mob types:", [...mobIds].join(", "));
-  assert.ok(mobIds.has("mob.friendly_snail"), "dawn_isle should spawn friendly_snail mobs");
-
-  // Verify map dimensions in room state match the authoritative shared map data
-  // (single source of truth) rather than hard-coded literals that can go stale.
-  const dawnIsle = MAPS.dawn_isle;
-  assert.ok(dawnIsle, "dawn_isle should exist in shared MAPS data");
-  assert.strictEqual(
-    (room.state as any).mapWidth,
-    dawnIsle.width,
-    `dawn_isle width should match shared data (${dawnIsle.width})`,
-  );
-  assert.strictEqual(
-    (room.state as any).mapHeight,
-    dawnIsle.height,
-    `dawn_isle height should match shared data (${dawnIsle.height})`,
-  );
-
-  await room.leave();
-}
-
 async function main() {
   const colyseus = await bootAuthed(appConfig);
-
   await testMeadowfield(colyseus);
   await testDawnIsle(colyseus);
-
   await colyseus.shutdown();
   clearTimeout(watchdog);
   console.log("[smoke] PASS ✔  all zones verified");

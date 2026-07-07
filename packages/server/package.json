@@ -9,12 +9,13 @@
     "start": "tsx src/index.ts",
     "db:reset": "tsx scripts/db-reset.ts",
     "db:seed": "tsx scripts/db-seed.ts",
+    "db:admin": "tsx scripts/db-admin.ts",
     "db:backup": "tsx scripts/db-backup.ts",
     "db:restore": "tsx scripts/db-restore.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "rm -rf ./.data/test-run && DATABASE_URL=sqlite://./.data/test-run/maple.db pnpm run test:suite",
-    "test:suite": "tsx test/auth.ts && tsx test/protocol.ts && tsx test/smoke.ts && tsx test/market.ts && tsx test/characters.ts && tsx test/charactersHttp.ts && tsx test/portals.ts && tsx test/npcs.ts && tsx test/quests.ts && tsx test/rangedCombat.ts && tsx test/mobCombat.ts && tsx test/cashshop.ts && tsx test/generalStore.ts && tsx test/learnSkill.ts && tsx test/skillCast.ts && tsx test/progression.ts && tsx test/channels.ts && tsx test/singleSession.ts && tsx test/spawnManager.ts && tsx test/dbMigration.ts && tsx test/dbBackup.ts && tsx test/dbStore.ts && tsx test/equip.ts && tsx test/hardenedInputs.ts && tsx test/gmCommands.ts && MAPLE_RECONNECT_GRACE_SECONDS=1 tsx test/reconnect.ts && SENTRY_DSN=test://logging tsx test/logging.ts"
+    "test:suite": "tsx test/auth.ts && tsx test/protocol.ts && tsx test/smoke.ts && tsx test/market.ts && tsx test/characters.ts && tsx test/charactersHttp.ts && tsx test/portals.ts && tsx test/scheduledTransport.ts && tsx test/npcs.ts && tsx test/quests.ts && tsx test/questAudit.ts && tsx test/rangedCombat.ts && tsx test/mobCombat.ts && tsx test/cashshop.ts && tsx test/generalStore.ts && tsx test/learnSkill.ts && tsx test/skillCast.ts && tsx test/progression.ts && tsx test/channels.ts && tsx test/singleSession.ts && tsx test/spawnManager.ts && tsx test/dbMigration.ts && tsx test/dbBackup.ts && tsx test/dbStore.ts && tsx test/equip.ts && tsx test/hardenedInputs.ts && tsx test/gmCommands.ts && MAPLE_RECONNECT_GRACE_SECONDS=1 tsx test/party.ts && MAPLE_RECONNECT_GRACE_SECONDS=1 tsx test/reconnect.ts && SENTRY_DSN=test://logging tsx test/logging.ts && tsx test/inventoryCapacity.ts && tsx test/multi_client.ts"
   },
   "dependencies": {
     "@colyseus/monitor": "^0.17.8",

@@ -63,6 +63,8 @@ export interface ItemRecord {
   /** Star Force level (0–15). */
   stars?: number;
   count?: number;
+  /** True when a Legendary cube reroll has flagged this item for on-chain minting (Phase 2). */
+  mintPending?: boolean;
 }
 
 /** Account-wide record. Cash balance, cash inventory, and shared storage live here. */
@@ -99,6 +101,10 @@ export interface AuthCredential {
   wallet: string | null;
   /** Whether a password hash is set (true ⇒ email+password login is available). */
   hasPassword: boolean;
+  /** Epoch-ms when the account accepted the ToS, or null if not yet recorded. */
+  tosAcceptedAt: number | null;
+  /** Version string of the accepted ToS (e.g. "alpha-2026-06"), or null. */
+  tosVersion: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -109,6 +115,8 @@ interface AuthRow {
   email: string | null;
   password_hash: string | null;
   wallet: string | null;
+  tos_accepted_at: number | null;
+  tos_version: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -203,6 +211,8 @@ export interface CharacterRecord {
   lastDailyResetAt?: number;
   /** Daily quest completion log: questId → epoch-ms of last turn-in. */
   dailyCompletions?: Record<string, number>;
+  /** Epoch-ms of the last daily login gift claim. */
+  lastDailyLoginGiftAt?: number;
   createdAt: number;
 }
 
@@ -281,6 +291,7 @@ const CHAR_COL: Record<keyof CharacterRecord, string> = {
   equippedTitle: "equipped_title",
   lastDailyResetAt: "last_daily_reset_at",
   dailyCompletions: "daily_completions",
+  lastDailyLoginGiftAt: "last_daily_login_gift_at",
   createdAt: "created_at",
 };
 
@@ -658,6 +669,8 @@ export class AccountStore {
       email: r.email,
       wallet: r.wallet,
       hasPassword: !!r.password_hash,
+      tosAcceptedAt: r.tos_accepted_at,
+      tosVersion: r.tos_version,
       createdAt: r.created_at,
       updatedAt: r.updated_at,
     };
@@ -696,6 +709,7 @@ export class AccountStore {
     email?: string;
     password?: string;
     wallet?: string;
+    tosVersion?: string;
   }): Promise<AuthResult> {
     const email = opts.email ? normalizeEmail(opts.email) : null;
     const wallet = opts.wallet ? normalizeWallet(opts.wallet) : null;
@@ -721,13 +735,14 @@ export class AccountStore {
 
     const accountId = newAccountId();
     const now = Date.now();
+    const tosVersion = opts.tosVersion ?? null;
     this.getOrCreate(accountId); // create the account shell (FK target) first.
     this.db
       .prepare(
-        "INSERT INTO account_auth (account_id, email, password_hash, wallet, created_at, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO account_auth (account_id, email, password_hash, wallet, tos_accepted_at, tos_version, created_at, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
-      .run(accountId, email, passwordHash, wallet, now, now);
+      .run(accountId, email, passwordHash, wallet, tosVersion ? now : null, tosVersion, now, now);
 
     return { ok: true, accountId };
   }
@@ -800,6 +815,21 @@ export class AccountStore {
     }
 
     return { ok: true, accountId };
+  }
+
+  /**
+   * Record that an account accepted the Terms of Service. Called once at registration
+   * (guest, email, or wallet). Idempotent — overwrites only if the prior acceptance
+   * was null (first-time), so re-accepting a newer version is allowed.
+   */
+  recordTosAcceptance(accountId: string, tosVersion: string): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        "UPDATE account_auth SET tos_accepted_at = COALESCE(tos_accepted_at, ?), " +
+          "tos_version = COALESCE(tos_version, ?), updated_at = ? WHERE account_id = ?",
+      )
+      .run(now, tosVersion, now, accountId);
   }
 
   /**
@@ -969,6 +999,13 @@ export class AccountStore {
 
   getCash(accountId: string): number {
     return this.getOrCreate(accountId).cash;
+  }
+
+  /** Set an account's premium-currency (cash) balance outright. For admin/dev tooling. */
+  setCash(accountId: string, amount: number): void {
+    const acc = this.getOrCreate(accountId);
+    acc.cash = Math.max(0, Math.floor(amount));
+    this.persistAccount(acc);
   }
 
   /** Returns true and deducts if affordable; false otherwise. */
@@ -1457,6 +1494,145 @@ export class AccountStore {
       .run(resetAt, charId);
   }
 
+  /** Record the last daily login gift claim timestamp. */
+  setLastDailyLoginGift(charId: string, claimedAt: number): void {
+    const rec = this.characters.get(charId);
+    if (!rec) return;
+    rec.lastDailyLoginGiftAt = claimedAt;
+    this.db
+      .prepare("UPDATE characters SET last_daily_login_gift_at=? WHERE char_id=?")
+      .run(claimedAt, charId);
+  }
+
+  // ─── Invite codes (alpha gating) ─────────────────────────────────────────
+
+  /** Generate a random invite code: CM-XXXXXXXX (8 alphanumeric uppercase). */
+  private generateInviteCode(): string {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let suffix = "";
+    for (let i = 0; i < 8; i++) {
+      suffix += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return `CM-${suffix}`;
+  }
+
+  /** Create one or more invite codes. Returns the generated codes. */
+  createInviteCodes(
+    count: number,
+    opts?: { note?: string; expiresAt?: number; maxUses?: number },
+  ): string[] {
+    const note = opts?.note ?? "";
+    const expiresAt = opts?.expiresAt ?? 0;
+    const maxUses = opts?.maxUses ?? 1;
+    const now = Date.now();
+    const codes: string[] = [];
+    const ins = this.db.prepare(
+      "INSERT INTO invite_codes (code, note, created_at, expires_at, max_uses, use_count, used_by, revoked) " +
+        "VALUES (?, ?, ?, ?, ?, 0, '[]', 0)",
+    );
+    const insertAll = this.db.transaction(() => {
+      for (let i = 0; i < count; i++) {
+        let code = this.generateInviteCode();
+        // Avoid collisions (extremely unlikely but be safe).
+        while (this.db.prepare("SELECT 1 FROM invite_codes WHERE code = ?").get(code)) {
+          code = this.generateInviteCode();
+        }
+        ins.run(code, note, now, expiresAt, maxUses);
+        codes.push(code);
+      }
+    });
+    insertAll();
+    return codes;
+  }
+
+  /** Validate an invite code. Returns { valid, reason } */
+  validateInviteCode(code: string): { valid: boolean; reason?: string } {
+    if (!code || typeof code !== "string") {
+      return { valid: false, reason: "No invite code provided." };
+    }
+    const row = this.db
+      .prepare("SELECT * FROM invite_codes WHERE code = ?")
+      .get(code.trim().toUpperCase()) as
+      | {
+          code: string;
+          expires_at: number;
+          max_uses: number;
+          use_count: number;
+          revoked: number;
+        }
+      | undefined;
+    if (!row) {
+      return { valid: false, reason: "Invalid invite code." };
+    }
+    if (row.revoked) {
+      return { valid: false, reason: "This invite code has been revoked." };
+    }
+    if (row.expires_at > 0 && Date.now() > row.expires_at) {
+      return { valid: false, reason: "This invite code has expired." };
+    }
+    if (row.max_uses > 0 && row.use_count >= row.max_uses) {
+      return { valid: false, reason: "This invite code has already been used." };
+    }
+    return { valid: true };
+  }
+
+  /** Consume an invite code — record the accountId that used it. */
+  consumeInviteCode(code: string, accountId: string): void {
+    const normalized = code.trim().toUpperCase();
+    const row = this.db
+      .prepare("SELECT used_by FROM invite_codes WHERE code = ?")
+      .get(normalized) as { used_by: string } | undefined;
+    if (!row) return;
+    const usedBy = JSON.parse(row.used_by) as string[];
+    usedBy.push(accountId);
+    this.db
+      .prepare("UPDATE invite_codes SET use_count = use_count + 1, used_by = ? WHERE code = ?")
+      .run(JSON.stringify(usedBy), normalized);
+  }
+
+  /** Revoke an invite code. */
+  revokeInviteCode(code: string): boolean {
+    const result = this.db
+      .prepare("UPDATE invite_codes SET revoked = 1 WHERE code = ? AND revoked = 0")
+      .run(code.trim().toUpperCase());
+    return result.changes > 0;
+  }
+
+  /** List all invite codes (most recent first). */
+  listInviteCodes(limit = 100): Array<{
+    code: string;
+    note: string;
+    createdAt: number;
+    expiresAt: number;
+    maxUses: number;
+    useCount: number;
+    usedBy: string[];
+    revoked: boolean;
+  }> {
+    const rows = this.db
+      .prepare("SELECT * FROM invite_codes ORDER BY created_at DESC LIMIT ?")
+      .all(limit) as Array<{
+      code: string;
+      note: string;
+      created_at: number;
+      expires_at: number;
+      max_uses: number;
+      use_count: number;
+      used_by: string;
+      revoked: number;
+    }>;
+    return rows.map((r) => ({
+      code: r.code,
+      note: r.note,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      maxUses: r.max_uses,
+      useCount: r.use_count,
+      usedBy: JSON.parse(r.used_by) as string[],
+      revoked: r.revoked === 1,
+    }));
+  }
+
   // ─── Persistence (no-op — data is already durable via SQLite) ──────────────
 
   persistNow(): void {
@@ -1822,9 +1998,12 @@ export interface FeedbackReport {
   category: string;
   message: string;
   mapId: string;
+  posX: number;
+  posY: number;
   level: number;
   archetype: string;
   clientVersion: string;
+  serverVersion: string;
   logLines: string[];
   userAgent: string;
   createdAt: number;
@@ -1851,9 +2030,12 @@ class FeedbackStore {
     message: string,
     context: {
       mapId: string;
+      x: number;
+      y: number;
       level: number;
       archetype: string;
       clientVersion: string;
+      serverVersion: string;
       logLines: string[];
       userAgent: string;
     },
@@ -1891,8 +2073,8 @@ class FeedbackStore {
 
     this.db
       .prepare(
-        "INSERT INTO feedback_reports (account_id, char_id, char_name, category, message, map_id, level, archetype, client_version, log_lines, user_agent, created_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO feedback_reports (account_id, char_id, char_name, category, message, map_id, pos_x, pos_y, level, archetype, client_version, server_version, log_lines, user_agent, created_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         accountId,
@@ -1901,9 +2083,12 @@ class FeedbackStore {
         category,
         trimmed,
         context.mapId,
+        context.x,
+        context.y,
         context.level,
         context.archetype,
         context.clientVersion,
+        context.serverVersion,
         JSON.stringify(logLines),
         context.userAgent,
         now,
@@ -1925,9 +2110,12 @@ class FeedbackStore {
       category: r.category as string,
       message: r.message as string,
       mapId: r.map_id as string,
+      posX: (r.pos_x as number) ?? 0,
+      posY: (r.pos_y as number) ?? 0,
       level: r.level as number,
       archetype: r.archetype as string,
       clientVersion: r.client_version as string,
+      serverVersion: (r.server_version as string) ?? "",
       logLines: JSON.parse(r.log_lines as string) as string[],
       userAgent: r.user_agent as string,
       createdAt: r.created_at as number,
@@ -2091,15 +2279,27 @@ export const marketStore = new MarketStore();
 export const buyOrderStore = new BuyOrderStore();
 export const priceHistoryStore = new PriceHistoryStore();
 const treasury = new TreasuryStore();
-const guildStore = new GuildStore();
-const friendStore = new FriendStore();
+export const guildStore = new GuildStore();
+export const friendStore = new FriendStore();
+
+/**
+ * Flush guild + friend state to SQLite. Called during the periodic autosave
+ * and on room disposal so these in-memory singletons survive a hard kill.
+ * Individual friend mutations already write-through via accountStore.addFriend
+ * / removeFriend, but the guild manager only snapshots on explicit persist —
+ * so this is the safety net that closes the gap.
+ */
+export function persistGuildsAndFriends(): void {
+  guildStore.persistNow();
+  friendStore.persistNow();
+}
 export const feedbackStore = new FeedbackStore();
 export const moderationStore = new ModerationStore();
 
 /** Exported treasury singleton for rooms to read the burn counter. */
 export { treasury as treasuryStore };
 
-// Best-effort flush on shutdown (DB is already durable, but guild + friend need snapshots).
+// Also flush on clean shutdown signals (belt-and-suspenders with autosave).
 for (const sig of ["SIGINT", "SIGTERM", "beforeExit"] as const) {
   process.once(sig, () => {
     guildStore.persistNow();
