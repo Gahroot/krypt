@@ -3077,6 +3077,14 @@ export class MapScene extends Phaser.Scene {
       if (this.registry.get("settingsOpen") === true) return;
       this.tryTalkToNpc();
     });
+
+    // R toggles mount ride/dismount.
+    keyboard.on("keydown-R", () => {
+      if (this.registry.get("settingsOpen") === true) return;
+      if (this.registry.get(DIALOG_OPEN_KEY) === true) return;
+      if (this.registry.get(CHAT_FOCUSED_KEY) === true) return;
+      this.toggleMountRide();
+    });
   }
 
   /** Register all warrior + mob animations once (idempotent — safe across HMR reloads). */
@@ -4966,8 +4974,28 @@ export class MapScene extends Phaser.Scene {
 
   // ─── Mount rendering ─────────────────────────────────────────────────────────
 
+  /** Current mount id for the local player (client-tracked for toggle). */
+  private localMountId = "";
+
+  /** Toggle mount ride/dismount for the local player. */
+  private toggleMountRide(): void {
+    const room = this.registry.get("room") as Room | undefined;
+    if (!room) return;
+    if (this.localMountId) {
+      // Already mounted → dismount via the ride toggle (server dismounts if already riding).
+      room.send(MessageType.MOUNT_RIDE, { mountId: this.localMountId });
+    } else {
+      // Not mounted → ride the starter mount (server validates ownership + level).
+      room.send(MessageType.MOUNT_RIDE, { mountId: "mount.red_snail" });
+    }
+  }
+
   /** Handle mount state broadcast from the server. */
   private handleMountState(payload: import("@maple/shared").MountStatePayload): void {
+    // Track local player's mount id for toggle logic.
+    if (payload.sessionId === this.localSessionId) {
+      this.localMountId = payload.mountId;
+    }
     const sprite = this.playerSprites.get(payload.sessionId);
     if (!sprite) return;
 
@@ -4987,7 +5015,7 @@ export class MapScene extends Phaser.Scene {
     const mountSprite = this.add.sprite(
       sprite.x,
       sprite.y + 14,
-      this.textures.exists(texKey) ? texKey : texKey,
+      this.textures.exists(texKey) ? texKey : "mount_red_snail",
     );
     mountSprite.setScale(0.9);
     mountSprite.setFlipX(sprite.flipX);
