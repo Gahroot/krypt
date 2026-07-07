@@ -9,6 +9,51 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** Ambient particle type driven by the biome. */
+export type AmbientParticleType =
+  | "leaves"
+  | "dust"
+  | "fireflies"
+  | "snow"
+  | "spores"
+  | "bubbles"
+  | "none";
+
+/** Optional weather overlay for the map. */
+export type WeatherType = "rain" | "snow" | "none";
+
+/** Per-biome ambient atmosphere config. */
+export interface AmbianceConfig {
+  readonly particles: AmbientParticleType;
+  readonly weather: WeatherType;
+  /** Whether the parallax background layers should sway / drift. */
+  readonly parallaxMotion: boolean;
+}
+
+/** Default ambiance config for each biome visual set. */
+const BIOME_AMBIANCE: Record<BiomeVisualSet, AmbianceConfig> = {
+  pastoral: { particles: "leaves", weather: "none", parallaxMotion: true },
+  forest: { particles: "leaves", weather: "none", parallaxMotion: true },
+  rocky: { particles: "dust", weather: "none", parallaxMotion: true },
+  urban: { particles: "dust", weather: "none", parallaxMotion: false },
+  swamp: { particles: "fireflies", weather: "rain", parallaxMotion: true },
+  market: { particles: "dust", weather: "none", parallaxMotion: false },
+  sky: { particles: "dust", weather: "none", parallaxMotion: true },
+  snow: { particles: "snow", weather: "snow", parallaxMotion: true },
+  underground: { particles: "dust", weather: "none", parallaxMotion: false },
+  underwater: { particles: "bubbles", weather: "none", parallaxMotion: true },
+  jungle: { particles: "spores", weather: "rain", parallaxMotion: true },
+};
+
+/** Resolve the ambiance config for a biome, with optional per-map overrides. */
+export function getAmbiance(
+  bgSet: BiomeVisualSet,
+  overrides?: Partial<AmbianceConfig>,
+): AmbianceConfig {
+  const base = BIOME_AMBIANCE[bgSet] ?? BIOME_AMBIANCE.pastoral;
+  return overrides ? { ...base, ...overrides } : base;
+}
+
 /** Visual-set identifier for biome-specific parallax backgrounds and terrain palettes. */
 export type BiomeVisualSet =
   | "pastoral"
@@ -127,6 +172,8 @@ export interface GameMap {
   readonly bgmKey?: string;
   /** Visual-set key driving biome-specific parallax backgrounds and terrain palette. Default: "pastoral". */
   readonly bgSet?: BiomeVisualSet;
+  /** Optional per-map ambiance overrides (particles, weather, parallax motion). */
+  readonly ambiance?: Partial<AmbianceConfig>;
 }
 
 /** @deprecated Use {@link GameMap} directly. Kept for backward compat. */

@@ -42,6 +42,8 @@ import {
   getSkillEffect,
   type SkillVfxPayload,
   type SkillEffectDef,
+  getAmbiance,
+  type AmbianceConfig,
 } from "@maple/shared";
 
 import {
@@ -356,6 +358,11 @@ export class MapScene extends Phaser.Scene {
   private coachJumpFired = false;
   private coachTalkFired = false;
 
+  // ── Ambiance state ──────────────────────────────────────────────────
+  private ambianceConfig?: AmbianceConfig;
+  /** Stored references to the 3 parallax tileSprite layers for animation. */
+  private parallaxLayers: Phaser.GameObjects.TileSprite[] = [];
+
   constructor() {
     super("map");
   }
@@ -379,6 +386,7 @@ export class MapScene extends Phaser.Scene {
       return;
     }
     this.map = resolvedMap;
+    this.ambianceConfig = getAmbiance(this.map.bgSet ?? "pastoral", this.map.ambiance);
     this.transitioning = false;
     // Phaser reuses the scene instance across restarts (travel / channel switch), so reset
     // reconnection state here — the prior overlay GameObjects were destroyed on shutdown,
@@ -444,6 +452,9 @@ export class MapScene extends Phaser.Scene {
 
     // Render NPCs placed on this map.
     this.spawnNpcs();
+
+    // Ambient atmosphere: NPC idle anims, particles, weather, parallax drift.
+    this.spawnAmbianceEffects();
 
     await this.attemptConnect();
 
@@ -815,6 +826,9 @@ export class MapScene extends Phaser.Scene {
 
     // 8) Portal proximity prompts.
     this.updatePortalPrompts();
+
+    // 9) Ambient parallax drift (subtle cloud/tree sway).
+    this.tickParallaxDrift(delta);
   }
 
   // ─── Connection + state binding ───────────────────────────────────────────────────────────────
@@ -2545,6 +2559,7 @@ export class MapScene extends Phaser.Scene {
   private buildParallaxLayers(palette: BiomePalette): void {
     const W = this.map.width;
     const H = this.map.height;
+    this.parallaxLayers = [];
 
     // ── Far sky: vertical gradient (skyTop → skyBottom) ──
     const skyKey = `__sky_${this.mapId}`;
@@ -2555,11 +2570,12 @@ export class MapScene extends Phaser.Scene {
       sg.generateTexture(skyKey, 1, H);
       sg.destroy();
     }
-    this.add
+    const skyLayer = this.add
       .tileSprite(0, 0, W + 400, H, skyKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.1, 0)
       .setDepth(GROUND_DEPTH - 3);
+    this.parallaxLayers.push(skyLayer);
 
     // ── Mid hills: silhouetted rolling shapes ──
     const hillH = 350;
@@ -2582,11 +2598,12 @@ export class MapScene extends Phaser.Scene {
       hg.generateTexture(hillKey, W + 800, hillH);
       hg.destroy();
     }
-    this.add
+    const hillLayer = this.add
       .tileSprite(0, H - hillH, W + 800, hillH, hillKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.3, 0)
       .setDepth(GROUND_DEPTH - 2);
+    this.parallaxLayers.push(hillLayer);
 
     // ── Near trees: silhouetted treeline ──
     const treeH = 280;
@@ -2609,11 +2626,12 @@ export class MapScene extends Phaser.Scene {
       tg.generateTexture(treeKey, W + 1200, treeH);
       tg.destroy();
     }
-    this.add
+    const treeLayer = this.add
       .tileSprite(0, H - treeH, W + 1200, treeH, treeKey)
       .setOrigin(0, 0)
       .setScrollFactor(0.6, 0)
       .setDepth(GROUND_DEPTH - 1);
+    this.parallaxLayers.push(treeLayer);
   }
 
   /**
@@ -2817,6 +2835,9 @@ export class MapScene extends Phaser.Scene {
       sprite.setFlipX(true); // NPCs face the player by default
       this.attachShadow(sprite);
       this.applyDepthAndShadow(sprite);
+
+      // ── NPC idle animation (breathing bob + shadow pulse) ──
+      this.addNpcIdleAnimation(sprite, npc.id);
 
       // Name label above the NPC's head.
       const label = this.add
@@ -4620,6 +4641,247 @@ export class MapScene extends Phaser.Scene {
   ): void {
     sprite.x = Phaser.Math.Linear(sprite.x, targetX, lerp);
     sprite.y = Phaser.Math.Linear(sprite.y, targetY, lerp);
+  }
+
+  // ─── Ambient atmosphere: NPC idle, particles, weather, parallax drift ──────────
+
+  /** True when the player prefers reduced motion (game setting or OS-level). */
+  private get reducedMotion(): boolean {
+    if (!this.screenShakeEnabled()) return true;
+    return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  }
+
+  /** Add a subtle breathing-bob + shadow-pulse to an NPC sprite. */
+  private addNpcIdleAnimation(sprite: Phaser.GameObjects.Sprite, _npcId: string): void {
+    if (this.reducedMotion) return;
+    const bobAmount = 2;
+    const bobDuration = 2000 + Math.random() * 1000; // 2–3 s
+    // Gentle vertical bob.
+    this.tweens.add({
+      targets: sprite,
+      y: sprite.y - bobAmount,
+      duration: bobDuration,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.InOut",
+    });
+    // Shadow alpha pulse synced with the bob.
+    const shadow = this.shadowOf(sprite);
+    if (shadow) {
+      this.tweens.add({
+        targets: shadow,
+        alpha: { from: 0.45, to: 0.25 },
+        duration: bobDuration,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.InOut",
+      });
+    }
+    // Occasional "blink" — quick scaleY squash every 4–8 s.
+    const blinkLoop = () => {
+      if (!sprite.active) return;
+      this.tweens.add({
+        targets: sprite,
+        scaleY: 0.85,
+        duration: 80,
+        yoyo: true,
+        ease: "Quad.easeOut",
+      });
+      this.time.delayedCall(4000 + Math.random() * 4000, blinkLoop);
+    };
+    this.time.delayedCall(2000 + Math.random() * 3000, blinkLoop);
+  }
+
+  /** Master ambiance spawner — called once from create(). */
+  private spawnAmbianceEffects(): void {
+    const cfg = this.ambianceConfig;
+    if (!cfg) return;
+    const reduced = this.reducedMotion;
+    if (!reduced && cfg.particles !== "none") {
+      this.spawnAmbientParticles(cfg.particles);
+    }
+    if (!reduced && cfg.weather !== "none") {
+      this.spawnWeather(cfg.weather);
+    }
+  }
+
+  /** Create a procedural particle texture (tiny circle / rectangle). */
+  private ensureParticleTexture(key: string, size: number, color: number, alpha: number): void {
+    if (this.textures.exists(key)) return;
+    const g = this.make.graphics();
+    g.fillStyle(color, alpha);
+    g.fillCircle(size / 2, size / 2, size / 2);
+    g.generateTexture(key, size, size);
+    g.destroy();
+  }
+
+  /** Spawn ambient particles appropriate for the biome. */
+  private spawnAmbientParticles(type: string): void {
+    const W = this.map.width;
+    const CAM_W = this.cameras.main.width;
+
+    const configs: Record<
+      string,
+      {
+        key: string;
+        size: number;
+        color: number;
+        alpha: number;
+        speedX: number;
+        speedY: number;
+        lifespan: number;
+        frequency: number;
+        angle?: { min: number; max: number };
+      }
+    > = {
+      leaves: {
+        key: "__pt_leaf",
+        size: 6,
+        color: 0x8b6914,
+        alpha: 0.7,
+        speedX: 8,
+        speedY: 20,
+        lifespan: 6000,
+        frequency: 600,
+        angle: { min: 0, max: 360 },
+      },
+      dust: {
+        key: "__pt_dust",
+        size: 3,
+        color: 0xccbb99,
+        alpha: 0.3,
+        speedX: 5,
+        speedY: 8,
+        lifespan: 5000,
+        frequency: 500,
+      },
+      fireflies: {
+        key: "__pt_glow",
+        size: 5,
+        color: 0xeeff44,
+        alpha: 0.6,
+        speedX: 12,
+        speedY: 10,
+        lifespan: 4000,
+        frequency: 800,
+      },
+      snow: {
+        key: "__pt_snow",
+        size: 4,
+        color: 0xffffff,
+        alpha: 0.8,
+        speedX: 10,
+        speedY: 30,
+        lifespan: 5000,
+        frequency: 200,
+      },
+      spores: {
+        key: "__pt_spore",
+        size: 4,
+        color: 0x88cc44,
+        alpha: 0.35,
+        speedX: 6,
+        speedY: 12,
+        lifespan: 6000,
+        frequency: 700,
+      },
+      bubbles: {
+        key: "__pt_bubble",
+        size: 5,
+        color: 0x88ccee,
+        alpha: 0.3,
+        speedX: 4,
+        speedY: -15,
+        lifespan: 5000,
+        frequency: 400,
+      },
+    };
+    const c = configs[type];
+    if (!c) return;
+    this.ensureParticleTexture(c.key, c.size, c.color, c.alpha);
+
+    const rect = new Phaser.Geom.Rectangle(0, 0, Math.min(W, CAM_W * 1.5), 10);
+    const zone: Phaser.Types.GameObjects.Particles.EmitZoneData = {
+      type: "random",
+      source: rect as unknown as Phaser.Types.GameObjects.Particles.RandomZoneSource,
+    };
+    const emitter = this.add.particles(0, 0, c.key, {
+      lifespan: c.lifespan,
+      speedX: { min: -c.speedX, max: c.speedX },
+      speedY: { min: c.speedY * 0.5, max: c.speedY },
+      scale: { start: 1, end: 0.5 },
+      alpha: { start: c.alpha, end: 0 },
+      frequency: c.frequency,
+      quantity: 1,
+      emitZone: zone,
+      ...(c.angle ? { angle: c.angle } : {}),
+    });
+    emitter.setDepth(GROUND_DEPTH + 500);
+    // Follow the camera so particles cover the viewport.
+    emitter.setScrollFactor(0);
+  }
+
+  /** Spawn a weather overlay (rain streaks or snowflakes). */
+  private spawnWeather(type: string): void {
+    const CAM_W = this.cameras.main.width;
+
+    const makeWeatherZone = (w: number): Phaser.Types.GameObjects.Particles.EmitZoneData => ({
+      type: "random",
+      source: new Phaser.Geom.Rectangle(
+        0,
+        -20,
+        w,
+        20,
+      ) as unknown as Phaser.Types.GameObjects.Particles.RandomZoneSource,
+    });
+
+    if (type === "rain") {
+      this.ensureParticleTexture("__pt_rain", 2, 0x99bbee, 0.5);
+      const emitter = this.add.particles(0, 0, "__pt_rain", {
+        lifespan: 600,
+        speedX: { min: -20, max: -10 },
+        speedY: { min: 250, max: 400 },
+        scale: { start: 1, end: 0.8 },
+        alpha: { start: 0.5, end: 0.1 },
+        frequency: 30,
+        quantity: 2,
+        emitZone: makeWeatherZone(CAM_W + 100),
+      });
+      emitter.setDepth(GROUND_DEPTH + 800);
+      emitter.setScrollFactor(0);
+    } else if (type === "snow") {
+      this.ensureParticleTexture("__pt_wsnow", 5, 0xffffff, 0.7);
+      const emitter = this.add.particles(0, 0, "__pt_wsnow", {
+        lifespan: 4000,
+        speedX: { min: -15, max: 15 },
+        speedY: { min: 30, max: 80 },
+        scale: { start: 0.8, end: 1.2 },
+        alpha: { start: 0.7, end: 0.2 },
+        frequency: 60,
+        quantity: 1,
+        rotate: { min: 0, max: 360 },
+        emitZone: makeWeatherZone(CAM_W + 100),
+      });
+      emitter.setDepth(GROUND_DEPTH + 800);
+      emitter.setScrollFactor(0);
+    }
+  }
+
+  /** Per-frame parallax drift — subtle cloud/tree sway. */
+  private tickParallaxDrift(_delta: number): void {
+    if (this.reducedMotion) return;
+    const cfg = this.ambianceConfig;
+    if (!cfg || !cfg.parallaxMotion) return;
+    const t = this.time.now * 0.001; // seconds
+    // Sky layer: slow horizontal drift.
+    const sky = this.parallaxLayers[0];
+    if (sky) sky.tilePositionX = t * 3;
+    // Hill layer: gentle oscillation.
+    const hills = this.parallaxLayers[1];
+    if (hills) hills.tilePositionX = Math.sin(t * 0.2) * 8;
+    // Tree layer: slightly faster sway.
+    const trees = this.parallaxLayers[2];
+    if (trees) trees.tilePositionX = Math.sin(t * 0.4 + 1) * 5;
   }
 
   // ─── Web Audio API sound synthesis (delegated to AudioManager) ──────────────────
