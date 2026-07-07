@@ -221,6 +221,13 @@ export const MessageType = {
   TREASURE_DESTROY: 132,
   TREASURE_DESPAWN: 151,
 
+  // ─── Reactors (placed breakable/interactive objects) ──────────────────────
+  REACTOR_SPAWN: 157,
+  REACTOR_HIT: 153,
+  REACTOR_DESTROY: 154,
+  REACTOR_INTERACT: 155,
+  REACTOR_DESPAWN: 156,
+
   // ─── Titles (equipped title above character) ────────────────────────────────
   TITLE_EQUIP: 133,
   TITLE_SYNC: 134,
@@ -1438,6 +1445,45 @@ export interface TreasureDestroyPayload {
 export interface TreasureDespawnPayload {
   /** The box id that despawned. */
   boxId: string;
+}
+
+// ─── Reactors (placed breakable/interactive objects) ─────────────────────────
+
+/** Server → client: a reactor spawned (initial or respawn). */
+export interface ReactorSpawnPayload {
+  reactorId: string;
+  kind: string;
+  x: number;
+  y: number;
+  hp: number;
+  maxHp: number;
+}
+
+/** Server → client: a reactor took damage. */
+export interface ReactorHitPayload {
+  reactorId: string;
+  damage: number;
+  hp: number;
+  maxHp: number;
+}
+
+/** Server → client: a reactor was broken (drops awarded). */
+export interface ReactorDestroyPayload {
+  reactorId: string;
+  exp: number;
+  mesos: number;
+}
+
+/** Server → client: a reactor was interacted with (switch/mechanism triggered). */
+export interface ReactorInteractPayload {
+  reactorId: string;
+  triggerType?: string;
+  triggerData?: string;
+}
+
+/** Server → client: a reactor despawned (respawn timer started). */
+export interface ReactorDespawnPayload {
+  reactorId: string;
 }
 
 // ─── Exploration Dispatch ────────────────────────────────────────────────

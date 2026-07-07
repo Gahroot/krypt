@@ -39,8 +39,30 @@ export interface LevelObjective {
   readonly level: number;
 }
 
+/** Break a reactor (ore vein, breakable box, etc.) by attack damage. */
+export interface BreakObjective {
+  readonly kind: "break";
+  /** Reactor kind to match (e.g. "ore-vein", "breakable-box"). Omit to match any. */
+  readonly reactorKind?: string;
+  readonly count: number;
+}
+
+/** Interact with a reactor (quest switch, mechanism, etc.). */
+export interface InteractObjective {
+  readonly kind: "interact";
+  /** Reactor kind to match (e.g. "quest-switch", "mechanism"). Omit to match any. */
+  readonly reactorKind?: string;
+  readonly count: number;
+}
+
 /** Any quest objective. Narrow with `obj.kind` before accessing kind-specific fields. */
-export type Objective = KillObjective | CollectObjective | TalkObjective | LevelObjective;
+export type Objective =
+  | KillObjective
+  | CollectObjective
+  | TalkObjective
+  | LevelObjective
+  | BreakObjective
+  | InteractObjective;
 
 // ---------------------------------------------------------------------------
 // Quest definitions
@@ -1861,6 +1883,42 @@ export const QUESTS: Record<string, QuestDef> = {
     objectives: [{ kind: "collect", itemId: "etc.jelly_tentacle", count: 8 }],
     rewards: { mesos: 1800, exp: 1200 },
     repeatable: { kind: "daily" },
+  },
+
+  // ── Reactor quests (Meadowfield ore veins + breakable boxes) ────────────
+
+  /** Meadowfield gathering — mine copper ore. */
+  "quest.meadow_gather": {
+    id: "quest.meadow_gather",
+    name: "Copper Prospector",
+    giverNpcId: "npc.meadow_guide",
+    requiredLevel: 10,
+    objectives: [{ kind: "break", reactorKind: "ore-vein", count: 5 }],
+    rewards: { mesos: 300, exp: 200 },
+  },
+
+  /** Meadowfield — activate the hidden switch. */
+  "quest.meadow_mechanism": {
+    id: "quest.meadow_mechanism",
+    name: "The Hidden Switch",
+    giverNpcId: "npc.meadow_guide",
+    requiredLevel: 10,
+    prereqQuestId: "quest.meadow_gather",
+    objectives: [
+      { kind: "break", reactorKind: "breakable-box", count: 3 },
+      { kind: "interact", reactorKind: "quest-switch", count: 1 },
+    ],
+    rewards: { mesos: 500, exp: 300 },
+  },
+
+  /** Harbor Docks — smash crates for intel. */
+  "quest.docks_smash": {
+    id: "quest.docks_smash",
+    name: "Smash and Grab",
+    giverNpcId: "npc.harbor_guide",
+    requiredLevel: 4,
+    objectives: [{ kind: "break", reactorKind: "breakable-box", count: 5 }],
+    rewards: { mesos: 200, exp: 150 },
   },
 };
 

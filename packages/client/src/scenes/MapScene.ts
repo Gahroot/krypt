@@ -32,6 +32,11 @@ import {
   type TreasureHitPayload,
   type TreasureDestroyPayload,
   type TreasureDespawnPayload,
+  type ReactorSpawnPayload,
+  type ReactorHitPayload,
+  type ReactorDestroyPayload,
+  type ReactorInteractPayload,
+  type ReactorDespawnPayload,
   type ServerAnnouncementPayload,
   getMobDef,
   getBossAttackPattern,
@@ -268,6 +273,7 @@ export class MapScene extends Phaser.Scene {
   private readonly lootLabels = new Map<string, Phaser.GameObjects.Text>();
   private readonly runeSprites = new Map<string, Phaser.GameObjects.Container>();
   private readonly boxSprites = new Map<string, Phaser.GameObjects.Container>();
+  private readonly reactorSprites = new Map<string, Phaser.GameObjects.Container>();
   private readonly projectileGfx = new Map<string, Phaser.GameObjects.Graphics>();
   private readonly telegraphGfx = new Map<string, Phaser.GameObjects.Graphics>();
   private readonly explosionGfx: Phaser.GameObjects.Graphics[] = [];
@@ -2178,6 +2184,128 @@ export class MapScene extends Phaser.Scene {
       }
     });
 
+    // ── Reactors ──
+    this.spawnMapReactors();
+
+    room.onMessage(MessageType.REACTOR_SPAWN, (payload: ReactorSpawnPayload) => {
+      // Respawn a reactor that was previously destroyed.
+      if (this.reactorSprites.has(payload.reactorId)) return; // already exists
+      const color = this.getReactorColor(payload.kind);
+      const g = this.add.graphics();
+      if (payload.kind === "ore-vein") {
+        g.fillStyle(color, 1);
+        g.fillTriangle(-10, 0, 10, 0, 0, -18);
+        g.fillStyle(0xddcc88, 0.6);
+        g.fillCircle(-3, -6, 3);
+      } else if (payload.kind === "breakable-box") {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-12, -16, 24, 16, 3);
+        g.lineStyle(1, 0xffd700, 0.8);
+        g.strokeCircle(0, -8, 3);
+      } else if (payload.kind === "quest-switch") {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-8, -14, 16, 14, 6);
+        g.fillStyle(0xffffff, 0.8);
+        g.fillCircle(0, -7, 4);
+      } else {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-10, -12, 20, 12, 2);
+        g.fillStyle(0xffd700, 0.6);
+        g.fillRect(-2, -10, 4, 8);
+      }
+      const container = this.add.container(payload.x, payload.y, [g]);
+      container.setDepth(payload.y);
+      this.reactorSprites.set(payload.reactorId, container);
+      if (payload.kind === "breakable-box" || payload.kind === "ore-vein") {
+        this.tweens.add({
+          targets: container,
+          y: payload.y - 2,
+          duration: 1500,
+          yoyo: true,
+          repeat: -1,
+          ease: "Sine.easeInOut",
+        });
+      }
+    });
+
+    room.onMessage(MessageType.REACTOR_HIT, (payload: ReactorHitPayload) => {
+      const c = this.reactorSprites.get(payload.reactorId);
+      if (c) {
+        // Flash white then restore.
+        c.list.forEach((child) => {
+          if (child instanceof Phaser.GameObjects.Rectangle) {
+            child.setFillStyle(0xffffff);
+          }
+        });
+        this.time.delayedCall(80, () => {
+          const rt = this.map.reactors?.find((r) => r.id === payload.reactorId);
+          const baseColor = this.getReactorColor(rt?.kind ?? "breakable-box");
+          c.list.forEach((child) => {
+            if (child instanceof Phaser.GameObjects.Rectangle) {
+              child.setFillStyle(baseColor);
+            }
+          });
+        });
+        this.floatText(c.x, c.y - 20, String(payload.damage), "#ffffff");
+      }
+    });
+
+    room.onMessage(MessageType.REACTOR_DESTROY, (payload: ReactorDestroyPayload) => {
+      const c = this.reactorSprites.get(payload.reactorId);
+      if (c) {
+        this.tweens.killTweensOf(c);
+        for (let i = 0; i < 6; i++) {
+          const angle = (i / 6) * Math.PI * 2;
+          const dot = this.add.circle(c.x, c.y, 3, 0xffd700, 0.9).setDepth(9999);
+          this.tweens.add({
+            targets: dot,
+            x: c.x + Math.cos(angle) * 30,
+            y: c.y + Math.sin(angle) * 30,
+            alpha: 0,
+            duration: 350,
+            onComplete: () => dot.destroy(),
+          });
+        }
+        c.destroy();
+        this.reactorSprites.delete(payload.reactorId);
+        if (payload.exp > 0) this.floatText(c.x + 10, c.y - 10, `+${payload.exp} EXP`, "#9ad06b");
+        if (payload.mesos > 0)
+          this.floatText(c.x - 10, c.y - 26, `+${payload.mesos} mesos`, "#ffe9a8");
+      }
+      getAudioManager().playSfx("loot_drop");
+    });
+
+    room.onMessage(MessageType.REACTOR_INTERACT, (payload: ReactorInteractPayload) => {
+      const c = this.reactorSprites.get(payload.reactorId);
+      if (c) {
+        // Pulse glow effect for interaction.
+        this.tweens.add({
+          targets: c,
+          scaleX: 1.3,
+          scaleY: 1.3,
+          duration: 200,
+          yoyo: true,
+          onComplete: () => {
+            this.tweens.killTweensOf(c);
+            c.destroy();
+            this.reactorSprites.delete(payload.reactorId);
+          },
+        });
+        const triggerLabel = payload.triggerType?.replace(/_/g, " ") ?? "triggered";
+        this.floatText(c.x, c.y - 30, `⚡ ${triggerLabel}`, "#60a5fa");
+      }
+      getAudioManager().playSfx("levelup");
+    });
+
+    room.onMessage(MessageType.REACTOR_DESPAWN, (payload: ReactorDespawnPayload) => {
+      const c = this.reactorSprites.get(payload.reactorId);
+      if (c) {
+        this.tweens.killTweensOf(c);
+        c.destroy();
+        this.reactorSprites.delete(payload.reactorId);
+      }
+    });
+
     // ── Pet sync (server pushes pet state on summon/dismiss/feed/decay) ──
     room.onMessage(MessageType.PET_SYNC, (payload: import("@maple/shared").PetSyncPayload) => {
       this.handlePetSync(payload);
@@ -3840,6 +3968,70 @@ export class MapScene extends Phaser.Scene {
         ease: "Quad.easeOut",
         onComplete: () => this.releaseDamageText(label),
       });
+    }
+  }
+
+  // ─── Reactor rendering ────────────────────────────────────────────────
+
+  /** Color palette for reactor kinds. */
+  private getReactorColor(kind: string): number {
+    switch (kind) {
+      case "ore-vein":
+        return 0x8b6914;
+      case "breakable-box":
+        return 0x8b4513;
+      case "quest-switch":
+        return 0x4a90d9;
+      case "mechanism":
+        return 0x6b6b6b;
+      default:
+        return 0x888888;
+    }
+  }
+
+  /** Draw a reactor object on the map from static map data. */
+  private spawnMapReactors(): void {
+    const defs = this.map.reactors;
+    if (!defs) return;
+    for (const def of defs) {
+      const color = this.getReactorColor(def.kind);
+      const g = this.add.graphics();
+      // Draw relative to origin (0,0) since the container is at (x, y).
+      if (def.kind === "ore-vein") {
+        g.fillStyle(color, 1);
+        g.fillTriangle(-10, 0, 10, 0, 0, -18);
+        g.fillStyle(0xddcc88, 0.6);
+        g.fillCircle(-3, -6, 3);
+      } else if (def.kind === "breakable-box") {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-12, -16, 24, 16, 3);
+        g.lineStyle(1, 0xffd700, 0.8);
+        g.strokeCircle(0, -8, 3);
+      } else if (def.kind === "quest-switch") {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-8, -14, 16, 14, 6);
+        g.fillStyle(0xffffff, 0.8);
+        g.fillCircle(0, -7, 4);
+      } else {
+        g.fillStyle(color, 1);
+        g.fillRoundedRect(-10, -12, 20, 12, 2);
+        g.fillStyle(0xffd700, 0.6);
+        g.fillRect(-2, -10, 4, 8);
+      }
+      const container = this.add.container(def.x, def.y, [g]);
+      container.setDepth(def.y);
+      this.reactorSprites.set(def.id, container);
+      // Gentle idle bob for breakable types.
+      if (def.kind === "breakable-box" || def.kind === "ore-vein") {
+        this.tweens.add({
+          targets: container,
+          y: def.y - 2,
+          duration: 1500,
+          yoyo: true,
+          repeat: -1,
+          ease: "Sine.easeInOut",
+        });
+      }
     }
   }
 

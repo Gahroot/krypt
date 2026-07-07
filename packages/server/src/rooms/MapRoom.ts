@@ -188,6 +188,7 @@ import { SpawnManager } from "../spawnManager";
 import { BossManager } from "../bossManager";
 import { RuneManager } from "../runeManager";
 import { TreasureBoxManager } from "../treasureBoxManager";
+import { ReactorManager } from "../reactorManager";
 import { channelRegistry } from "../channelRegistry";
 import { CHANNELS_PER_MAP } from "../app.config";
 import type { MobBehavior } from "@maple/shared";
@@ -615,6 +616,8 @@ export class MapRoom extends AuthedRoom<TownState> {
 
   /** Treasure box spawn/destruction controller (combat maps only). */
   private treasureBoxManager?: TreasureBoxManager;
+  /** Placed reactor/breakable-object controller. */
+  private reactorManager?: ReactorManager;
 
   // ─── Scheduled transport system ───────────────────────────────────────────
   /** Epoch (ms) for all scheduled-transport phase calculations. */
@@ -1619,6 +1622,36 @@ export class MapRoom extends AuthedRoom<TownState> {
       );
     }
 
+    // Initialize reactor manager for all maps that have reactor definitions.
+    if (map.reactors && map.reactors.length > 0) {
+      this.reactorManager = new ReactorManager(
+        this.state,
+        this.map,
+        (type, payload) => this.broadcast(type, payload),
+        (itemId, x, y) => this.spawnLoot(itemId, rollPotential(), x, y),
+        (player, exp) => {
+          const result = grantExp(player, exp);
+          if (result.leveledUp) {
+            const lc = this.findClientByPlayer(player);
+            if (lc) {
+              lc.send(MessageType.LEVEL_UP, {
+                level: player.level,
+                levelsGained: result.levelsGained,
+                ap: player.ap,
+                sp: player.sp,
+                maxHp: player.maxHp,
+                maxMp: player.maxMp,
+              } satisfies LevelUpPayload);
+            }
+          }
+          this.persistPlayer(player);
+        },
+        (player, kind, matchKey, amount) => {
+          return progressObjectives(player.questState, kind, matchKey, amount);
+        },
+      );
+    }
+
     let elapsed = 0;
     this.setSimulationInterval((deltaTime) => {
       elapsed += deltaTime;
@@ -1710,6 +1743,7 @@ export class MapRoom extends AuthedRoom<TownState> {
     // Rune + treasure box tick (combat maps only).
     this.runeManager?.tick(timeStep);
     this.treasureBoxManager?.tick(timeStep);
+    this.reactorManager?.tick(timeStep);
 
     // Broadcast boss HP to all clients — throttled to ~4 Hz to save bandwidth.
     if (++this.bossHpSyncTick >= MapRoom.BOSS_HP_SYNC_INTERVAL) {
@@ -2040,6 +2074,8 @@ export class MapRoom extends AuthedRoom<TownState> {
     // ── Portal activation (after position update so we check the final position) ──
     if (interactEdge) {
       this.checkPortalProximity(player);
+      // Check reactor interaction (switches, mechanisms).
+      this.reactorManager?.onInteract(player);
     }
   }
 
@@ -2372,6 +2408,10 @@ export class MapRoom extends AuthedRoom<TownState> {
 
     // Check treasure box hit first (before mob loop).
     if (this.treasureBoxManager?.onAttack(attacker)) {
+      anyHit = true;
+    }
+    // Check reactor hit (breakable objects).
+    if (this.reactorManager?.onAttack(attacker)) {
       anyHit = true;
     }
 

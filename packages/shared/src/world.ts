@@ -117,6 +117,52 @@ export interface BossSpawnZone extends MobSpawnZone {
   readonly respawnIntervalMs?: number;
 }
 
+// ─── Reactor / breakable-object layer ─────────────────────────────────────
+
+/** Kind of interactive reactor placed on a map. */
+export type ReactorKind = "breakable-box" | "ore-vein" | "quest-switch" | "mechanism";
+
+/** Reward or trigger data attached to a reactor. */
+export interface ReactorRewards {
+  /** EXP granted when the reactor is broken/used. */
+  readonly exp?: number;
+  /** Mesos granted when the reactor is broken/used. */
+  readonly mesos?: number;
+  /** Item drops when the reactor is broken. */
+  readonly items?: readonly string[];
+  /** Quest objective key — matched by quest engine (e.g. mobId for break objectives). */
+  readonly reactorId?: string;
+  /** When set, the reactor triggers a server-side event on interaction. */
+  readonly triggerType?: "open_portal" | "spawn_mobs" | "quest_progress";
+  /** Data payload for the trigger (portal id, mob id, quest id, etc.). */
+  readonly triggerData?: string;
+}
+
+/** A placed interactive object on a map — ore veins, breakable boxes, quest switches, mechanisms. */
+export interface ReactorObject {
+  /** Unique id for this reactor instance (e.g. "reactor.meadow_ore_1"). */
+  readonly id: string;
+  /** Visual/behaviour type. */
+  readonly kind: ReactorKind;
+  /** World x position. */
+  readonly x: number;
+  /** World y position (feet-level). */
+  readonly y: number;
+  /** HP for breakable types (box/vein). Undefined for interactive types (switch/mechanism). */
+  readonly hp?: number;
+  /** Interaction range in pixels (default 60). */
+  readonly interactRange?: number;
+  /** Reward or trigger data. */
+  readonly rewards?: ReactorRewards;
+  /** Respawn time in ms after being broken/used. 0 or omit = no respawn. */
+  readonly respawnMs?: number;
+}
+
+/** Default HP for breakable reactors that don't specify one. */
+export const REACTOR_DEFAULT_HP = 200;
+/** Default interaction range for reactors. */
+export const REACTOR_DEFAULT_RANGE = 60;
+
 /** A portal linking two maps at a given position. */
 export interface Portal {
   readonly id: string;
@@ -174,6 +220,8 @@ export interface GameMap {
   readonly bgSet?: BiomeVisualSet;
   /** Optional per-map ambiance overrides (particles, weather, parallax motion). */
   readonly ambiance?: Partial<AmbianceConfig>;
+  /** Placed interactive objects — ore veins, breakable boxes, quest switches, mechanisms. */
+  readonly reactors?: readonly ReactorObject[];
 }
 
 /** @deprecated Use {@link GameMap} directly. Kept for backward compat. */
@@ -611,6 +659,37 @@ export const HARBOR_DOCKS: GameMap = {
     // Right cargo wall — vertical barrier near the crate row / upper deck edge
     { id: 1, x: 1080, y1: 320, y2: 480 },
   ],
+
+  // ── Reactors: breakable cargo crates on the docks ────────────────────────
+  reactors: [
+    {
+      id: "reactor.docks_box_1",
+      kind: "breakable-box" as const,
+      x: 400,
+      y: 480,
+      hp: 180,
+      respawnMs: 30_000,
+      rewards: { exp: 40, mesos: 80, items: ["pot.small_hp"], reactorId: "breakable-box" },
+    },
+    {
+      id: "reactor.docks_box_2",
+      kind: "breakable-box" as const,
+      x: 850,
+      y: 480,
+      hp: 180,
+      respawnMs: 30_000,
+      rewards: { exp: 40, mesos: 80, reactorId: "breakable-box" },
+    },
+    {
+      id: "reactor.docks_box_3",
+      kind: "breakable-box" as const,
+      x: 650,
+      y: 320,
+      hp: 220,
+      respawnMs: 45_000,
+      rewards: { exp: 60, mesos: 120, reactorId: "breakable-box" },
+    },
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -778,6 +857,66 @@ export const MEADOWFIELD: GameMap = {
     { id: 0, x: 40, y1: 180, y2: GROUND_Y_LEFT },
     // Right cliff wall — near the harbor-portal approach
     { id: 1, x: 1560, y1: 480, y2: GROUND_Y_RIGHT },
+  ],
+
+  // ── Reactors: ore veins, breakable boxes, quest switch ────────────────────
+  reactors: [
+    // Ore veins on the ground — gatherable for mining quests
+    {
+      id: "reactor.meadow_ore_1",
+      kind: "ore-vein" as const,
+      x: 350,
+      y: GROUND_Y_LEFT,
+      hp: 150,
+      respawnMs: 30_000,
+      rewards: { exp: 30, mesos: 50, reactorId: "ore-vein" },
+    },
+    {
+      id: "reactor.meadow_ore_2",
+      kind: "ore-vein" as const,
+      x: 1100,
+      y: (GROUND_Y_LEFT + GROUND_Y_RIGHT) / 2,
+      hp: 150,
+      respawnMs: 30_000,
+      rewards: { exp: 30, mesos: 50, reactorId: "ore-vein" },
+    },
+    // Breakable boxes on the mid platform — loot containers
+    {
+      id: "reactor.meadow_box_1",
+      kind: "breakable-box" as const,
+      x: 550,
+      y: 540,
+      hp: 200,
+      respawnMs: 45_000,
+      rewards: {
+        exp: 50,
+        mesos: 100,
+        items: ["pot.small_hp", "pot.small_mp"],
+        reactorId: "breakable-box",
+      },
+    },
+    {
+      id: "reactor.meadow_box_2",
+      kind: "breakable-box" as const,
+      x: 800,
+      y: 540,
+      hp: 200,
+      respawnMs: 45_000,
+      rewards: { exp: 50, mesos: 100, reactorId: "breakable-box" },
+    },
+    // Quest switch on the upper platform — triggers quest progress
+    {
+      id: "reactor.meadow_switch",
+      kind: "quest-switch" as const,
+      x: 700,
+      y: 360,
+      interactRange: 50,
+      rewards: {
+        reactorId: "quest-switch",
+        triggerType: "quest_progress",
+        triggerData: "quest.meadow_mechanism",
+      },
+    },
   ],
 };
 

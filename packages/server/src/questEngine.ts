@@ -420,6 +420,10 @@ function getObjectiveTarget(obj: Objective): number {
       return 1;
     case "level":
       return 1; // Binary: reached target level or not
+    case "break":
+      return obj.count;
+    case "interact":
+      return obj.count;
     default:
       return 1;
   }
@@ -436,6 +440,11 @@ function objectiveMatchesKey(objDef: Objective, matchKey: string): boolean {
     case "level":
       // For level objectives, matchKey is the player's level as a string.
       return Number(matchKey) >= objDef.level;
+    case "break":
+      // Match by reactorKind if specified, otherwise match any break objective.
+      return !objDef.reactorKind || objDef.reactorKind === matchKey;
+    case "interact":
+      return !objDef.reactorKind || objDef.reactorKind === matchKey;
     default:
       return false;
   }
@@ -471,6 +480,16 @@ function describeObjective(kind: string, questId: string, op: ObjectiveProgress)
     case "level": {
       const levelDef = objDef as { kind: "level"; level: number };
       return `Reach level ${levelDef.level}`;
+    }
+    case "break": {
+      const breakDef = objDef as { kind: "break"; reactorKind?: string; count: number };
+      const typeName = breakDef.reactorKind?.replace(/-/g, " ") ?? "object";
+      return `Break ${typeName} (${op.current}/${op.target})`;
+    }
+    case "interact": {
+      const interactDef = objDef as { kind: "interact"; reactorKind?: string; count: number };
+      const typeName = interactDef.reactorKind?.replace(/-/g, " ") ?? "object";
+      return `Use ${typeName} (${op.current}/${op.target})`;
     }
     default:
       return `${kind} objective`;
