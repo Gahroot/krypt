@@ -593,6 +593,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 6,
     speed: 0.4,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 1,
     mDef: 0,
     avoid: 0,
@@ -614,6 +615,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 10,
     speed: 0.5,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 1,
     mDef: 1,
     avoid: 0,
@@ -661,6 +663,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 18,
     speed: 0.4,
     element: "PHYSICAL",
+    elementMods: { LIGHTNING: 1.3 },
     wDef: 6,
     mDef: 3,
     avoid: 2,
@@ -683,6 +686,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 230,
     attackRange: 50,
     element: "PHYSICAL",
+    elementMods: { ICE: 1.3 },
     wDef: 4,
     mDef: 4,
     avoid: 8,
@@ -707,6 +711,7 @@ export const MOBS: Record<string, MobDef> = {
     projectileDamage: 6,
     projectileCooldownMs: 1600,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 6,
     mDef: 8,
     avoid: 5,
@@ -747,6 +752,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 12,
     speed: 0.5,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 0,
     mDef: 0,
     avoid: 0,
@@ -769,6 +775,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 25,
     speed: 0.55,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 2,
     mDef: 2,
     avoid: 1,
@@ -784,6 +791,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 30,
     speed: 0.6,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 4,
     mDef: 4,
     avoid: 3,
@@ -813,6 +821,7 @@ export const MOBS: Record<string, MobDef> = {
     exploderDamage: 18,
     exploderDetonateRange: 35,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 16,
     mDef: 14,
     avoid: 8,
@@ -832,6 +841,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 35,
     speed: 0.6,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 8,
     mDef: 8,
     avoid: 4,
@@ -850,6 +860,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 55,
     speed: 0.5,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 18,
     mDef: 12,
     avoid: 6,
@@ -872,6 +883,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 250,
     attackRange: 50,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 8,
     mDef: 6,
     avoid: 10,
@@ -910,6 +922,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 30,
     speed: 0.7,
     element: "PHYSICAL",
+    elementMods: { ICE: 1.3, FIRE: 0.7 },
     wDef: 14,
     mDef: 8,
     avoid: 5,
@@ -936,6 +949,7 @@ export const MOBS: Record<string, MobDef> = {
     exploderDamage: 12,
     exploderDetonateRange: 30,
     element: "PHYSICAL",
+    elementMods: { ICE: 1.3 },
     wDef: 18,
     mDef: 10,
     avoid: 4,
@@ -959,6 +973,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 260,
     attackRange: 50,
     element: "PHYSICAL",
+    elementMods: { ICE: 1.3 },
     wDef: 10,
     mDef: 8,
     avoid: 12,
@@ -979,6 +994,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 55,
     speed: 0.5,
     element: "PHYSICAL",
+    elementMods: { LIGHTNING: 1.3 },
     wDef: 22,
     mDef: 12,
     avoid: 3,
@@ -998,6 +1014,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 70,
     speed: 0.4,
     element: "PHYSICAL",
+    elementMods: { ICE: 1.3, FIRE: 0.7 },
     wDef: 30,
     mDef: 15,
     avoid: 2,
@@ -1021,6 +1038,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 220,
     attackRange: 50,
     element: "ICE",
+    elementMods: { FIRE: 1.3, ICE: 0.7 },
     wDef: 6,
     mDef: 14,
     avoid: 6,
@@ -1043,6 +1061,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 240,
     attackRange: 50,
     element: "PHYSICAL",
+    elementMods: { FIRE: 1.3 },
     wDef: 8,
     mDef: 8,
     avoid: 9,
@@ -1062,6 +1081,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 40,
     speed: 0.7,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 12,
     mDef: 14,
     avoid: 7,
@@ -1082,6 +1102,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 45,
     speed: 0.6,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 18,
     mDef: 12,
     avoid: 5,
@@ -1109,6 +1130,7 @@ export const MOBS: Record<string, MobDef> = {
     casterCooldownMs: 2200,
     casterDebuffEffect: { slowPercent: 25, slowMs: 2500 },
     element: "ICE",
+    elementMods: { FIRE: 1.3, ICE: 0.7 },
     wDef: 8,
     mDef: 18,
     avoid: 8,
@@ -1151,6 +1173,7 @@ export const MOBS: Record<string, MobDef> = {
     aggroRange: 240,
     attackRange: 50,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 6,
     mDef: 8,
     avoid: 10,
@@ -1176,6 +1199,7 @@ export const MOBS: Record<string, MobDef> = {
     projectileDamage: 8,
     projectileCooldownMs: 1500,
     element: "LIGHTNING",
+    elementMods: { ICE: 1.3, LIGHTNING: 0.7 },
     wDef: 12,
     mDef: 14,
     avoid: 6,
@@ -1194,6 +1218,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 44,
     speed: 0.6,
     element: "LIGHTNING",
+    elementMods: { ICE: 1.3, LIGHTNING: 0.7 },
     wDef: 20,
     mDef: 16,
     avoid: 4,
@@ -1213,6 +1238,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 50,
     speed: 0.7,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 14,
     mDef: 14,
     avoid: 9,
@@ -1238,6 +1264,7 @@ export const MOBS: Record<string, MobDef> = {
     projectileDamage: 10,
     projectileCooldownMs: 1400,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 14,
     mDef: 18,
     avoid: 8,
@@ -1265,6 +1292,7 @@ export const MOBS: Record<string, MobDef> = {
     casterCooldownMs: 2000,
     casterDebuffEffect: { slowPercent: 20, slowMs: 2000 },
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 10,
     mDef: 22,
     avoid: 10,
@@ -1286,6 +1314,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 75,
     speed: 0.6,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 18,
     mDef: 22,
     avoid: 8,
@@ -1307,6 +1336,7 @@ export const MOBS: Record<string, MobDef> = {
     projectileDamage: 12,
     projectileCooldownMs: 1400,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 20,
     mDef: 20,
     avoid: 10,
@@ -1326,6 +1356,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 100,
     speed: 0.7,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 24,
     mDef: 28,
     avoid: 10,
@@ -1399,6 +1430,7 @@ export const MOBS: Record<string, MobDef> = {
     exploderDamage: 15,
     exploderDetonateRange: 35,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 22,
     mDef: 18,
     avoid: 8,
@@ -1419,6 +1451,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 100,
     speed: 0.5,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 26,
     mDef: 20,
     avoid: 6,
@@ -1445,6 +1478,7 @@ export const MOBS: Record<string, MobDef> = {
     casterDamage: 13,
     casterCooldownMs: 2000,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 32,
     mDef: 24,
     avoid: 8,
@@ -1473,6 +1507,7 @@ export const MOBS: Record<string, MobDef> = {
     casterCooldownMs: 1800,
     casterDebuffEffect: { poisonTickDamage: 3, poisonTickMs: 500, poisonMs: 2500 },
     element: "POISON",
+    elementMods: { FIRE: 1.3, HOLY: 1.3, POISON: 0.7 },
     wDef: 24,
     mDef: 30,
     avoid: 10,
@@ -1492,6 +1527,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 150,
     speed: 0.7,
     element: "DARK",
+    elementMods: { HOLY: 1.3, DARK: 0.7 },
     wDef: 28,
     mDef: 32,
     avoid: 8,
@@ -1511,6 +1547,7 @@ export const MOBS: Record<string, MobDef> = {
     mesosMax: 165,
     speed: 0.6,
     element: "POISON",
+    elementMods: { FIRE: 1.3, POISON: 0.7 },
     wDef: 34,
     mDef: 28,
     avoid: 7,
@@ -2842,6 +2879,40 @@ export function elementalMultiplier(mob: MobDef, attackElement: Element): number
     }
   }
   return 1;
+}
+
+/**
+ * Get a human-readable elemental profile for a mob, suitable for codex or bestiary UI.
+ *
+ * Returns null when the mob has no elementMods (totally neutral).
+ * Otherwise returns an object with:
+ *  - `weakTo`: elements that deal extra damage (multiplier > 1)
+ *  - `resists`: elements that deal reduced damage (multiplier > 0 and < 1)
+ *  - `immune`: elements that deal no damage (multiplier = 0)
+ */
+export function getElementalProfile(mob: MobDef): {
+  weakTo: Element[];
+  resists: Element[];
+  immune: Element[];
+} | null {
+  if (!mob.elementMods) return null;
+
+  const weakTo: Element[] = [];
+  const resists: Element[] = [];
+  const immune: Element[] = [];
+
+  for (const [element, mult] of Object.entries(mob.elementMods)) {
+    if (mult === 0) {
+      immune.push(element as Element);
+    } else if (mult > 1) {
+      weakTo.push(element as Element);
+    } else if (mult > 0 && mult < 1) {
+      resists.push(element as Element);
+    }
+  }
+
+  if (weakTo.length === 0 && resists.length === 0 && immune.length === 0) return null;
+  return { weakTo, resists, immune };
 }
 
 /**

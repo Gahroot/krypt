@@ -19,7 +19,7 @@
  */
 
 import type { CharacterStats } from "./stats.js";
-import { MOBS } from "./mobs.js";
+import { MOBS, getElementalProfile } from "./mobs.js";
 
 // ── Monster Codex ─────────────────────────────────────────────────────────
 
@@ -434,6 +434,14 @@ export const CODEX_ENTRIES: Record<string, MobCodexEntry> = {
       "200 horrors — +3% EXP",
     ]),
   },
+  "mob.subway_stalker": {
+    mobId: "mob.subway_stalker",
+    milestones: buildMilestones("TIER_5", [
+      "10 subway stalkers subdued — +3 INT",
+      "50 stalkers — +2 LUK, +3% EXP",
+      "200 stalkers — +3% EXP",
+    ]),
+  },
   "mob.subway_overseer": {
     mobId: "mob.subway_overseer",
     milestones: buildMilestones("TIER_5", [
@@ -807,6 +815,31 @@ export function meetsFameGate(
   const gate = FAME_GATES.find((g) => g.slot === slot);
   if (!gate) return { meets: true };
   return currentFame >= gate.minFame ? { meets: true } : { meets: false, required: gate.minFame };
+}
+
+// ── Elemental hints for Codex UI ─────────────────────────────────────────
+
+/**
+ * Get a human-readable elemental hint string for a mob, suitable for display
+ * in a codex/bestiary panel. Returns null when the mob has no elemental
+ * weaknesses or resistances.
+ *
+ * Example outputs:
+ *  - "Weak to FIRE"
+ *  - "Weak to FIRE, ICE · Resists POISON"
+ *  - "Immune to DARK · Weak to HOLY"
+ */
+export function getCodexElementalHint(mobId: string): string | null {
+  const mob = MOBS[mobId];
+  if (!mob) return null;
+  const profile = getElementalProfile(mob);
+  if (!profile) return null;
+
+  const parts: string[] = [];
+  if (profile.immune.length > 0) parts.push(`Immune to ${profile.immune.join(", ")}`);
+  if (profile.weakTo.length > 0) parts.push(`Weak to ${profile.weakTo.join(", ")}`);
+  if (profile.resists.length > 0) parts.push(`Resists ${profile.resists.join(", ")}`);
+  return parts.join(" · ");
 }
 
 // ── Exploration Dispatch (idle Monster Collection) ─────────────────────────
