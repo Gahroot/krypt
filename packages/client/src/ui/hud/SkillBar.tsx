@@ -114,6 +114,7 @@ function SkillSlot({
 
 export function SkillBar() {
   const skills = useUIStore((s) => s.hud.skills);
+  const ammo = useUIStore((s) => s.hud.ammo);
   const useSkill = useUIStore((s) => s.hudActions?.useSkill);
   const toggleOn = useUIStore((s) => s.hud.hudToggles.skillBar);
   const [now, setNow] = useState(() => Date.now());
@@ -131,10 +132,27 @@ export function SkillBar() {
 
   return (
     <TooltipProvider delayDuration={150}>
-      <div className="absolute bottom-3 right-3 flex max-w-[calc(100vw-4rem)] flex-wrap justify-end gap-1 rounded-lg border border-border bg-background/92 p-1.5 shadow-2xl">
-        {skills.map((slot) => (
-          <SkillSlot key={slot.index} slot={slot} now={now} onUse={(i) => useSkill?.(i)} />
-        ))}
+      <div className="absolute bottom-3 right-3 flex items-end gap-1.5">
+        {/* Ammo count indicator */}
+        {ammo && (
+          <div className="pointer-events-auto flex flex-col items-center gap-0.5 rounded-md border border-border bg-background/92 px-1.5 py-1 shadow-2xl">
+            <span className="text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {ammo.category === "ARROW" ? "🏹" : ammo.category === "BULLET" ? "🔫" : "⭐"}
+            </span>
+            <span className="tabular-nums text-[11px] font-bold text-yellow-300 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+              {ammo.count}
+            </span>
+            {ammo.atkBonus > 0 && (
+              <span className="text-[8px] text-green-400">+{ammo.atkBonus}</span>
+            )}
+          </div>
+        )}
+        {/* Skill bar */}
+        <div className="flex max-w-[calc(100vw-4rem)] flex-wrap justify-end gap-1 rounded-lg border border-border bg-background/92 p-1.5 shadow-2xl">
+          {skills.map((slot) => (
+            <SkillSlot key={slot.index} slot={slot} now={now} onUse={(i) => useSkill?.(i)} />
+          ))}
+        </div>
       </div>
     </TooltipProvider>
   );

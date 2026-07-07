@@ -11,6 +11,7 @@
 import { ITEMS } from "./items.js";
 import { CONSUMABLES } from "./consumables.js";
 import { CASH_ITEMS } from "./cashshop.js";
+import { AMMO } from "./items.js";
 
 // ─── Tab & Slot types ──────────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ export const MAX_STACK: Record<InventoryTab, number> = {
 export function tabForItem(defId: string): InventoryTab {
   if (defId in ITEMS) return "EQUIP";
   if (defId in CONSUMABLES) return "USE";
+  if (defId in AMMO) return "USE";
   if (defId in CASH_ITEMS) return "CASH";
   return "ETC";
 }

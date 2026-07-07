@@ -16,6 +16,15 @@ import {
 import type { CharacterStats, PrimaryStat } from "./stats.js";
 import { ClassArchetype } from "./classes.js";
 
+// ─── Ammo categories ──────────────────────────────────────────────────────────
+
+/** Ammo categories: which type of consumable a weapon requires. */
+export enum AmmoCategory {
+  ARROW = "ARROW",
+  BULLET = "BULLET",
+  STAR = "STAR",
+}
+
 export enum EquipSlot {
   WEAPON = "WEAPON",
   HAT = "HAT",
@@ -101,6 +110,8 @@ export interface ItemDef {
   readonly hpBonus?: number;
   /** Flat MP bonus when equipped. */
   readonly mpBonus?: number;
+  /** Ammo category consumed by this weapon (arrows, bullets, stars). Only set for ranged/thrown weapons. */
+  readonly ammoType?: AmmoCategory;
 }
 
 /** A single rolled bonus-stat line from the Potential system. */
@@ -300,6 +311,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 2,
     baseAttack: 11,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 4,
     wDef: 1,
@@ -374,6 +386,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 4,
     baseAttack: 30,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 35,
     reqStr: 10,
@@ -406,6 +419,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 4,
     baseAttack: 32,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 35,
     reqDex: 15,
@@ -770,6 +784,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 8,
     baseAttack: 50,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 65,
     reqStr: 25,
@@ -786,6 +801,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 14,
     baseAttack: 75,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 100,
     reqStr: 50,
@@ -802,6 +818,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 20,
     baseAttack: 105,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 145,
     reqStr: 80,
@@ -818,6 +835,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 28,
     baseAttack: 142,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 200,
     reqStr: 120,
@@ -834,6 +852,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 38,
     baseAttack: 188,
     weaponType: WeaponType.BOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 270,
     reqStr: 170,
@@ -852,6 +871,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 5,
     baseAttack: 32,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 35,
     reqStr: 12,
@@ -867,6 +887,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 9,
     baseAttack: 54,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 65,
     reqStr: 28,
@@ -882,6 +903,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 15,
     baseAttack: 80,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 100,
     reqStr: 55,
@@ -897,6 +919,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 22,
     baseAttack: 112,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 145,
     reqStr: 85,
@@ -912,6 +935,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 30,
     baseAttack: 150,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 200,
     reqStr: 125,
@@ -927,6 +951,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 40,
     baseAttack: 198,
     weaponType: WeaponType.CROSSBOW,
+    ammoType: AmmoCategory.ARROW,
     classReq: [ClassArchetype.ARCHER],
     reqDex: 270,
     reqStr: 175,
@@ -1026,6 +1051,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 4,
     baseAttack: 28,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 35,
     reqDex: 12,
@@ -1041,6 +1067,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 8,
     baseAttack: 47,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 65,
     reqDex: 30,
@@ -1056,6 +1083,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 13,
     baseAttack: 70,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 100,
     reqDex: 55,
@@ -1071,6 +1099,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 19,
     baseAttack: 98,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 145,
     reqDex: 90,
@@ -1086,6 +1115,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 27,
     baseAttack: 135,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 200,
     reqDex: 130,
@@ -1101,6 +1131,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 36,
     baseAttack: 180,
     weaponType: WeaponType.CLAW,
+    ammoType: AmmoCategory.STAR,
     classReq: [ClassArchetype.THIEF],
     reqLuk: 270,
     reqDex: 185,
@@ -1118,6 +1149,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 8,
     baseAttack: 52,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 65,
     reqDex: 32,
@@ -1133,6 +1165,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 14,
     baseAttack: 78,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 100,
     reqDex: 58,
@@ -1148,6 +1181,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 20,
     baseAttack: 108,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 145,
     reqDex: 90,
@@ -1163,6 +1197,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 28,
     baseAttack: 145,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 200,
     reqDex: 130,
@@ -1178,6 +1213,7 @@ export const ITEMS: Record<string, ItemDef> = {
     baseStatBonus: 38,
     baseAttack: 192,
     weaponType: WeaponType.GUN,
+    ammoType: AmmoCategory.BULLET,
     classReq: [ClassArchetype.PIRATE],
     reqStr: 270,
     reqDex: 180,
@@ -6588,6 +6624,120 @@ export function resolveRingSlot(equipped: Map<string, string> | Record<string, s
   }
   return fallback;
 }
+// ─── Ammo system ─────────────────────────────────────────────────────────────
+
+/** Stackable ammo item — consumed by ranged/thrown weapons on attack. */
+export interface AmmoDef {
+  readonly id: string;
+  readonly name: string;
+  readonly category: AmmoCategory;
+  /** Flat ATK bonus granted while this ammo is equipped (on top of weapon ATK). */
+  readonly atkBonus: number;
+  /** Minimum character level to equip. */
+  readonly levelReq: number;
+}
+
+/** Max ammo items that can stack in one inventory slot. */
+export const AMMO_STACK_SIZE = 200;
+
+/** Ammo catalog — consumable ammo items. */
+export const AMMO: Record<string, AmmoDef> = {
+  // ── Arrows (Bow / Crossbow) ────────────────────────────────────────
+  "ammo.shortbow_arrow": {
+    id: "ammo.shortbow_arrow",
+    name: "Shortbow Arrow",
+    category: AmmoCategory.ARROW,
+    atkBonus: 0,
+    levelReq: 1,
+  },
+  "ammo.hunters_arrow": {
+    id: "ammo.hunters_arrow",
+    name: "Hunter's Arrow",
+    category: AmmoCategory.ARROW,
+    atkBonus: 3,
+    levelReq: 10,
+  },
+  "ammo.broadhead_arrow": {
+    id: "ammo.broadhead_arrow",
+    name: "Broadhead Arrow",
+    category: AmmoCategory.ARROW,
+    atkBonus: 6,
+    levelReq: 20,
+  },
+  // ── Bullets (Gun) ──────────────────────────────────────────────────
+  "ammo.lead_bullet": {
+    id: "ammo.lead_bullet",
+    name: "Lead Bullet",
+    category: AmmoCategory.BULLET,
+    atkBonus: 0,
+    levelReq: 1,
+  },
+  "ammo.hollow_bullet": {
+    id: "ammo.hollow_bullet",
+    name: "Hollow Bullet",
+    category: AmmoCategory.BULLET,
+    atkBonus: 3,
+    levelReq: 10,
+  },
+  "ammo.armor_piercing_bullet": {
+    id: "ammo.armor_piercing_bullet",
+    name: "Armor-Piercing Bullet",
+    category: AmmoCategory.BULLET,
+    atkBonus: 6,
+    levelReq: 20,
+  },
+  // ── Throwing Stars (Claw) ──────────────────────────────────────────
+  "ammo.iron_star": {
+    id: "ammo.iron_star",
+    name: "Iron Star",
+    category: AmmoCategory.STAR,
+    atkBonus: 0,
+    levelReq: 1,
+  },
+  "ammo.steel_star": {
+    id: "ammo.steel_star",
+    name: "Steel Star",
+    category: AmmoCategory.STAR,
+    atkBonus: 3,
+    levelReq: 10,
+  },
+  "ammo.titanium_star": {
+    id: "ammo.titanium_star",
+    name: "Titanium Star",
+    category: AmmoCategory.STAR,
+    atkBonus: 6,
+    levelReq: 20,
+  },
+};
+
+/** Map weapon type → which ammo category it consumes (undefined = no ammo required). */
+export const WEAPON_AMMO_CATEGORY: Partial<Record<WeaponType, AmmoCategory>> = {
+  [WeaponType.BOW]: AmmoCategory.ARROW,
+  [WeaponType.CROSSBOW]: AmmoCategory.ARROW,
+  [WeaponType.GUN]: AmmoCategory.BULLET,
+  [WeaponType.CLAW]: AmmoCategory.STAR,
+};
+
+/** Get the ammo category a weapon requires, or undefined if the weapon needs no ammo. */
+export function getWeaponAmmoCategory(weaponType: WeaponType): AmmoCategory | undefined {
+  return WEAPON_AMMO_CATEGORY[weaponType];
+}
+
+/** Check if a defId is a registered ammo item. */
+export function isAmmoItem(defId: string): boolean {
+  return defId in AMMO;
+}
+
+/** Get the ammo category for a given ammo defId, or undefined if not ammo. */
+export function getAmmoCategory(defId: string): AmmoCategory | undefined {
+  return AMMO[defId]?.category;
+}
+
+/** Get ammo definition by id. */
+export function getAmmoDef(defId: string): AmmoDef | undefined {
+  return AMMO[defId];
+}
+
 // ─── Attack resolution ────────────────────────────────────────────────────────
 
 export enum AttackType {

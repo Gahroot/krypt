@@ -172,6 +172,8 @@ import {
   getDailyLoginReward,
   isProjectileSkill,
   getSkillEffect,
+  isAmmoItem,
+  getAmmoDef,
 } from "@maple/shared";
 
 import { TownState } from "./schema/TownState";
@@ -2299,6 +2301,64 @@ export class MapRoom extends AuthedRoom<TownState> {
     const equippedRec = Object.fromEntries(attacker.equipped.entries());
     const attackType = resolveAttackType(equippedRec, invLookup, attacker.archetype);
     attacker.attackType = attackType;
+
+    // ── Ammo check: ranged/thrown weapons require ammo ────────────────
+    const weaponUid = equippedRec[EquipSlot.WEAPON];
+    if (weaponUid) {
+      const weaponDefId = attacker.inventory.get(weaponUid)?.defId;
+      if (weaponDefId) {
+        const weaponDef = getItemDef(weaponDefId);
+        if (weaponDef?.ammoType) {
+          // Find matching ammo in inventory.
+          let ammoUid = "";
+          attacker.inventory.forEach((item, uid) => {
+            if (ammoUid) return;
+            if (isAmmoItem(item.defId)) {
+              const ammoDef = getAmmoDef(item.defId);
+              if (ammoDef && ammoDef.category === weaponDef.ammoType && (item.count ?? 1) > 0) {
+                ammoUid = uid;
+              }
+            }
+          });
+          if (!ammoUid) {
+            // Out of ammo — block the attack, notify client.
+            const session = this.findSessionByPlayer(attacker);
+            if (session) {
+              const client = Array.from(this.clients).find((c) => c.sessionId === session);
+              client?.send(MessageType.CHAT, {
+                sessionId: "",
+                name: "System",
+                text: `Out of ${weaponDef.ammoType === "ARROW" ? "arrows" : weaponDef.ammoType === "BULLET" ? "bullets" : "stars"}! Buy more from an NPC shop.`,
+              });
+            }
+            attacker.attackCooldown = ATTACK_COOLDOWN_MS;
+            return;
+          }
+          // Consume 1 ammo.
+          const ammoItem = attacker.inventory.get(ammoUid);
+          if (ammoItem) {
+            const count = ammoItem.count ?? 1;
+            if (count <= 1) {
+              attacker.inventory.delete(ammoUid);
+              accountStore.removeItem(attacker.charId, ammoUid);
+            } else {
+              ammoItem.count = count - 1;
+              const rec = accountStore.getItem(attacker.charId, ammoUid);
+              if (rec) {
+                rec.count = ammoItem.count;
+                const char = accountStore.getCharacter(attacker.charId);
+                if (char) {
+                  accountStore.updateCharacter(attacker.charId, {
+                    inventory: { ...char.inventory },
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
     attacker.attacking = true;
     attacker.attackTimer = ATTACK_DURATION_MS;
     attacker.attackCooldown = ATTACK_COOLDOWN_MS;
@@ -8668,6 +8728,62 @@ export class MapRoom extends AuthedRoom<TownState> {
     player.mp -= stats.mpCost;
     if (stats.cooldownMs > 0) {
       player.skillCooldowns.set(skillId, stats.cooldownMs);
+    }
+
+    // 5b. Ammo consumption for active attack skills using ranged/thrown weapons.
+    if (skill.kind === "active") {
+      const equippedRec = Object.fromEntries(player.equipped.entries());
+      const weaponUid = equippedRec[EquipSlot.WEAPON];
+      if (weaponUid) {
+        const weaponDefId = player.inventory.get(weaponUid)?.defId;
+        if (weaponDefId) {
+          const weaponDef = getItemDef(weaponDefId);
+          if (weaponDef?.ammoType) {
+            let ammoUid = "";
+            player.inventory.forEach((item, uid) => {
+              if (ammoUid) return;
+              if (isAmmoItem(item.defId)) {
+                const ammoDef = getAmmoDef(item.defId);
+                if (ammoDef && ammoDef.category === weaponDef.ammoType && (item.count ?? 1) > 0) {
+                  ammoUid = uid;
+                }
+              }
+            });
+            if (!ammoUid) {
+              // Refund MP and block skill cast.
+              player.mp += stats.mpCost;
+              if (stats.cooldownMs > 0) player.skillCooldowns.delete(skillId);
+              client.send(MessageType.SKILL_CAST, {
+                success: false,
+                skillId,
+                cooldownMs: 0,
+                message: `Out of ${weaponDef.ammoType === "ARROW" ? "arrows" : weaponDef.ammoType === "BULLET" ? "bullets" : "stars"}!`,
+              } satisfies SkillCastResultPayload);
+              return;
+            }
+            const ammoItem = player.inventory.get(ammoUid);
+            if (ammoItem) {
+              const count = ammoItem.count ?? 1;
+              if (count <= 1) {
+                player.inventory.delete(ammoUid);
+                accountStore.removeItem(player.charId, ammoUid);
+              } else {
+                ammoItem.count = count - 1;
+                const rec = accountStore.getItem(player.charId, ammoUid);
+                if (rec) {
+                  rec.count = ammoItem.count;
+                  const char = accountStore.getCharacter(player.charId);
+                  if (char) {
+                    accountStore.updateCharacter(player.charId, {
+                      inventory: { ...char.inventory },
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
     // 6. Apply effect based on skill kind.

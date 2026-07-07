@@ -574,6 +574,9 @@ export const MOBS: Record<string, MobDef> = {
     avoid: 0,
     dropTable: [
       { itemId: "etc.snail_shell", chance: 0.35 },
+      { itemId: "ammo.shortbow_arrow", chance: 0.15 },
+      { itemId: "ammo.lead_bullet", chance: 0.15 },
+      { itemId: "ammo.iron_star", chance: 0.15 },
       { itemId: "wpn.apprentice_wand", chance: 0.02 },
       { itemId: "wpn.shortbow", chance: 0.02 },
       { itemId: "wpn.rusty_dagger", chance: 0.02 },
@@ -642,6 +645,9 @@ export const MOBS: Record<string, MobDef> = {
       { itemId: "etc.cargo_manifest", chance: 0.1 },
       { itemId: "hat.leather_cap", chance: 0.03 },
       { itemId: "shoes.worn_boots", chance: 0.02 },
+      { itemId: "ammo.shortbow_arrow", chance: 0.12 },
+      { itemId: "ammo.lead_bullet", chance: 0.12 },
+      { itemId: "ammo.iron_star", chance: 0.12 },
     ],
   },
   // ── Harbor Docks combat mobs (Lv 4–12) ─────────────────────────────
@@ -748,6 +754,9 @@ export const MOBS: Record<string, MobDef> = {
       { itemId: "wpn.bronze_shortsword", chance: 0.05 },
       { itemId: "hat.leather_cap", chance: 0.04 },
       { itemId: "etc.slime_jelly", chance: 0.2 },
+      { itemId: "ammo.shortbow_arrow", chance: 0.12 },
+      { itemId: "ammo.lead_bullet", chance: 0.12 },
+      { itemId: "ammo.iron_star", chance: 0.12 },
     ],
   },
   "mob.blue_slime": {
@@ -783,6 +792,9 @@ export const MOBS: Record<string, MobDef> = {
       { itemId: "hat.leather_cap", chance: 0.04 },
       { itemId: "etc.mushroom_cap", chance: 0.22 },
       { itemId: "item.mushroom_spore", chance: 0.35 },
+      { itemId: "ammo.hunters_arrow", chance: 0.1 },
+      { itemId: "ammo.hollow_bullet", chance: 0.1 },
+      { itemId: "ammo.steel_star", chance: 0.1 },
     ],
   },
   "mob.thornback_hopper": {

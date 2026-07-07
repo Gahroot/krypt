@@ -13,6 +13,8 @@ import {
   MEADOWFIELD,
   EquipSlot,
   ClassArchetype,
+  isAmmoItem,
+  getAmmoDef,
   getClass,
   allSkillsForClass,
   skillStatAt,
@@ -875,6 +877,7 @@ export class UIScene extends Phaser.Scene {
           if (this.equipPanelOpen) this.publishEquipment();
           if (this.statPanelOpen) this.publishCharacter();
           this.publishHudSkills();
+          this.publishHud();
         }),
       );
       this.unsubscribers.push(
@@ -885,6 +888,7 @@ export class UIScene extends Phaser.Scene {
           if (this.equipPanelOpen) this.publishEquipment();
           if (this.statPanelOpen) this.publishCharacter();
           this.publishHudSkills();
+          this.publishHud();
         }),
       );
       // Equipped gear changes also re-render the inventory and equipment panels.
@@ -2090,6 +2094,38 @@ export class UIScene extends Phaser.Scene {
     if (!p) return;
     const expNeed = expForLevel(p.level);
     const expRatio = expNeed > 0 ? Math.min(1, p.exp / expNeed) : 0;
+    // Resolve equipped ammo info.
+    let ammoInfo: { category: string; name: string; count: number; atkBonus: number } | null = null;
+    const weaponUid = p.equipped?.get(EquipSlot.WEAPON);
+    if (weaponUid) {
+      const weaponItem = p.inventory?.get(weaponUid);
+      if (weaponItem) {
+        const weaponDef = getItemDef(weaponItem.defId);
+        if (weaponDef?.ammoType) {
+          let totalCount = 0;
+          let firstAmmoName = "";
+          let firstAtkBonus = 0;
+          p.inventory?.forEach((item) => {
+            if (isAmmoItem(item.defId)) {
+              const ad = getAmmoDef(item.defId);
+              if (ad && ad.category === weaponDef.ammoType) {
+                totalCount += item.count ?? 1;
+                if (!firstAmmoName) {
+                  firstAmmoName = ad.name;
+                  firstAtkBonus = ad.atkBonus;
+                }
+              }
+            }
+          });
+          ammoInfo = {
+            category: weaponDef.ammoType,
+            name: firstAmmoName || weaponDef.ammoType,
+            count: totalCount,
+            atkBonus: firstAtkBonus,
+          };
+        }
+      }
+    }
     uiStore.getState().setHud({
       visible: true,
       name: p.name || "Adventurer",
@@ -2103,6 +2139,7 @@ export class UIScene extends Phaser.Scene {
       expRatio,
       expPct: (expRatio * 100).toFixed(1),
       dead: p.dead,
+      ammo: ammoInfo,
     });
   }
 

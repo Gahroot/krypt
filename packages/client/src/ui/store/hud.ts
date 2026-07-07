@@ -111,6 +111,13 @@ export interface HudSnapshot {
   quests: HudQuest[];
   bonusHunt: HudBonusHunt | null;
   minimap: HudMinimap | null;
+  /** Current equipped ammo info (null when no ammo-using weapon equipped). */
+  ammo: {
+    category: string;
+    name: string;
+    count: number;
+    atkBonus: number;
+  } | null;
   /** Per-element visibility toggles. */
   hudToggles: HudToggles;
   /** True while the local player is dead (shows DeathOverlay). */
@@ -141,6 +148,7 @@ const EMPTY_HUD: HudSnapshot = {
   quests: [],
   bonusHunt: null,
   minimap: null,
+  ammo: null,
   hudToggles: {
     statusBars: true,
     minimap: true,
