@@ -121,7 +121,7 @@ const PLAYER_FRICTION = 0.5;
 /** Reduced traction on icy/slippery footholds (harder to start, longer skid). */
 const PLAYER_SLIPPERY_ACCEL = 0.4;
 const PLAYER_SLIPPERY_FRICTION = 0.1;
-/** Server's fixed timestep; prediction scales physics by `delta / FIXED_TIMESTEP`. */
+/** Server's fixed timestep; client uses a fixed-timestep accumulator matching this rate. */
 const FIXED_TIMESTEP = 1000 / 60;
 // ── Platformer physics (mirror of TownRoom.ts — keep in sync) ──────────────────
 const GRAVITY = 0.45;
@@ -139,10 +139,10 @@ const SWIM_MAX_FALL = 5;
 const SWIM_VERTICAL_SPEED = 2.0;
 /** How long (ms) the player ignores a foothold after pressing Down+Jump to drop through it. */
 const DROP_THROUGH_MS = 250;
-/** When the server position diverges this far from prediction, hard-snap instead of lerping. */
-const RECONCILE_SNAP_THRESHOLD = 8;
-/** Lerp factor for soft reconciliation toward the server's authoritative position. */
-const RECONCILE_LERP = 0.18;
+/** Max unacknowledged inputs buffered before we stop predicting (safety cap). */
+const INPUT_BUFFER_MAX = 300;
+/** Max consecutive replay ticks before we force a full snap (prevents infinite catch-up loops). */
+const MAX_REPLAY_TICKS = 10;
 
 /** Interpolation factor for remote entities (0 = frozen, 1 = snap). 0.2 ≈ smooth but responsive. */
 const REMOTE_LERP = 0.2;
@@ -262,8 +262,16 @@ export class MapScene extends Phaser.Scene {
   private localSessionId = "";
   /** The local player's sprite — predicted locally and followed by the camera. */
   private localPlayer?: Phaser.GameObjects.Sprite;
-  /** Monotonic client input tick, echoed back by the server for (future) reconciliation. */
+  /** Monotonic client input tick, echoed back by the server for reconciliation. */
   private currentTick = 0;
+
+  // ── Input-replay rollback state ───────────────────────────────────────────
+  /** Buffer of unacknowledged inputs keyed by tick, for server-ack replay. */
+  private readonly inputBuffer = new Map<number, InputData>();
+  /** Fixed-timestep accumulator (ms) — physics runs in FIXED_TIMESTEP chunks. */
+  private accumulator = 0;
+  /** Last server-acked tick (from player.tick on the authoritative state). */
+  private lastAckedTick = -1;
 
   // ── Local prediction state (platformer physics) ────────────────────────────
   private localVx = 0;
@@ -556,6 +564,14 @@ export class MapScene extends Phaser.Scene {
     };
     room.send(MessageType.INPUT, input);
 
+    // Buffer input for rollback reconciliation.
+    this.inputBuffer.set(input.tick, input);
+    // Safety cap: drop oldest if buffer grows too large.
+    if (this.inputBuffer.size > INPUT_BUFFER_MAX) {
+      const oldest = this.inputBuffer.keys().next().value;
+      if (oldest !== undefined) this.inputBuffer.delete(oldest);
+    }
+
     // ── Rune activation (edge-triggered interact near a rune) ──
     if (interact && !this.lastInteractHeld && this.localPlayer) {
       for (const [, container] of this.runeSprites) {
@@ -584,227 +600,25 @@ export class MapScene extends Phaser.Scene {
       this.registry.set("coachmark:jump", true);
     }
 
-    // 2) Client-side prediction — platformer physics mirroring TownRoom.ts.
+    // 2) Client-side prediction — fixed-timestep accumulator + input-replay rollback.
     const player = this.localPlayer;
-    const serverClimbing = player.getData("serverClimbing") as boolean | undefined;
-    const serverDead = player.getData("serverDead") as boolean | undefined;
 
-    if (!serverDead) {
-      // ── Reconcile climbing state from server authority ──
-      if (serverClimbing && !this.localClimbing) {
-        const serverLadderId = player.getData("serverLadderId") as number | undefined;
-        this.localClimbing = true;
-        this.localLadderId = serverLadderId ?? -1;
-        this.localVx = 0;
-        this.localVy = 0;
-        this.localGrounded = false;
-        this.lastJumpHeld = false;
-        this.enterClimbVisual(player);
-      } else if (!serverClimbing && this.localClimbing) {
-        this.localClimbing = false;
-        this.localLadderId = -1;
-        this.exitClimbVisual(player);
-      }
+    // Reconcile with authoritative server state when a new ack arrives.
+    this.reconcileWithServer(player);
 
-      if (this.localClimbing) {
-        // ── Climbing prediction (mirrors tickClimbing in TownRoom.ts) ──
-        this.tickLocalClimbing(player, input, delta);
-      } else {
-        const dt = delta / FIXED_TIMESTEP;
-
-        // ── Try ladder grab before horizontal movement (mirrors server order) ──
-        if (!this.localGrounded) {
-          if (up || down) {
-            const lad = ladderAt(this.map, player.x, player.y, LADDER_GRAB_TOLERANCE);
-            if (lad) this.attachToLadderLocal(player, lad);
-          }
-        }
-        if (this.localGrounded && (up || down) && !this.localClimbing) {
-          for (const lad of this.map.ladders) {
-            if (Math.abs(lad.x - player.x) > LADDER_GRAB_TOLERANCE) continue;
-            if (Math.abs(lad.yTop - player.y) <= FOOTHOLD_SNAP_PX) {
-              this.attachToLadderLocal(player, lad);
-              player.y = lad.yTop + 1;
-              break;
-            }
-          }
-        }
-
-        if (!this.localClimbing) {
-          // ── Horizontal velocity (acceleration / friction for gliding Maple feel) ──
-          const currentFh = this.localGrounded
-            ? this.nearestFootholdAt(player.x, player.y)
-            : undefined;
-          const isSlippery = currentFh?.slippery === true;
-          const a = isSlippery ? PLAYER_SLIPPERY_ACCEL : PLAYER_ACCEL;
-          const f = isSlippery ? PLAYER_SLIPPERY_FRICTION : PLAYER_FRICTION;
-
-          if (left) {
-            const target = -PLAYER_SPEED;
-            if (this.localVx > target) {
-              this.localVx = Math.max(target, this.localVx - a * dt);
-            }
-            player.setFlipX(true);
-          } else if (right) {
-            const target = PLAYER_SPEED;
-            if (this.localVx < target) {
-              this.localVx = Math.min(target, this.localVx + a * dt);
-            }
-            player.setFlipX(false);
-          } else {
-            // No input: friction decelerates toward 0.
-            if (this.localVx > 0) {
-              this.localVx = Math.max(0, this.localVx - f * dt);
-            } else if (this.localVx < 0) {
-              this.localVx = Math.min(0, this.localVx + f * dt);
-            }
-          }
-          const prevPlayerX = player.x;
-          player.x += this.localVx * dt;
-          if (this.map.walls?.length) {
-            player.x = clampXByWalls(this.map.walls, prevPlayerX, player.x, player.y);
-          }
-          player.x = Phaser.Math.Clamp(player.x, 0, this.map.width);
-
-          // ── Footstep SFX (throttled, grounded only) ─────────────────────────────────
-          if (this.localGrounded && (left || right) && Math.abs(this.localVx) > 0.5) {
-            const now = this.time.now;
-            if (now - this.lastFootstepAt >= MapScene.FOOTSTEP_INTERVAL_MS) {
-              this.lastFootstepAt = now;
-              getAudioManager().playSfx("footstep");
-            }
-          }
-
-          // ── Grounded re-check after horizontal movement (slope follow + walk-off-edge) ──
-          if (this.localGrounded) {
-            const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
-            const fh = this.nearestFootholdAt(player.x, player.y, skipId);
-            if (fh) {
-              player.y = groundYAt(fh, player.x); // snap to surface (handles slopes)
-            } else {
-              this.localGrounded = false; // no platform nearby
-            }
-          }
-
-          // ── Jump (edge-triggered: fire only on the rising edge) ──
-          if (this.map.swimming) {
-            // Swimming: free vertical movement via jump + up/down keys
-            if (jump && !this.lastJumpHeld) {
-              this.localVy = SWIM_VELOCITY;
-              this.localGrounded = false;
-              getAudioManager().playSfx("jump");
-            }
-            // Hold up to swim upward, hold down to dive
-            if (up) {
-              this.localVy -= SWIM_VERTICAL_SPEED * 0.3 * dt;
-            } else if (down) {
-              this.localVy += SWIM_VERTICAL_SPEED * 0.3 * dt;
-            }
-          } else {
-            // Normal land physics — Jump / Drop-through (edge-triggered, mirrors server)
-            if (jump && !this.lastJumpHeld && this.localGrounded) {
-              if (down) {
-                // MapleStory drop-through: fall through a one-way (non-solid) platform.
-                const currentFh = this.nearestFootholdAt(player.x, player.y);
-                if (currentFh && !currentFh.solid) {
-                  this.localDropThroughFootholdId = currentFh.id;
-                  this.localDropThroughTimer = DROP_THROUGH_MS;
-                  this.localGrounded = false;
-                }
-                // Solid foothold → do nothing (can't drop through the ground).
-              } else {
-                this.localVy = JUMP_VELOCITY;
-                this.localGrounded = false;
-                getAudioManager().playSfx("jump");
-              }
-            }
-          }
-          this.lastJumpHeld = jump;
-
-          if (this.map.swimming) {
-            // ── Swimming: buoyant physics with reduced gravity ──
-            this.localVy = Phaser.Math.Clamp(
-              this.localVy + SWIM_GRAVITY * dt,
-              -SWIM_MAX_FALL,
-              SWIM_MAX_FALL,
-            );
-            const prevY = player.y;
-            player.y += this.localVy * dt;
-
-            // Still check foothold landing (for seabed collision)
-            if (this.localVy >= 0) {
-              const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
-              const fh = this.landingFoothold(player.x, prevY, player.y, skipId);
-              if (fh) {
-                player.y = groundYAt(fh, player.x);
-                this.localVy = 0;
-                this.localGrounded = true;
-              } else {
-                this.localGrounded = false;
-              }
-            }
-          } else {
-            // ── Gravity + Y integration (airborne only) ──
-            if (!this.localGrounded) {
-              this.localVy = Math.min(this.localVy + GRAVITY * dt, MAX_FALL_SPEED);
-              const prevY = player.y;
-              player.y += this.localVy * dt;
-
-              // Landing: check if we crossed a foothold surface while falling.
-              if (this.localVy >= 0) {
-                const skipId =
-                  this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
-                const fh = this.landingFoothold(player.x, prevY, player.y, skipId);
-                if (fh) {
-                  player.y = groundYAt(fh, player.x);
-                  this.localVy = 0;
-                  this.localGrounded = true;
-                  this.localDropThroughFootholdId = -1; // clear once landed
-                }
-              }
-            }
-          }
-
-          // Decrement drop-through timer (mirrors server tickPlayerTimers).
-          if (this.localDropThroughTimer > 0) this.localDropThroughTimer -= delta;
-
-          // ── Clamp Y to map bounds (floor safety net) ──
-          if (player.y > this.map.height) {
-            player.y = this.map.height;
-            this.localVy = 0;
-            this.localGrounded = true;
-          }
-        }
-      }
+    // Fixed-timestep physics loop — matches server's fixedTick rate exactly.
+    this.accumulator += delta;
+    while (this.accumulator >= FIXED_TIMESTEP) {
+      this.accumulator -= FIXED_TIMESTEP;
+      this.tickLocalPhysics(player, input);
     }
 
-    // ── Soft reconciliation toward the server's authoritative transform ──
-    // Skip while waiting for the server to confirm a locally-predicted climb.
-    const canReconcile = !this.localClimbing || serverClimbing === true;
-    const serverX = player.getData("serverX") as number | undefined;
-    const serverY = player.getData("serverY") as number | undefined;
-    const serverVy = player.getData("serverVy") as number | undefined;
-    const serverGrounded = player.getData("serverGrounded") as boolean | undefined;
-    if (canReconcile && serverX !== undefined && serverY !== undefined) {
-      const dx = serverX - player.x;
-      const dy = serverY - player.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > RECONCILE_SNAP_THRESHOLD) {
-        // Hard snap — we diverged too far (e.g. missed a landing server caught).
-        player.x = serverX;
-        player.y = serverY;
-        if (serverVy !== undefined) this.localVy = serverVy;
-        if (serverGrounded !== undefined) this.localGrounded = serverGrounded;
-      } else if (dist > 0.5) {
-        // Soft lerp — gently pull toward the server without visible hitching.
-        player.x += dx * RECONCILE_LERP;
-        player.y += dy * RECONCILE_LERP;
-        if (serverVy !== undefined) this.localVy += (serverVy - this.localVy) * RECONCILE_LERP;
-        if (serverGrounded !== undefined) this.localGrounded = serverGrounded;
-      } else {
-        // Close enough — adopt server state directly (prevents micro-drift).
-        if (serverVy !== undefined) this.localVy = serverVy;
-        if (serverGrounded !== undefined) this.localGrounded = serverGrounded;
+    // ── Footstep SFX (cosmetic, after physics) ──
+    if (this.localGrounded && (left || right) && Math.abs(this.localVx) > 0.5) {
+      const now = this.time.now;
+      if (now - this.lastFootstepAt >= MapScene.FOOTSTEP_INTERVAL_MS) {
+        this.lastFootstepAt = now;
+        getAudioManager().playSfx("footstep");
       }
     }
 
@@ -1316,6 +1130,7 @@ export class MapScene extends Phaser.Scene {
           player.climbing,
           player.dead,
           player.ladderId,
+          player.tick,
         );
         if (player.climbing) this.enterClimbVisual(sprite);
 
@@ -1335,6 +1150,7 @@ export class MapScene extends Phaser.Scene {
             player.climbing,
             player.dead,
             player.ladderId,
+            player.tick,
           );
 
           if (player.mesos > this.localMesos) {
@@ -3546,6 +3362,7 @@ export class MapScene extends Phaser.Scene {
     climbing?: boolean,
     dead?: boolean,
     ladderId?: number,
+    tick?: number,
   ): void {
     sprite.setData("serverX", x);
     sprite.setData("serverY", y);
@@ -3555,6 +3372,7 @@ export class MapScene extends Phaser.Scene {
     if (climbing !== undefined) sprite.setData("serverClimbing", climbing);
     if (dead !== undefined) sprite.setData("serverDead", dead);
     if (ladderId !== undefined) sprite.setData("serverLadderId", ladderId);
+    if (tick !== undefined) sprite.setData("serverTick", tick);
   }
 
   /** Lerp a remote sprite toward its stashed server transform and sync its facing/depth/shadow. */
@@ -3713,19 +3531,13 @@ export class MapScene extends Phaser.Scene {
   }
 
   /** One tick of climbing movement — mirrors TownRoom.ts tickClimbing exactly. */
-  private tickLocalClimbing(
-    player: Phaser.GameObjects.Sprite,
-    input: InputData,
-    delta: number,
-  ): void {
+  private tickLocalClimbing(player: Phaser.GameObjects.Sprite, input: InputData): void {
     const lad = this.map.ladders.find((l) => l.id === this.localLadderId);
     if (!lad) {
       // Ladder disappeared — emergency detach.
       this.detachFromLadderLocal(player);
       return;
     }
-
-    const dt = delta / FIXED_TIMESTEP;
 
     // ── Jump → detach (small hop at top) ──
     if (input.jump) {
@@ -3746,9 +3558,9 @@ export class MapScene extends Phaser.Scene {
 
     // ── Vertical movement along the ladder ──
     if (input.up) {
-      player.y -= CLIMB_SPEED * dt;
+      player.y -= CLIMB_SPEED;
     } else if (input.down) {
-      player.y += CLIMB_SPEED * dt;
+      player.y += CLIMB_SPEED;
     }
 
     // Keep x locked to ladder while climbing.
@@ -3776,6 +3588,241 @@ export class MapScene extends Phaser.Scene {
         player.y = groundYAt(botFh, player.x);
         this.localGrounded = true;
       }
+    }
+  }
+
+  // ─── Server reconciliation (input-replay rollback) ─────────────────────────────
+
+  /**
+   * Reconcile local prediction with authoritative server state.
+   * Called once per frame before the fixed-timestep accumulator loop.
+   */
+  private reconcileWithServer(player: Phaser.GameObjects.Sprite): void {
+    const serverTick = player.getData("serverTick") as number | undefined;
+    if (serverTick === undefined || serverTick <= this.lastAckedTick) return;
+
+    this.lastAckedTick = serverTick;
+
+    // Discard all buffered inputs that have been acknowledged.
+    for (const tick of [...this.inputBuffer.keys()]) {
+      if (tick <= serverTick) this.inputBuffer.delete(tick);
+    }
+
+    // Snap to authoritative state.
+    const serverX = player.getData("serverX") as number;
+    const serverY = player.getData("serverY") as number;
+    const serverVy = player.getData("serverVy") as number;
+    const serverGrounded = player.getData("serverGrounded") as boolean;
+    const serverClimbing = player.getData("serverClimbing") as boolean;
+    const serverLadderId = player.getData("serverLadderId") as number | undefined;
+
+    player.x = serverX;
+    player.y = serverY;
+    this.localVy = serverVy;
+    this.localGrounded = serverGrounded;
+
+    // Handle climbing state changes.
+    if (serverClimbing && !this.localClimbing) {
+      // Server says we're climbing but we weren't — attach.
+      this.localClimbing = true;
+      this.localLadderId = serverLadderId ?? -1;
+      this.localVx = 0;
+      this.enterClimbVisual(player);
+    } else if (!serverClimbing && this.localClimbing) {
+      // Server says we're not climbing but we were — detach.
+      this.detachFromLadderLocal(player);
+    }
+
+    // Replay remaining unacknowledged inputs in tick order.
+    const sortedTicks = [...this.inputBuffer.keys()].sort((a, b) => a - b);
+    let replayed = 0;
+    for (const tick of sortedTicks) {
+      if (replayed >= MAX_REPLAY_TICKS) break;
+      const input = this.inputBuffer.get(tick);
+      if (input) this.tickLocalPhysics(player, input);
+      replayed++;
+    }
+  }
+
+  /**
+   * Apply ONE fixed tick of platformer physics with NO dt scaling —
+   * matches the server's processPlayerInput exactly.
+   */
+  private tickLocalPhysics(player: Phaser.GameObjects.Sprite, input: InputData): void {
+    const { left, right, up, down, jump } = input;
+
+    // ── Dead check — skip physics if dead ──
+    const serverDead = player.getData("serverDead") as boolean | undefined;
+    if (serverDead) return;
+
+    // ── Climbing ──
+    if (this.localClimbing) {
+      this.tickLocalClimbing(player, input);
+      return; // skip gravity, horizontal movement, etc.
+    }
+
+    // ── Grab ladder (airborne: up/down near ladder) ──
+    if (!this.localGrounded) {
+      if (up) {
+        const lad = ladderAt(this.map, player.x, player.y, LADDER_GRAB_TOLERANCE);
+        if (lad) {
+          this.attachToLadderLocal(player, lad);
+          return;
+        }
+      }
+      if (down) {
+        const lad = ladderAt(this.map, player.x, player.y, LADDER_GRAB_TOLERANCE);
+        if (lad) {
+          this.attachToLadderLocal(player, lad);
+          return;
+        }
+      }
+    }
+
+    // ── Grab ladder (grounded: down at top / up at top) ──
+    if (this.localGrounded && down) {
+      for (const lad of this.map.ladders) {
+        if (Math.abs(lad.x - player.x) > LADDER_GRAB_TOLERANCE) continue;
+        if (Math.abs(lad.yTop - player.y) <= FOOTHOLD_SNAP_PX) {
+          this.attachToLadderLocal(player, lad);
+          player.y = lad.yTop + 1;
+          return;
+        }
+      }
+    }
+    if (this.localGrounded && up) {
+      for (const lad of this.map.ladders) {
+        if (Math.abs(lad.x - player.x) > LADDER_GRAB_TOLERANCE) continue;
+        if (Math.abs(lad.yTop - player.y) <= FOOTHOLD_SNAP_PX) {
+          this.attachToLadderLocal(player, lad);
+          player.y = lad.yTop + 1;
+          return;
+        }
+      }
+    }
+
+    // ── Horizontal velocity (acceleration / friction) ──
+    const maxSpeed = PLAYER_SPEED;
+    const currentFh = this.localGrounded ? this.nearestFootholdAt(player.x, player.y) : undefined;
+    const isSlippery = currentFh?.slippery === true;
+    const accel = isSlippery ? PLAYER_SLIPPERY_ACCEL : PLAYER_ACCEL;
+    const friction = isSlippery ? PLAYER_SLIPPERY_FRICTION : PLAYER_FRICTION;
+
+    if (left) {
+      const target = -maxSpeed;
+      if (this.localVx > target) {
+        this.localVx = Math.max(target, this.localVx - accel);
+      }
+      player.setFlipX(true);
+    } else if (right) {
+      const target = maxSpeed;
+      if (this.localVx < target) {
+        this.localVx = Math.min(target, this.localVx + accel);
+      }
+      player.setFlipX(false);
+    } else {
+      if (this.localVx > 0) {
+        this.localVx = Math.max(0, this.localVx - friction);
+      } else if (this.localVx < 0) {
+        this.localVx = Math.min(0, this.localVx + friction);
+      }
+    }
+
+    // ── Jump / Drop-through (edge-triggered) ──
+    if (this.map.swimming) {
+      // Swimming: free vertical movement.
+      if (jump && !this.lastJumpHeld) {
+        this.localVy = SWIM_VELOCITY;
+        this.localGrounded = false;
+      }
+      if (up) {
+        this.localVy -= SWIM_VERTICAL_SPEED * 0.3;
+      } else if (down) {
+        this.localVy += SWIM_VERTICAL_SPEED * 0.3;
+      }
+    } else {
+      // Normal land physics.
+      if (jump && !this.lastJumpHeld && this.localGrounded) {
+        if (down) {
+          // Drop-through: falling through a thin platform.
+          const dropFh = this.nearestFootholdAt(player.x, player.y);
+          if (dropFh && !dropFh.solid) {
+            this.localDropThroughFootholdId = dropFh.id;
+            this.localDropThroughTimer = DROP_THROUGH_MS;
+            this.localGrounded = false;
+          }
+        } else {
+          this.localVy = JUMP_VELOCITY;
+          this.localGrounded = false;
+        }
+      }
+    }
+    this.lastJumpHeld = jump;
+
+    // ── Integrate X ──
+    const prevX = player.x;
+    player.x += this.localVx;
+    if (this.map.walls?.length) {
+      player.x = clampXByWalls(this.map.walls, prevX, player.x, player.y);
+    }
+    player.x = Phaser.Math.Clamp(player.x, 0, this.map.width);
+
+    // ── Grounded re-check after horizontal movement ──
+    if (this.localGrounded) {
+      const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
+      const fh = this.nearestFootholdAt(player.x, player.y, skipId);
+      if (fh) {
+        player.y = groundYAt(fh, player.x);
+      } else {
+        this.localGrounded = false;
+      }
+    }
+
+    if (this.map.swimming) {
+      // ── Swimming: buoyant physics ──
+      this.localVy = Math.max(-SWIM_MAX_FALL, Math.min(this.localVy + SWIM_GRAVITY, SWIM_MAX_FALL));
+      player.y += this.localVy;
+
+      if (this.localVy >= 0) {
+        const fh = this.landingFoothold(player.x, player.y - this.localVy, player.y);
+        if (fh) {
+          player.y = groundYAt(fh, player.x);
+          this.localVy = 0;
+          this.localGrounded = true;
+        } else {
+          this.localGrounded = false;
+        }
+      }
+    } else {
+      // ── Gravity + Y integration (airborne only) ──
+      if (!this.localGrounded) {
+        this.localVy = Math.min(this.localVy + GRAVITY, MAX_FALL_SPEED);
+        const prevY = player.y;
+        player.y += this.localVy;
+
+        if (this.localVy >= 0) {
+          const skipId = this.localDropThroughTimer > 0 ? this.localDropThroughFootholdId : -1;
+          const fh = this.landingFoothold(player.x, prevY, player.y, skipId);
+          if (fh) {
+            player.y = groundYAt(fh, player.x);
+            this.localVy = 0;
+            this.localGrounded = true;
+            this.localDropThroughFootholdId = -1;
+          }
+        }
+      }
+    }
+
+    // ── Drop-through timer decrement ──
+    if (this.localDropThroughTimer > 0) {
+      this.localDropThroughTimer -= FIXED_TIMESTEP;
+    }
+
+    // ── Clamp Y to map bounds ──
+    if (player.y > this.map.height) {
+      player.y = this.map.height;
+      this.localVy = 0;
+      this.localGrounded = true;
     }
   }
 
